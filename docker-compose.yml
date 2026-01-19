@@ -1,0 +1,20 @@
+services:
+  commentator:
+    build: .
+    container_name: commentator_service
+    command: python commentator.py
+    volumes:
+      - ./logs:/app/logs  # опционально: для логов
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+
+  admin_bot:
+    build: .
+    container_name: admin_bot_service
+    command: python admin_bot.py
+    volumes:
+      - ./logs:/app/logs  # опционально: общие логи
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
