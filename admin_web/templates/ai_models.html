@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}AI · Модели{% endblock %}
+{% block content %}
+  <h1 class="h3 mb-3">Список доступных моделей</h1>
+  <p class="text-muted">
+    Это «живая» информация от провайдера по вашему API-ключу. Удобно, чтобы не гадать, как именно называется модель в API.
+    Скопируйте нужный ID и вставьте в <a href="/settings/ai">настройки AI</a>.
+  </p>
+  {% include "ai_tabs.html" %}
+
+  {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
+
+  <form method="get" action="/settings/ai/models" class="row g-2 align-items-end mb-3">
+    <div class="col-12 col-md-4 col-lg-3">
+      <label class="form-label">Провайдер</label>
+      <select class="form-select" name="provider">
+        <option value="gemini" {% if provider == 'gemini' %}selected{% endif %}>Gemini</option>
+        <option value="openai" {% if provider == 'openai' %}selected{% endif %}>OpenAI</option>
+        <option value="openrouter" {% if provider == 'openrouter' %}selected{% endif %}>OpenRouter</option>
+        <option value="deepseek" {% if provider == 'deepseek' %}selected{% endif %}>DeepSeek</option>
+      </select>
+    </div>
+    <div class="col-12 col-md-5 col-lg-4">
+      <label class="form-label">Фильтр (необязательно)</label>
+      <input class="form-control" name="q" value="{{ q }}" placeholder="например: 2.5 / flash / gpt / chat" />
+    </div>
+    <div class="col-12 col-md-3 col-lg-2">
+      <button class="btn btn-primary w-100" type="submit">Обновить</button>
+    </div>
+  </form>
+
+  {% if models_err %}
+    <div class="alert alert-warning">{{ models_err }}</div>
+  {% endif %}
+
+  {% if models and not models_err %}
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <div>
+            <b>{{ provider|upper }}</b>
+            <span class="text-muted small">найдено: {{ models|length }}</span>
+          </div>
+          <a class="btn btn-sm btn-outline-secondary" href="/settings/ai">Назад к AI</a>
+        </div>
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0 app-table">
+            <caption class="visually-hidden">Список моделей провайдера</caption>
+            <thead>
+              <tr>
+                <th style="width: 35%;">ID (вставлять в настройки)</th>
+                <th>Сырые данные</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for m in models %}
+                <tr>
+                  <td>
+                    <div class="d-flex align-items-center gap-2">
+                      <code class="mono">{{ m.id }}</code>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-copy="{{ m.id }}">Копировать</button>
+                    </div>
+                  </td>
+                  <td class="text-muted small">
+                    {{ m.raw }}
+                    {% if m.meta %}<div class="text-muted small">методы: {{ m.meta }}</div>{% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}

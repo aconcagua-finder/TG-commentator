@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Ошибка · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h1 class="h3 mb-1">{{ title or 'Ошибка' }}</h1>
+      {% if detail %}
+        <div class="text-muted">{{ detail }}</div>
+      {% else %}
+        <div class="text-muted">Что-то пошло не так.</div>
+      {% endif %}
+    </div>
+    <a class="btn btn-outline-secondary" href="/">На дашборд</a>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <p class="mb-2">Попробуйте:</p>
+      <ul class="mb-3">
+        <li>вернуться назад и проверить ввод;</li>
+        <li>обновить страницу;</li>
+        <li>посмотреть логи контейнера <code>admin_web</code>, если ошибка повторяется.</li>
+      </ul>
+      <button class="btn btn-primary" type="button" onclick="history.back()">Назад</button>
+    </div>
+  </div>
+{% endblock %}

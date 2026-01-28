@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Поиск каналов · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h1 class="h3 mb-0">Комментирование</h1>
+    <a class="btn btn-primary" href="/targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить цель</a>
+  </div>
+  {% include "targets_tabs.html" %}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <form method="get" action="/targets/search" class="d-flex gap-2">
+        <label class="visually-hidden" for="source_channel">Источник</label>
+        <input class="form-control" id="source_channel" name="source" placeholder="@source_channel или ссылка" value="{{ source }}" required />
+        <button class="btn btn-primary" type="submit">Искать</button>
+      </form>
+      <div class="text-muted small mt-2">Ищет рекомендации Telegram и оставляет только каналы с включёнными комментариями.</div>
+    </div>
+  </div>
+
+  {% if error %}
+    <div class="alert alert-danger">Ошибка поиска: {{ error }}</div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-body">
+      <h2 class="h5">Результаты ({{ results|length }})</h2>
+      {% if results|length == 0 %}
+        <div class="text-muted">Ничего не найдено.</div>
+      {% else %}
+        <div class="list-group">
+          {% for r in results %}
+            <div class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div>{{ r.chat_name }}</div>
+                <div class="text-muted small mono">{{ r.chat_id }} · linked={{ r.linked_chat_id }}{% if r.chat_username %} · @{{ r.chat_username }}{% endif %}</div>
+              </div>
+              <a class="btn btn-sm btn-primary" href="/targets/new?chat_input={{ r.chat_username if r.chat_username else r.chat_id }}">Добавить</a>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

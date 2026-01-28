@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Чёрный список · TG-комментатор{% endblock %}
+{% block content %}
+  <h1 class="h3 mb-3">Чёрный список</h1>
+  {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-5">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Добавить слова</h2>
+          <form method="post" action="/settings/blacklist/add">
+            <label class="form-label" for="blacklist_words">Слова</label>
+            <textarea class="form-control" name="words" id="blacklist_words" rows="5" placeholder="через запятую или с новой строки" required></textarea>
+            <button class="btn btn-primary mt-2" type="submit">Добавить</button>
+          </form>
+          <form method="post" action="/settings/blacklist/clear" class="mt-3" onsubmit="return confirm('Очистить весь список?');">
+            <button class="btn btn-outline-danger" type="submit">Очистить весь список</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-7">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Текущий список ({{ blacklist|length }})</h2>
+          {% if not blacklist %}
+            <div class="text-muted">Пусто.</div>
+          {% else %}
+            <div class="d-flex flex-wrap gap-2">
+              {% for w in blacklist %}
+                <form method="post" action="/settings/blacklist/delete">
+                  <input type="hidden" name="word" value="{{ w }}" />
+                  <button class="btn btn-sm btn-light border" type="submit" aria-label="Удалить слово: {{ w }}" title="Удалить">
+                    {{ w }} <span class="text-danger" aria-hidden="true">×</span>
+                  </button>
+                </form>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

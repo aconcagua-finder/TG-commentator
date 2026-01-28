@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% block title %}Очеловечивание · TG-комментатор{% endblock %}
+{% block content %}
+  {% import "macros.html" as ui %}
+  <h1 class="h3 mb-3">Очеловечивание</h1>
+  {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
+
+  <div class="card">
+    <div class="card-body">
+      <form method="post" action="/settings/humanization">
+        <div class="accordion" id="humanizationAccordion">
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="humanizationHeadingModel">
+              <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#humanizationModel" aria-expanded="true" aria-controls="humanizationModel">
+                Параметры модели
+              </button>
+            </h2>
+            <div id="humanizationModel" class="accordion-collapse collapse show" aria-labelledby="humanizationHeadingModel" data-bs-parent="#humanizationAccordion">
+              <div class="accordion-body">
+                <div class="row g-3">
+                  <div class="col-12 col-md-4">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">Температура</span>
+                      {{ ui.tip("0.0–2.0. Чем выше — тем креативнее. Если пусто — параметр temperature не отправляется в модель (используется дефолт провайдера).") }}
+                    </label>
+                    <input class="form-control" name="temperature" inputmode="decimal" placeholder="auto" value="{{ h.get('temperature','') if h.get('temperature') is not none else '' }}" />
+                  </div>
+                  <div class="col-12 col-md-4">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">Штраф повторов (0–100)</span>
+                      {{ ui.tip("Уменьшает повтор слов/фраз. Для OpenAI/DeepSeek превращается в frequency_penalty 0.0–2.0. Для OpenRouter/Gemini может не применяться.") }}
+                    </label>
+                    <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="repetition_penalty" value="{{ h.get('repetition_penalty',0) }}" />
+                  </div>
+                  <div class="col-12 col-md-4">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">Лимит ответа (токены)</span>
+                      {{ ui.tip("Ограничение длины ответа модели (токены, не символы). Слишком маленькое значение может обрывать фразы.") }}
+                    </label>
+                    <input class="form-control" type="number" min="1" step="1" inputmode="numeric" name="max_tokens" value="{{ h.get('max_tokens',60) }}" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="humanizationHeadingStyle">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#humanizationStyle" aria-expanded="false" aria-controls="humanizationStyle">
+                Стиль текста
+              </button>
+            </h2>
+            <div id="humanizationStyle" class="accordion-collapse collapse" aria-labelledby="humanizationHeadingStyle" data-bs-parent="#humanizationAccordion">
+              <div class="accordion-body">
+                <div class="row g-3">
+                  <div class="col-12 col-md-3">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">Опечатки %</span>
+                      {{ ui.tip("С этим шансом в словах (обычно >4 букв) меняются местами две соседние буквы.") }}
+                    </label>
+                    <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="typo_chance" value="{{ h.get('typo_chance',0) }}" />
+                  </div>
+                  <div class="col-12 col-md-3">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">lowercase %</span>
+                      {{ ui.tip("Делает стиль менее «официозным»: иногда пишет всё маленькими, иногда начинает с маленькой.") }}
+                    </label>
+                    <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="lowercase_chance" value="{{ h.get('lowercase_chance',80) }}" />
+                  </div>
+                  <div class="col-12 col-md-3">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">Пропуск запятых %</span>
+                      {{ ui.tip("С этим шансом убирает запятые в отдельных словах, чтобы текст выглядел более «разговорным».") }}
+                    </label>
+                    <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="comma_skip_chance" value="{{ h.get('comma_skip_chance',30) }}" />
+                  </div>
+                  <div class="col-12 col-md-3">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">Разбив %</span>
+                      {{ ui.tip("Если текст > 50 символов, с этим шансом бот разобьёт его на 2 сообщения по первому разделителю (, . ! ?). Поэтому один аккаунт может отправить 2 сообщения подряд.") }}
+                    </label>
+                    <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="split_chance" value="{{ h.get('split_chance',60) }}" />
+                  </div>
+                  <div class="col-12 col-md-4">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">Макс. слов (0 = без лимита)</span>
+                      {{ ui.tip("После генерации (и «ошибок») обрезает комментарий до N слов. 0 = не ограничивать.") }}
+                    </label>
+                    <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="max_words" value="{{ h.get('max_words',20) }}" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="humanizationHeadingDedupe">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#humanizationDedupe" aria-expanded="false" aria-controls="humanizationDedupe">
+                Антидубли
+              </button>
+            </h2>
+            <div id="humanizationDedupe" class="accordion-collapse collapse" aria-labelledby="humanizationHeadingDedupe" data-bs-parent="#humanizationAccordion">
+              <div class="accordion-body">
+                <div class="row g-3">
+                  <div class="col-12 col-md-4">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">Порог схожести (0–1)</span>
+                      {{ ui.tip("Сравнивает новый комментарий с уже написанными под этим же постом. Если похожесть выше порога — бот попросит перегенерировать.") }}
+                    </label>
+                    <input class="form-control" type="number" min="0" max="1" step="0.01" inputmode="decimal" name="similarity_threshold" value="{{ h.get('similarity_threshold',0.78) }}" />
+                  </div>
+                  <div class="col-12 col-md-4">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">Перегенераций (0–3)</span>
+                      {{ ui.tip("Максимум попыток перегенерации, если комментарий слишком похож. Чем больше — тем дороже/медленнее, но меньше дублей.") }}
+                    </label>
+                    <input class="form-control" type="number" min="0" max="3" step="1" inputmode="numeric" name="similarity_max_retries" value="{{ h.get('similarity_max_retries',1) }}" />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="humanizationHeadingRules">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#humanizationRules" aria-expanded="false" aria-controls="humanizationRules">
+                Промпт правил
+              </button>
+            </h2>
+            <div id="humanizationRules" class="accordion-collapse collapse" aria-labelledby="humanizationHeadingRules" data-bs-parent="#humanizationAccordion">
+              <div class="accordion-body">
+                <label class="form-label app-label">
+                  <span class="app-label-text">Правила оформления</span>
+                  {{ ui.tip("Добавляется в system prompt как «правила оформления». Тут можно запретить стиль/формат/эмодзи/длину и т.д.") }}
+                </label>
+                <textarea class="form-control" name="custom_rules" rows="6">{{ h.get('custom_rules','') }}</textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <button class="btn btn-primary" type="submit">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Мониторинг · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h1 class="h3 mb-0">Каналы мониторинга</h1>
+    <a class="btn btn-primary" href="/monitor-targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+  </div>
+  <p class="text-muted">Опциональный модуль: читает новые посты в каналах и уведомляет вас, если пост подходит под заданный промпт.</p>
+  {% if targets|length == 0 %}
+    <div class="alert alert-info">Добавьте канал мониторинга и укажите промпт — бот будет присылать подходящие посты в заданный чат.</div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle app-table">
+          <caption class="visually-hidden">Каналы мониторинга</caption>
+          <thead>
+            <tr>
+              <th>Канал</th>
+              <th>Уведомления</th>
+              <th>AI</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in targets %}
+              <tr>
+                <td>
+                  <div>{{ t.get('chat_name') }}</div>
+                  <div class="text-muted small mono">{{ t.get('chat_id') }}</div>
+                </td>
+                <td class="mono small">{{ t.get('notification_chat_id') }}</td>
+                <td><span class="badge text-bg-light border">{{ (t.get('ai_provider','default') or 'default')|upper }}</span></td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="/monitor-targets/{{ t.get('chat_id') }}">Открыть</a>
+                </td>
+              </tr>
+            {% endfor %}
+            {% if targets|length == 0 %}
+              <tr><td colspan="4" class="text-center text-muted py-4">Пока пусто.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Комментирование · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex align-items-center justify-content-between mb-2">
+    <h1 class="h3 mb-0">Комментирование</h1>
+    <div class="d-flex gap-2">
+      <a class="btn btn-primary" href="/targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить цель</a>
+    </div>
+  </div>
+  {% include "targets_tabs.html" %}
+  {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
+  <p class="text-muted">Здесь вы добавляете каналы/чаты, где бот будет комментировать новые посты. Для каждого чата можно настроить промпты, триггеры и сценарии.</p>
+  {% if targets|length == 0 %}
+    <div class="alert alert-info">Чтобы начать, добавьте первый чат: нажмите <b>«Добавить цель»</b>. Если есть исходный канал — откройте <b>«Поиск каналов»</b>.</div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle app-table">
+          <caption class="visually-hidden">Цели комментирования</caption>
+          <thead>
+            <tr>
+              <th>Чат</th>
+              <th>ID</th>
+              <th>AI</th>
+              <th>Аккаунты</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in targets %}
+              <tr>
+                <td>
+                  <div>{{ t.get('chat_name') }}</div>
+                  <div class="text-muted small">@{{ t.get('chat_username','') }}</div>
+                </td>
+                <td class="mono small">{{ t.get('chat_id') }}<div class="text-muted">{{ t.get('linked_chat_id') }}</div></td>
+                <td>
+                  <span class="badge text-bg-light border">{{ (t.get('ai_provider','default') or 'default')|upper }}</span>
+                  {% if t.get('ai_enabled', True) %}
+                    <span class="badge text-bg-success">AI replies</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">AI off</span>
+                  {% endif %}
+                </td>
+                <td class="small">
+                  {% set aa = t.get('assigned_accounts', []) %}
+                  {% if aa and aa|length > 0 %}
+                    {{ aa|length }}
+                  {% else %}
+                    <span class="text-muted">все</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="/targets/{{ t.get('chat_id') }}">Открыть</a>
+                </td>
+              </tr>
+            {% endfor %}
+            {% if targets|length == 0 %}
+              <tr><td colspan="5" class="text-center text-muted py-4">Пока пусто.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}

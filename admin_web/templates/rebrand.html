@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Ребрендинг · TG-комментатор{% endblock %}
+{% block content %}
+  <h1 class="h3 mb-3">Ребрендинг всей сетки</h1>
+  <p class="text-muted">Меняет имена/аватары у всех активных аккаунтов. Если источник — ключевое слово, для генерации имён нужен AI‑ключ; для DALL‑E аватаров — OpenAI key (иначе будет бесплатная генерация).</p>
+  <div class="card">
+    <div class="card-body">
+      <form method="post" action="/rebrand" class="row g-3">
+        <div class="col-12 col-md-4">
+          <label class="form-label">Тема</label>
+          <input class="form-control" name="topic" placeholder="Крипта / Спорт / Девушки" required />
+        </div>
+        <div class="col-12 col-md-8">
+          <label class="form-label">Источник аватарок</label>
+          <input class="form-control" name="source" placeholder="@channel или ключевое слово (Girls, Cars…)" required />
+          <div class="text-muted small mt-1">Если @channel — копирует стиль профилей из канала, иначе генерирует.</div>
+        </div>
+        <div class="col-12">
+          <button class="btn btn-primary" type="submit">Запустить</button>
+          <a class="btn btn-outline-secondary" href="/">Назад</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

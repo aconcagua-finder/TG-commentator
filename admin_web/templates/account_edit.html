@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}{{ account.session_name }} · Аккаунт{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 class="h3 mb-1">Аккаунт: <span class="mono">{{ account.session_name }}</span></h1>
+      <div class="text-muted">ID: {{ account.get('user_id','—') }} · @{{ account.get('username','') }} · статус: {{ account.get('status','') }}</div>
+    </div>
+    <form method="post" action="/accounts/{{ account.session_name }}/delete" onsubmit="return confirm('Удалить аккаунт?');">
+      <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Удалить</button>
+    </form>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Время сна</h2>
+          {% set ss = account.get('sleep_settings', {}) %}
+          <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            <span class="badge text-bg-light border">время сервера: {{ server_now }}</span>
+            {% if awake_now %}
+              <span class="badge text-bg-success">сейчас активен</span>
+            {% else %}
+              <span class="badge text-bg-secondary">сейчас спит</span>
+            {% endif %}
+          </div>
+          <div class="text-muted small mb-2">
+            Важно: используется время сервера (UTC). Если <b>старт = конец</b> — аккаунт активен всегда.
+          </div>
+          <div class="d-flex flex-wrap gap-2 mb-2">
+            <button
+              class="btn btn-sm btn-outline-secondary"
+              type="button"
+              data-set-multi='{"#sleep_start":"0","#sleep_end":"0"}'
+            >
+              Всегда активен
+            </button>
+            <button
+              class="btn btn-sm btn-outline-secondary"
+              type="button"
+              data-set-multi='{"#sleep_start":"8","#sleep_end":"23"}'
+            >
+              День 8–23
+            </button>
+            <button
+              class="btn btn-sm btn-outline-secondary"
+              type="button"
+              data-set-multi='{"#sleep_start":"23","#sleep_end":"8"}'
+            >
+              Ночь 23–8
+            </button>
+          </div>
+          <form method="post" action="/accounts/{{ account.session_name }}/sleep" class="row g-2">
+            <div class="col-6">
+              <label class="form-label" for="sleep_start">Старт (0-23)</label>
+              <input class="form-control" id="sleep_start" type="number" min="0" max="23" step="1" inputmode="numeric" name="start_hour" value="{{ ss.get('start_hour',8) }}" />
+            </div>
+            <div class="col-6">
+              <label class="form-label" for="sleep_end">Конец (0-23)</label>
+              <input class="form-control" id="sleep_end" type="number" min="0" max="23" step="1" inputmode="numeric" name="end_hour" value="{{ ss.get('end_hour',23) }}" />
+            </div>
+            <div class="col-12">
+              <button class="btn btn-primary" type="submit">Сохранить</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Прокси</h2>
+          <form method="post" action="/accounts/{{ account.session_name }}/proxy">
+            <select class="form-select" name="proxy_id">
+              <option value="">без прокси</option>
+              {% for p in proxies %}
+                <option value="{{ p.id }}" {% if account.get('proxy_url') == p.url %}selected{% endif %}>#{{ p.id }} · {{ p.ip }} ({{ p.country }})</option>
+              {% endfor %}
+            </select>
+            <button class="btn btn-primary mt-2" type="submit">Сохранить</button>
+          </form>
+          {% if account.get('proxy_url') %}
+            <div class="text-muted small mt-2 mono">{{ account.get('proxy_url') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Persona</h2>
+          <form method="post" action="/accounts/{{ account.session_name }}/persona" class="d-flex gap-2">
+            <select class="form-select" name="persona_id">
+              <option value="">без роли</option>
+              {% for pid, pdata in personas.items() %}
+                <option value="{{ pid }}" {% if account.get('persona_id') == pid %}selected{% endif %}>{{ pdata.name }}</option>
+              {% endfor %}
+            </select>
+            <button class="btn btn-primary" type="submit">Сохранить</button>
+          </form>
+          <p class="text-muted small mt-2 mb-0">При назначении роли промпты в чатах будут перезаписаны промптом роли.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Telegram профиль</h2>
+          {% if profile_task %}
+            {% set st = profile_task.get('status','') %}
+            <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+              <span class="badge text-bg-light border">обновление профиля: {{ st }}</span>
+              {% if profile_task.get('error') %}
+                <span class="text-danger small">{{ profile_task.get('error') }}</span>
+              {% endif %}
+            </div>
+          {% else %}
+            <div class="text-muted small mb-2">Нет активных задач на обновление профиля.</div>
+          {% endif %}
+
+          <form method="post" action="/accounts/{{ account.session_name }}/profile" class="row g-2">
+            <div class="col-12 col-md-6">
+              <label class="form-label">Имя</label>
+              <input class="form-control" name="first_name" value="{{ account.get('first_name','') }}" required />
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label">Фамилия (опционально)</label>
+              <input class="form-control" name="last_name" value="{{ account.get('last_name','') }}" />
+            </div>
+            <div class="col-12">
+              <label class="form-label">Описание (bio)</label>
+              <textarea class="form-control" name="bio" rows="4" placeholder="коротко, по-человечески">{{ account.get('profile_bio','') }}</textarea>
+              <div class="form-text">Будет применено к Telegram‑профилю аккаунта (commentator подхватит задачу в течение ~10 секунд).</div>
+            </div>
+            <div class="col-12">
+              <button class="btn btn-primary" type="submit">Сохранить и применить</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Аватар и персональный канал</h2>
+
+          <div class="mb-3">
+            <h3 class="h6 mb-2">Аватар</h3>
+            <form method="post" action="/accounts/{{ account.session_name }}/avatar" enctype="multipart/form-data" class="d-flex gap-2 align-items-end flex-wrap">
+              <div class="flex-grow-1" style="min-width: 260px;">
+                <label class="form-label">Файл (jpg/png/webp)</label>
+                <input class="form-control" type="file" name="avatar" accept="image/*" required />
+              </div>
+              <button class="btn btn-primary" type="submit">Загрузить</button>
+            </form>
+            <form method="post" action="/accounts/{{ account.session_name }}/avatar/clear" class="mt-2">
+              <button class="btn btn-outline-danger" type="submit" onclick="return confirm('Убрать аватар у аккаунта?');">Убрать аватар</button>
+            </form>
+          </div>
+
+          <div>
+            <h3 class="h6 mb-2">Персональный канал</h3>
+            <form method="post" action="/accounts/{{ account.session_name }}/personal-channel" class="d-flex gap-2 flex-wrap align-items-end">
+              <div class="flex-grow-1" style="min-width: 260px;">
+                <label class="form-label">Канал (@username или ссылка t.me)</label>
+                <input class="form-control" name="personal_channel" value="{{ account.get('profile_personal_channel','') }}" placeholder="@mychannel" />
+                <div class="form-text">Аккаунт должен быть админом канала, иначе Telegram не даст поставить.</div>
+              </div>
+              <button class="btn btn-primary" type="submit">Установить</button>
+            </form>
+            <form method="post" action="/accounts/{{ account.session_name }}/personal-channel/clear" class="mt-2">
+              <button class="btn btn-outline-secondary" type="submit">Очистить</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

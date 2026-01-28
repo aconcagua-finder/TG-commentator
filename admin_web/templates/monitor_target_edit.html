@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{{ target.chat_name }} · Мониторинг{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h1 class="h3 mb-1">{{ target.chat_name }}</h1>
+      <div class="text-muted small mono">{{ target.chat_id }}</div>
+    </div>
+    <form method="post" action="/monitor-targets/{{ target.chat_id }}/delete" onsubmit="return confirm('Удалить канал мониторинга?');">
+      <button class="btn btn-outline-danger" type="submit">Удалить</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <form method="post" action="/monitor-targets/{{ target.chat_id }}">
+        <div class="row g-3">
+          <div class="col-12 col-md-4">
+            <label class="form-label">Чат уведомлений (ID)</label>
+            <input class="form-control" type="number" step="1" inputmode="numeric" name="notification_chat_id" value="{{ target.get('notification_chat_id') }}" />
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">AI</label>
+            <select class="form-select" name="ai_provider">
+              <option value="default" {% if target.get('ai_provider','default')=='default' %}selected{% endif %}>Глобальный</option>
+              <option value="gemini" {% if target.get('ai_provider')=='gemini' %}selected{% endif %}>Gemini</option>
+              <option value="openai" {% if target.get('ai_provider')=='openai' %}selected{% endif %}>OpenAI</option>
+              <option value="openrouter" {% if target.get('ai_provider')=='openrouter' %}selected{% endif %}>OpenRouter</option>
+              <option value="deepseek" {% if target.get('ai_provider')=='deepseek' %}selected{% endif %}>DeepSeek</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">Лимит/сутки</label>
+            <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="daily_limit" value="{{ target.get('daily_limit',0) }}" />
+          </div>
+          <div class="col-12">
+            <label class="form-label">Промпт</label>
+            <textarea class="form-control" name="prompt" rows="5">{{ target.get('prompt','') }}</textarea>
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">Мин. слов</label>
+            <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="min_word_count" value="{{ target.get('min_word_count',0) }}" />
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">Мин. интервал (мин)</label>
+            <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="min_post_interval_mins" value="{{ target.get('min_post_interval_mins',0) }}" />
+          </div>
+          <div class="col-12">
+            <h2 class="h6 mt-2 mb-2">Аккаунты</h2>
+            <div class="text-muted small">Если ничего не выбрано — используются все активные аккаунты.</div>
+            <div class="row g-2 mt-1">
+              {% set assigned = target.get('assigned_accounts', []) %}
+              {% for a in accounts %}
+                <div class="col-12 col-md-4">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
+                    <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="col-12">
+            <button class="btn btn-primary" type="submit">Сохранить</button>
+            <a class="btn btn-outline-secondary" href="/monitor-targets">Назад</a>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

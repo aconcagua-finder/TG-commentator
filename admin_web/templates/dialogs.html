@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Диалоги · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 class="h3 mb-1">Диалоги</h1>
+      <div class="text-muted">Личные сообщения, которые пришли на Telegram‑аккаунты.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      {% if threads|length == 0 %}
+        <div class="alert alert-info mb-0">Пока нет сообщений. Как только кто-то напишет в личку — диалог появится здесь.</div>
+      {% else %}
+        <div class="list-group">
+          {% for t in threads %}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-start gap-3" href="{{ t.url }}">
+              <div class="flex-grow-1">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  <span class="badge text-bg-light border mono">#{{ t.session_name }}</span>
+                  <span class="fw-semibold">{{ t.title }}</span>
+                </div>
+                <div class="text-muted small mt-1 mono">{{ t.chat_id }}</div>
+                {% if t.last_text %}
+                  <div class="mt-2">{{ t.last_text }}</div>
+                {% endif %}
+                <div class="text-muted small mt-1 mono">{{ t.last_at|human_dt }}</div>
+              </div>
+              {% if t.unread %}
+                <span class="badge text-bg-danger rounded-pill">{{ t.unread }}</span>
+              {% endif %}
+            </a>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

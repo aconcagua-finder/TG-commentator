@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Цитирование · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <div class="d-flex align-items-center gap-2">
+        <a class="btn btn-sm btn-outline-secondary" href="/quotes"><i class="bi bi-arrow-left me-1"></i>К списку</a>
+        <span class="badge text-bg-light border mono">#{{ item.session_name }}</span>
+      </div>
+      <h1 class="h4 mb-0 mt-2">{{ item.title }}</h1>
+      <div class="text-muted small">
+        <span class="mono">{{ item.created_at|human_dt }}</span>
+        {% if item.sender %} · <span>{{ item.sender }}</span>{% endif %}
+      </div>
+      {% if item.link %}
+        <div class="mt-2">
+          <a class="btn btn-sm btn-outline-primary" href="{{ item.link }}" target="_blank" rel="noopener">Открыть в Telegram</a>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      {% if item.replied_to_text %}
+        <div class="text-muted small mb-2">Пользователь ответил на сообщение аккаунта:</div>
+        <div class="border-start ps-2 text-muted" style="white-space: pre-wrap;">{{ item.replied_to_text }}</div>
+      {% endif %}
+      {% if item.text %}
+        <hr />
+        <div class="text-muted small mb-2">Сообщение пользователя:</div>
+        <div style="white-space: pre-wrap;">{{ item.text }}</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <form method="post" action="/quotes/{{ item.id }}/reply" class="row g-2">
+        <div class="col-12">
+          <label class="form-label" for="reply_text">Ответ</label>
+          <textarea class="form-control" id="reply_text" name="text" rows="3" placeholder="Напишите ответ..." required></textarea>
+          <div class="form-text">Ответ уйдёт от лица того же аккаунта и будет отправлен как reply на сообщение пользователя.</div>
+        </div>
+        <div class="col-12">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-reply me-1"></i>Ответить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

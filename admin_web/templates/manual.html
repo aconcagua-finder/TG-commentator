@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Ручной запуск · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h3 mb-0">Ручной запуск</h1>
+    <form method="post" action="/manual/clear" onsubmit="return confirm('Очистить очередь?');">
+      <button class="btn btn-outline-danger" type="submit">Очистить очередь</button>
+    </form>
+  </div>
+  <p class="text-muted">Добавьте ссылку на пост — задача попадёт в очередь `manual_queue`, а `commentator.py` обработает её (AI/сценарий/триггеры) даже если пост старый.</p>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <form method="post" action="/manual/run" class="d-flex gap-2">
+        <label class="visually-hidden" for="manual_link">Ссылка на пост</label>
+        <input class="form-control" id="manual_link" name="link" placeholder="https://t.me/channel/123 или https://t.me/c/123/456" required />
+        <button class="btn btn-primary" type="submit">Добавить</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <h2 class="h5">Очередь ({{ queue|length }})</h2>
+      {% if queue|length == 0 %}
+        <div class="text-muted">Пусто.</div>
+      {% else %}
+        <div class="list-group">
+          {% for item in queue %}
+            <div class="list-group-item">
+              <div class="mono">chat_id={{ item.chat_id }} · post_id={{ item.post_id }}</div>
+              <div class="text-muted small">added_at={{ item.added_at }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

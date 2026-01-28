@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}{{ target.chat_name }} · Реакции{% endblock %}
+{% block content %}
+  {% import "macros.html" as ui %}
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h1 class="h3 mb-1">{{ target.chat_name }}</h1>
+      <div class="text-muted small mono">{{ target.chat_id }} · linked={{ target.linked_chat_id }}</div>
+    </div>
+    <form method="post" action="/reaction-targets/{{ target.chat_id }}/delete" onsubmit="return confirm('Удалить цель реакций?');">
+      <button class="btn btn-outline-danger" type="submit">Удалить</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <form method="post" action="/reaction-targets/{{ target.chat_id }}">
+        <div class="row g-3">
+          <div class="col-12">
+            <label class="form-label app-label">
+              <span class="app-label-text">Реакции (через пробел)</span>
+              {{ ui.tip("Эмодзи, которые бот будет выбирать. Если Telegram упирается в лимит уникальных реакций на сообщении — бот попробует использовать уже существующую реакцию.") }}
+            </label>
+            <input class="form-control" name="reactions" value="{{ ' '.join(target.get('reactions', [])) }}" />
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Кол-во реакций</span>
+              {{ ui.tip("Сколько эмодзи поставить одним аккаунтом на один пост (выбирается случайно из списка).") }}
+            </label>
+            <input class="form-control" type="number" min="1" step="1" inputmode="numeric" name="reaction_count" value="{{ target.get('reaction_count',1) }}" />
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Шанс (%)</span>
+              {{ ui.tip("Вероятность поставить реакцию на новый пост. Если не сработало — пост пропускается.") }}
+            </label>
+            <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="reaction_chance" value="{{ target.get('reaction_chance',80) }}" />
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Пауза после поста (сек)</span>
+              {{ ui.tip("Сколько ждать после появления нового поста перед первой реакцией.") }}
+            </label>
+            <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="initial_reaction_delay" value="{{ target.get('initial_reaction_delay',10) }}" />
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Пауза между реакциями (сек)</span>
+              {{ ui.tip("Если несколько аккаунтов ставят реакции — пауза между их действиями.") }}
+            </label>
+            <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="delay_between_reactions" value="{{ target.get('delay_between_reactions',5) }}" />
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Лимит/сутки</span>
+              {{ ui.tip("Суммарный лимит реакций/сутки по этому каналу (учитывает все аккаунты). 0 = без лимита.") }}
+            </label>
+            <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="daily_reaction_limit" value="{{ target.get('daily_reaction_limit',999) }}" />
+          </div>
+          <div class="col-12">
+            <h2 class="h6 mt-2 mb-2">Аккаунты</h2>
+            <div class="row g-2">
+              {% set assigned = target.get('assigned_accounts', []) %}
+              {% for a in accounts %}
+                <div class="col-12 col-md-4">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
+                    <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+          <div class="col-12">
+            <button class="btn btn-primary" type="submit">Сохранить</button>
+            <a class="btn btn-outline-secondary" href="/reaction-targets">Назад</a>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

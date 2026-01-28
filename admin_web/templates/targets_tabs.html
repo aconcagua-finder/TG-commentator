@@ -1,0 +1,11 @@
+{% set cur = request.url.path %}
+
+<ul class="nav nav-pills flex-wrap gap-1 mb-3" aria-label="Навигация по комментированию">
+  <li class="nav-item">
+    <a class="nav-link {% if cur == '/targets' %}active{% endif %}" href="/targets">Цели</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if cur.startswith('/targets/search') %}active{% endif %}" href="/targets/search">Поиск каналов</a>
+  </li>
+</ul>
+

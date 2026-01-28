@@ -1,0 +1,17 @@
+[
+  {
+    "session_name": "acc1",
+    "session_string": "PUT_TELETHON_STRING_SESSION_HERE",
+    "user_id": 0,
+    "first_name": "",
+    "last_name": "",
+    "username": "",
+    "status": "active",
+    "persona_id": "",
+    "sleep_settings": {
+      "start_hour": 0,
+      "end_hour": 23
+    },
+    "project_id": "default"
+  }
+]

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Цитирование · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 class="h3 mb-1">Цитирование</h1>
+      <div class="text-muted">Ответы пользователей на сообщения аккаунтов в группах/чатах.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      {% if items|length == 0 %}
+        <div class="alert alert-info mb-0">Пока нет цитирований. Когда кто-то ответит на сообщение аккаунта — запись появится здесь.</div>
+      {% else %}
+        <div class="list-group">
+          {% for it in items %}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-start gap-3" href="{{ it.url }}">
+              <div class="flex-grow-1">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  <span class="badge text-bg-light border mono">#{{ it.session_name }}</span>
+                  <span class="fw-semibold">{{ it.title }}</span>
+                  {% if it.is_unread %}
+                    <span class="badge text-bg-danger">new</span>
+                  {% endif %}
+                </div>
+                <div class="text-muted small mt-1">
+                  <span class="mono">{{ it.created_at|human_dt }}</span>
+                  {% if it.sender %} · <span>{{ it.sender }}</span>{% endif %}
+                  {% if it.link %} · <span class="mono">link</span>{% endif %}
+                </div>
+                {% if it.replied_to_text %}
+                  <div class="small text-muted border-start ps-2 mt-2" style="white-space: pre-wrap;">{{ it.replied_to_text }}</div>
+                {% endif %}
+                {% if it.text %}
+                  <div class="mt-2" style="white-space: pre-wrap;">{{ it.text }}</div>
+                {% endif %}
+              </div>
+              <div class="text-end">
+                {% if it.link %}
+                  <span class="text-muted small mono">↗</span>
+                {% endif %}
+              </div>
+            </a>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

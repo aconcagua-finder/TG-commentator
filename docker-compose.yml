@@ -1,0 +1,41 @@
+services:
+  commentator:
+    build: .
+    container_name: commentator_service
+    command: python commentator.py
+    volumes:
+      - ./logs:/app/logs  # опционально: для логов
+      - ./data:/app/data  # состояние/настройки/БД
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      APP_DATA_DIR: /app/data
+
+  admin_bot:
+    build: .
+    container_name: admin_bot_service
+    command: python admin_bot.py
+    volumes:
+      - ./logs:/app/logs  # опционально: общие логи
+      - ./data:/app/data  # состояние/настройки/БД
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      APP_DATA_DIR: /app/data
+
+  admin_web:
+    build: .
+    container_name: admin_web_service
+    command: uvicorn admin_web.main:app --host 0.0.0.0 --port 8080
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      APP_DATA_DIR: /app/data
+      ADMIN_WEB_USERNAME: ${ADMIN_WEB_USERNAME:-admin}
+      ADMIN_WEB_PASSWORD: ${ADMIN_WEB_PASSWORD:-admin}
+      ADMIN_WEB_SECRET: ${ADMIN_WEB_SECRET:-}

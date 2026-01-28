@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Добавить мониторинг · TG-комментатор{% endblock %}
+{% block content %}
+  <h1 class="h3 mb-3">Добавить канал мониторинга</h1>
+  <div class="card">
+    <div class="card-body">
+      <form method="post" action="/monitor-targets/new" class="row g-3">
+        <div class="col-12">
+          <label class="form-label">ID / @username / ссылка-приглашение</label>
+          <input class="form-control" name="chat_input" autocomplete="off" required />
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label">Чат уведомлений (ID)</label>
+          <input class="form-control" type="number" step="1" inputmode="numeric" name="notification_chat_id" required />
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label">AI</label>
+          <select class="form-select" name="ai_provider">
+            <option value="default">Глобальный</option>
+            <option value="gemini">Gemini</option>
+            <option value="openai">OpenAI</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="deepseek">DeepSeek</option>
+          </select>
+        </div>
+        <div class="col-12">
+          <label class="form-label">Промпт</label>
+          <textarea class="form-control" name="prompt" rows="4" required></textarea>
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label">Лимит/сутки (0=∞)</label>
+          <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="daily_limit" value="0" />
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label">Мин. слов (0=off)</label>
+          <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="min_word_count" value="0" />
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label">Мин. интервал (мин)</label>
+          <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="min_post_interval_mins" value="0" />
+        </div>
+        <div class="col-12">
+          <button class="btn btn-primary" type="submit">Добавить</button>
+          <a class="btn btn-outline-secondary" href="/monitor-targets">Отмена</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}
