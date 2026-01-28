@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Роли · TG-комментатор{% endblock %}
+{% block content %}
+  <h1 class="h3 mb-3">Роли</h1>
+  {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-5">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Создать</h2>
+          <form method="post" action="/personas/new">
+            <div class="mb-2">
+              <label class="form-label">Название</label>
+              <input class="form-control" name="name" required />
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Системный промпт</label>
+              <textarea class="form-control" name="prompt" rows="6" required></textarea>
+            </div>
+            <button class="btn btn-primary" type="submit">Создать</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-7">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Список ({{ personas|length }})</h2>
+          {% if personas|length == 0 %}
+            <div class="text-muted">Пока нет ни одной роли.</div>
+          {% else %}
+            <div class="list-group">
+              {% for pid, pdata in personas.items() %}
+                <a class="list-group-item list-group-item-action" href="/personas/{{ pid }}">
+                  <div class="d-flex justify-content-between">
+                    <div>{{ pdata.name }}</div>
+                    <span class="text-muted mono">{{ pid }}</span>
+                  </div>
+                </a>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

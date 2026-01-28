@@ -18,6 +18,10 @@ from datetime import datetime, timedelta, timezone
 
 import telegram.error
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+try:
+    from telegram import LinkPreviewOptions
+except ImportError:  # pragma: no cover
+    LinkPreviewOptions = None
 from telegram.ext import (Application, CommandHandler, ConversationHandler,
                           MessageHandler, filters, ContextTypes, CallbackQueryHandler)
 from telethon import TelegramClient
@@ -28,22 +32,24 @@ from telethon.tl import types
 from telethon.tl.functions.channels import JoinChannelRequest, GetFullChannelRequest, GetChannelRecommendationsRequest
 from telethon.tl.functions.messages import CheckChatInviteRequest
 
+from app_paths import ACCOUNTS_FILE, CONFIG_FILE, DB_FILE, LOGS_FILE, PROXIES_FILE, SETTINGS_FILE, ensure_data_dir
+from app_storage import load_json, save_json
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-SETTINGS_FILE = 'ai_settings.json'
-ACCOUNTS_FILE = 'accounts.json'
-PROXIES_FILE = 'proxies.txt'
-DB_FILE = 'actions.sqlite'
-LOGS_FILE = 'comment_logs.json'
+# Avoid leaking secrets (e.g., Telegram bot token is part of the URL).
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 ITEMS_PER_PAGE = 5
 
 
 def load_config(section):
     parser = configparser.ConfigParser()
-    if not os.path.exists('config.ini'):
-        raise FileNotFoundError("Файл config.ini не найден.")
-    parser.read('config.ini')
+    if not os.path.exists(CONFIG_FILE):
+        raise FileNotFoundError(f"Файл config.ini не найден: {CONFIG_FILE}")
+    parser.read(CONFIG_FILE)
     if section not in parser:
         raise KeyError(f"В config.ini не найдена секция [{section}].")
     return parser[section]
@@ -121,10 +127,16 @@ except (FileNotFoundError, KeyError, ValueError) as e:
 
 def owner_only(func):
     async def wrapped(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
-        user_id = update.effective_user.id
+        user_id = update.effective_user.id if update.effective_user else None
         if user_id not in ALLOWED_IDS:
-            await update.message.reply_text(
-                "❌ Доступ запрещен. Только авторизованные пользователи могут использовать этот бот.")
+            text = "❌ Доступ запрещен. Только авторизованные пользователи могут использовать этот бот."
+            if update.callback_query:
+                try:
+                    await update.callback_query.answer(text, show_alert=True)
+                except Exception:
+                    pass
+            elif update.effective_message:
+                await update.effective_message.reply_text(text)
             return None
         return await func(update, context, *args, **kwargs)
 
@@ -160,19 +172,23 @@ async def check_proxy_health(proxy_url):
 def get_data(file_path, default_data=None):
     if default_data is None:
         default_data = {}
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return default_data
+        return load_json(file_path, default_data)
 
 
 def save_data(file_path, data):
     try:
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        save_json(file_path, data)
     except Exception as e:
-        print(f"Ошибка при сохранении {file_path}: {e}")
+                print(f"Ошибка при сохранении {file_path}: {e}")
+
+
+NO_LINK_PREVIEW = LinkPreviewOptions(is_disabled=True) if LinkPreviewOptions else None
+
+
+def no_link_preview_kwargs() -> dict:
+    if NO_LINK_PREVIEW is not None:
+        return {"link_preview_options": NO_LINK_PREVIEW}
+    return {"disable_web_page_preview": True}
 
 
 def init_database():
@@ -245,6 +261,32 @@ def init_database():
                     status TEXT DEFAULT 'pending'
                 )
             ''')
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS inbox_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    session_name TEXT NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    msg_id INTEGER,
+                    reply_to_msg_id INTEGER,
+                    sender_id INTEGER,
+                    sender_username TEXT,
+                    sender_name TEXT,
+                    chat_title TEXT,
+                    chat_username TEXT,
+                    text TEXT,
+                    replied_to_text TEXT,
+                    is_read INTEGER DEFAULT 0,
+                    error TEXT
+                )
+            ''')
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_unique ON inbox_messages(session_name, chat_id, msg_id, direction)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_inbox_kind_unread ON inbox_messages(kind, is_read, id)")
             conn.commit()
     except sqlite3.Error as e:
         logger.critical(f"Критическая ошибка при инициализации БД: {e}")
@@ -253,7 +295,17 @@ def init_database():
 
 async def try_edit_message(query, text, reply_markup=None):
     try:
-        await query.message.edit_text(text, parse_mode='HTML', reply_markup=reply_markup, disable_web_page_preview=True)
+        try:
+            await query.answer()
+        except Exception:
+            pass
+
+        await query.message.edit_text(
+            text,
+            parse_mode="HTML",
+            reply_markup=reply_markup,
+            **no_link_preview_kwargs(),
+        )
     except Exception as e:
         if "Message is not modified" not in str(e):
             print(f"Ошибка при редактировании сообщения: {e}")
@@ -659,6 +711,7 @@ async def set_monitor_ai_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🤖 Google Gemini", callback_data="save_monitor_ai_gemini")],
         [InlineKeyboardButton("🧠 OpenAI GPT", callback_data="save_monitor_ai_openai")],
+        [InlineKeyboardButton("🧩 OpenRouter", callback_data="save_monitor_ai_openrouter")],
         [InlineKeyboardButton("🌐 Deepseek", callback_data="save_monitor_ai_deepseek")],
         [InlineKeyboardButton("🌐 Использовать глобальный", callback_data="save_monitor_ai_default")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_edit_monitor_menu")]
@@ -1361,6 +1414,7 @@ async def change_provider_menu(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🤖 Google Gemini", callback_data="set_provider_gemini")],
         [InlineKeyboardButton("🧠 OpenAI GPT", callback_data="set_provider_openai")],
+        [InlineKeyboardButton("🧩 OpenRouter", callback_data="set_provider_openrouter")],
         [InlineKeyboardButton("🌐 Deepseek", callback_data="set_provider_deepseek")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_settings")]
     ])
@@ -1387,6 +1441,7 @@ async def update_api_key_start(update: Update, context: ContextTypes.DEFAULT_TYP
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🤖 Google Gemini", callback_data="get_api_key_gemini")],
         [InlineKeyboardButton("🧠 OpenAI GPT", callback_data="get_api_key_openai")],
+        [InlineKeyboardButton("🧩 OpenRouter", callback_data="get_api_key_openrouter")],
         [InlineKeyboardButton("🌐 Deepseek", callback_data="get_api_key_deepseek")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_settings")]
     ])
@@ -1495,7 +1550,7 @@ async def get_source_channel_and_search(update: Update, context: ContextTypes.DE
                     full_channel = await client(GetFullChannelRequest(channel=chat))
                     if hasattr(full_channel.full_chat, 'linked_chat_id') and full_channel.full_chat.linked_chat_id:
                         linked_chat_id_bare = full_channel.full_chat.linked_chat_id
-                        comment_chat_entity = await client.get_entity(linked_chat_id_bare)
+                        comment_chat_entity = await client.get_entity(types.PeerChannel(linked_chat_id_bare))
 
                         found_channels_with_comments.append({
                             'chat_id': f"-100{chat.id}",
@@ -1699,7 +1754,7 @@ async def add_target_get_chat_id(update: Update, context: ContextTypes.DEFAULT_T
             full_channel = await client(GetFullChannelRequest(channel=entity))
             if hasattr(full_channel.full_chat, 'linked_chat_id') and full_channel.full_chat.linked_chat_id:
                 linked_chat_id_bare = full_channel.full_chat.linked_chat_id
-                comment_chat_entity = await client.get_entity(linked_chat_id_bare)
+                comment_chat_entity = await client.get_entity(types.PeerChannel(linked_chat_id_bare))
                 await client(JoinChannelRequest(comment_chat_entity))
                 comment_chat_id_str = f"-100{comment_chat_entity.id}"
         except:
@@ -1782,6 +1837,7 @@ async def add_target_get_daily_limit(update: Update, context: ContextTypes.DEFAU
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🤖 Google Gemini", callback_data="save_target_ai_gemini")],
             [InlineKeyboardButton("🧠 OpenAI GPT", callback_data="save_target_ai_openai")],
+            [InlineKeyboardButton("🧩 OpenRouter", callback_data="save_target_ai_openrouter")],
             [InlineKeyboardButton("🌐 Deepseek", callback_data="save_target_ai_deepseek")],
             [InlineKeyboardButton("🌐 Использовать глобальный", callback_data="save_target_ai_default")]
         ])
@@ -2066,6 +2122,7 @@ async def set_chat_ai_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🤖 Google Gemini", callback_data="save_chat_ai_gemini")],
         [InlineKeyboardButton("🧠 OpenAI GPT", callback_data="save_chat_ai_openai")],
+        [InlineKeyboardButton("🧩 OpenRouter", callback_data="save_chat_ai_openrouter")],
         [InlineKeyboardButton("🌐 Deepseek", callback_data="save_chat_ai_deepseek")],
         [InlineKeyboardButton("🌐 Использовать глобальный", callback_data="save_chat_ai_default")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="back_to_edit_menu")]
@@ -4031,7 +4088,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• <b>Пауза между аккаунтами:</b> Интервал, чтобы боты не писали одновременно.\n"
         "• <b>Мониторинг:</b> Автопоиск постов в чужих каналах по вашему ТЗ с уведомлением в ЛС."
     )
-    await update.message.reply_text(text, parse_mode='HTML', disable_web_page_preview=True)
+    await update.message.reply_text(text, parse_mode="HTML", **no_link_preview_kwargs())
 
 
 @owner_only
@@ -4446,10 +4503,32 @@ async def process_manual_link(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def main():
+    ensure_data_dir()
     init_database()
     if not os.path.exists(SETTINGS_FILE):
-        save_data(SETTINGS_FILE, {"status": "stopped", "ai_provider": "deepseek", "api_keys": {}, "targets": [],
-                                  "reaction_targets": [], "monitor_targets": []})
+        save_data(
+            SETTINGS_FILE,
+            {
+                "status": "stopped",
+                "ai_provider": "deepseek",
+                "api_keys": {},
+                "models": {
+                    "openai_chat": "gpt-5.2-chat-latest",
+                    "openai_eval": "gpt-5.2",
+                    "openai_image": "gpt-image-1",
+                    "openrouter_chat": "x-ai/grok-4.1-fast",
+                    "openrouter_eval": "openai/gpt-4.1-mini",
+                    "deepseek_chat": "deepseek-chat",
+                    "deepseek_eval": "deepseek-chat",
+                    "gemini_chat": "gemini-3-flash-preview",
+                    "gemini_eval": "gemini-3-flash-preview",
+                    "gemini_names": "gemini-3-flash-preview",
+                },
+                "targets": [],
+                "reaction_targets": [],
+                "monitor_targets": [],
+            },
+        )
     if not os.path.exists(ACCOUNTS_FILE):
         save_data(ACCOUNTS_FILE, [])
 

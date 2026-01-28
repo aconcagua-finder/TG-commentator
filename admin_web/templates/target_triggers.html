@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Триггеры · {{ target.chat_name }}{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-start mb-2">
+    <div>
+      <h1 class="h3 mb-1">{{ target.chat_name }}</h1>
+      <div class="text-muted small">Триггеры: фиксированный ответ на фразу.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="/targets">К списку</a>
+  </div>
+  {% include "target_tabs.html" %}
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-5">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Добавить</h2>
+          <form method="post" action="/targets/{{ target.chat_id }}/triggers/add">
+            <div class="mb-2">
+              <label class="form-label">Фраза-триггер</label>
+              <input class="form-control" name="trigger_phrase" required />
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Ответ</label>
+              <textarea class="form-control" name="answer_text" rows="4" required></textarea>
+            </div>
+            <button class="btn btn-primary" type="submit">Добавить</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-7">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Список ({{ triggers|length }})</h2>
+          {% if triggers|length == 0 %}
+            <div class="text-muted">Пусто.</div>
+          {% else %}
+            <div class="list-group">
+              {% for t in triggers %}
+                <div class="list-group-item d-flex justify-content-between align-items-start">
+                  <div>
+                    <div class="mono">{{ t.trigger_phrase }}</div>
+                    <div class="text-muted small">{{ t.answer_text }}</div>
+                  </div>
+                  <form method="post" action="/targets/{{ target.chat_id }}/triggers/{{ t.id }}/delete" onsubmit="return confirm('Удалить триггер?');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">Удалить</button>
+                  </form>
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

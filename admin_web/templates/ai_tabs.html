@@ -1,0 +1,11 @@
+{% set cur = request.url.path %}
+
+<ul class="nav nav-pills flex-wrap gap-1 mb-3" aria-label="Навигация по AI настройкам">
+  <li class="nav-item">
+    <a class="nav-link {% if not cur.startswith('/settings/ai/models') %}active{% endif %}" href="/settings/ai">Настройки</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if cur.startswith('/settings/ai/models') %}active{% endif %}" href="/settings/ai/models">Список моделей</a>
+  </li>
+</ul>
+

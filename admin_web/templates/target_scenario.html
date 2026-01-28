@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Сценарий · {{ target.chat_name }}{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-start mb-2">
+    <div>
+      <h1 class="h3 mb-1">{{ target.chat_name }}</h1>
+      <div class="text-muted small">Сценарий: авто-цепочка сообщений по шагам.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="/targets">К списку</a>
+  </div>
+  {% include "target_tabs.html" %}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <span class="badge text-bg-{{ 'success' if scenario.status=='running' else 'secondary' }}">status={{ scenario.status }}</span>
+        <span class="badge text-bg-light border">current_index={{ scenario.current_index }}</span>
+        <span class="badge text-bg-light border">reply_mode={{ 'on' if target.get('scenario_reply_mode',False) else 'off' }}</span>
+      </div>
+      <div class="d-flex gap-2 mt-3">
+        <form method="post" action="/targets/{{ target.chat_id }}/scenario/toggle">
+          <button class="btn btn-primary" type="submit">{{ 'Остановить' if scenario.status=='running' else 'Запустить' }}</button>
+        </form>
+        <form method="post" action="/targets/{{ target.chat_id }}/scenario/reset">
+          <button class="btn btn-outline-secondary" type="submit">Сбросить прогресс</button>
+        </form>
+        <form method="post" action="/targets/{{ target.chat_id }}/scenario/toggle-reply">
+          <button class="btn btn-outline-secondary" type="submit">Reply: {{ 'вкл' if target.get('scenario_reply_mode',False) else 'выкл' }}</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <form method="post" action="/targets/{{ target.chat_id }}/scenario/save">
+        <label class="form-label">Текст сценария</label>
+        <textarea class="form-control mono" name="script_content" rows="14">{{ scenario.script_content }}</textarea>
+        <button class="btn btn-primary mt-2" type="submit">Сохранить (сбросит прогресс)</button>
+      </form>
+    </div>
+  </div>
+{% endblock %}

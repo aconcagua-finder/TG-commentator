@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}Проекты · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h1 class="h3 mb-1">Проекты</h1>
+      <div class="text-muted small">Текущий проект: {{ active_project.get('name') }}</div>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-body">
+      <h2 class="h6">Создать проект</h2>
+      <form class="row g-2 align-items-center" method="post" action="/projects/new">
+        <div class="col-sm-6 col-md-5 col-lg-4">
+          <input class="form-control" name="name" placeholder="Название проекта" required />
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-plus-circle me-1"></i>Создать</button>
+        </div>
+      </form>
+      <div class="text-muted small mt-2">Проекты изолируют каналы и аккаунты между собой. Переключение проекта меняет текущий набор.</div>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-body">
+      <h2 class="h6">Массовое перемещение</h2>
+      <form class="row g-3 align-items-end" method="post" action="/projects/move">
+        <div class="col-md-4">
+          <label class="form-label">Из проекта</label>
+          <select class="form-select" name="source_project_id" required>
+            {% for p in projects %}
+              <option value="{{ p.get('id') }}" {% if p.get('id') == active_project_id %}selected{% endif %}>{{ p.get('name') }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">В проект</label>
+          <select class="form-select" name="dest_project_id" required>
+            {% for p in projects %}
+              <option value="{{ p.get('id') }}">{{ p.get('name') }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12">
+          <div class="d-flex flex-wrap gap-3">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="move_accounts" id="moveAccounts" checked />
+              <label class="form-check-label" for="moveAccounts">Аккаунты</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="move_targets" id="moveTargets" checked />
+              <label class="form-check-label" for="moveTargets">Комментирование</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="move_reaction_targets" id="moveReactions" checked />
+              <label class="form-check-label" for="moveReactions">Реакции</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="move_monitor_targets" id="moveMonitor" checked />
+              <label class="form-check-label" for="moveMonitor">Мониторинг</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="move_manual_queue" id="moveManual" />
+              <label class="form-check-label" for="moveManual">Очередь ручного запуска</label>
+            </div>
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="border rounded-3 p-3 bg-body-tertiary">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <strong>Выбор элементов</strong>
+              <span class="text-muted small">Если ничего не отмечать — переносится всё выбранной категории.</span>
+            </div>
+
+            {% for p in projects %}
+              {% set pid = p.get('id') %}
+              <div class="project-selection" data-project-id="{{ pid }}">
+                <div class="text-muted small mb-2">Источник: {{ p.get('name') }}</div>
+
+                <div class="mb-3">
+                  <div class="d-flex align-items-center gap-2 mb-1">
+                    <strong>Аккаунты</strong>
+                    <button type="button" class="btn btn-sm btn-outline-secondary select-all" data-target="accounts-{{ pid }}">Все</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary select-none" data-target="accounts-{{ pid }}">Снять</button>
+                  </div>
+                  <div class="row g-2" id="accounts-{{ pid }}">
+                    {% for a in accounts_by_project.get(pid, []) %}
+                      <div class="col-md-4 col-lg-3">
+                        <div class="form-check">
+                          <input class="form-check-input" type="checkbox" name="selected_accounts" value="{{ a.get('session_name') }}" id="acc-{{ pid }}-{{ loop.index }}">
+                          <label class="form-check-label" for="acc-{{ pid }}-{{ loop.index }}">{{ a.get('session_name') }}</label>
+                        </div>
+                      </div>
+                    {% endfor %}
+                    {% if accounts_by_project.get(pid, [])|length == 0 %}
+                      <div class="text-muted small">Аккаунтов нет.</div>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <div class="mb-3">
+                  <div class="d-flex align-items-center gap-2 mb-1">
+                    <strong>Комментирование</strong>
+                    <button type="button" class="btn btn-sm btn-outline-secondary select-all" data-target="targets-{{ pid }}">Все</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary select-none" data-target="targets-{{ pid }}">Снять</button>
+                  </div>
+                  <div class="row g-2" id="targets-{{ pid }}">
+                    {% for t in targets_by_project.get(pid, []) %}
+                      <div class="col-md-6 col-lg-4">
+                        <div class="form-check">
+                          <input class="form-check-input" type="checkbox" name="selected_targets" value="{{ t.get('chat_id') }}" id="tgt-{{ pid }}-{{ loop.index }}">
+                          <label class="form-check-label" for="tgt-{{ pid }}-{{ loop.index }}">{{ t.get('chat_name') or t.get('chat_username') or t.get('chat_id') }}</label>
+                        </div>
+                      </div>
+                    {% endfor %}
+                    {% if targets_by_project.get(pid, [])|length == 0 %}
+                      <div class="text-muted small">Целей нет.</div>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <div class="mb-3">
+                  <div class="d-flex align-items-center gap-2 mb-1">
+                    <strong>Реакции</strong>
+                    <button type="button" class="btn btn-sm btn-outline-secondary select-all" data-target="reactions-{{ pid }}">Все</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary select-none" data-target="reactions-{{ pid }}">Снять</button>
+                  </div>
+                  <div class="row g-2" id="reactions-{{ pid }}">
+                    {% for t in reaction_by_project.get(pid, []) %}
+                      <div class="col-md-6 col-lg-4">
+                        <div class="form-check">
+                          <input class="form-check-input" type="checkbox" name="selected_reaction_targets" value="{{ t.get('chat_id') }}" id="react-{{ pid }}-{{ loop.index }}">
+                          <label class="form-check-label" for="react-{{ pid }}-{{ loop.index }}">{{ t.get('chat_name') or t.get('chat_username') or t.get('chat_id') }}</label>
+                        </div>
+                      </div>
+                    {% endfor %}
+                    {% if reaction_by_project.get(pid, [])|length == 0 %}
+                      <div class="text-muted small">Целей нет.</div>
+                    {% endif %}
+                  </div>
+                </div>
+
+                <div class="mb-1">
+                  <div class="d-flex align-items-center gap-2 mb-1">
+                    <strong>Мониторинг</strong>
+                    <button type="button" class="btn btn-sm btn-outline-secondary select-all" data-target="monitor-{{ pid }}">Все</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary select-none" data-target="monitor-{{ pid }}">Снять</button>
+                  </div>
+                  <div class="row g-2" id="monitor-{{ pid }}">
+                    {% for t in monitor_by_project.get(pid, []) %}
+                      <div class="col-md-6 col-lg-4">
+                        <div class="form-check">
+                          <input class="form-check-input" type="checkbox" name="selected_monitor_targets" value="{{ t.get('chat_id') }}" id="mon-{{ pid }}-{{ loop.index }}">
+                          <label class="form-check-label" for="mon-{{ pid }}-{{ loop.index }}">{{ t.get('chat_name') or t.get('chat_username') or t.get('chat_id') }}</label>
+                        </div>
+                      </div>
+                    {% endfor %}
+                    {% if monitor_by_project.get(pid, [])|length == 0 %}
+                      <div class="text-muted small">Целей нет.</div>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="col-12">
+          <button class="btn btn-primary" type="submit">
+            <i class="bi bi-arrow-left-right me-1"></i>Переместить
+          </button>
+          <div class="text-muted small mt-2">
+            Назначенные аккаунты и персональные промпты будут очищены, если таких аккаунтов нет в целевом проекте.
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle app-table">
+          <thead>
+            <tr>
+              <th>Проект</th>
+              <th class="text-muted small">ID</th>
+              <th>Аккаунты</th>
+              <th>Каналы</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in projects %}
+              {% set stats = project_stats.get(p.get('id'), {}) %}
+              <tr>
+                <td>
+                  <div class="d-flex align-items-center gap-2">
+                    <div>{{ p.get('name') }}</div>
+                    {% if p.get('id') == active_project_id %}
+                      <span class="badge text-bg-primary">Текущий</span>
+                    {% endif %}
+                  </div>
+                </td>
+                <td class="mono text-muted small">{{ p.get('id') }}</td>
+                <td>{{ stats.get('accounts', 0) }}</td>
+                <td>
+                  <span class="me-2">Комм.: {{ stats.get('targets', 0) }}</span>
+                  <span class="me-2">Реакции: {{ stats.get('reaction_targets', 0) }}</span>
+                  <span>Монит.: {{ stats.get('monitor_targets', 0) }}</span>
+                </td>
+                <td class="text-end">
+                  <div class="d-flex justify-content-end gap-2 flex-wrap">
+                    {% if p.get('id') != active_project_id %}
+                      <form method="post" action="/projects/select">
+                        <input type="hidden" name="project_id" value="{{ p.get('id') }}" />
+                        <button class="btn btn-sm btn-outline-primary" type="submit">Выбрать</button>
+                      </form>
+                    {% endif %}
+                    <form method="post" action="/projects/{{ p.get('id') }}/rename" class="d-flex gap-2 align-items-center">
+                      <input class="form-control form-control-sm" name="name" value="{{ p.get('name') }}" />
+                      <button class="btn btn-sm btn-outline-secondary" type="submit">Переименовать</button>
+                    </form>
+                    <form method="post" action="/projects/{{ p.get('id') }}/delete" onsubmit="return confirm('Удалить проект и все его каналы/аккаунты из настроек?');">
+                      <button class="btn btn-sm btn-outline-danger" type="submit" {% if p.get('id') == default_project_id %}disabled{% endif %}>
+                        Удалить
+                      </button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+            {% if projects|length == 0 %}
+              <tr><td colspan="5" class="text-center text-muted py-4">Проектов пока нет.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const sourceSelect = document.querySelector('select[name="source_project_id"]');
+      const sections = Array.from(document.querySelectorAll(".project-selection"));
+      const updateSections = () => {
+        const pid = sourceSelect?.value;
+        sections.forEach((el) => {
+          el.style.display = el.dataset.projectId === pid ? "block" : "none";
+        });
+      };
+      if (sourceSelect) {
+        sourceSelect.addEventListener("change", updateSections);
+        updateSections();
+      }
+
+      document.querySelectorAll(".select-all").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const targetId = btn.getAttribute("data-target");
+          const root = document.getElementById(targetId);
+          root?.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = true));
+        });
+      });
+      document.querySelectorAll(".select-none").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const targetId = btn.getAttribute("data-target");
+          const root = document.getElementById(targetId);
+          root?.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = false));
+        });
+      });
+    })();
+  </script>
+{% endblock %}

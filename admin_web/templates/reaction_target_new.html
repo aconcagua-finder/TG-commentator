@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Добавить реакции · TG-комментатор{% endblock %}
+{% block content %}
+  {% import "macros.html" as ui %}
+  <h1 class="h3 mb-3">Добавить чат для реакций</h1>
+  <div class="card">
+    <div class="card-body">
+      <form method="post" action="/reaction-targets/new" class="row g-3">
+        <div class="col-12">
+          <label class="form-label app-label">
+            <span class="app-label-text">ID / @username / ссылка-приглашение</span>
+            {{ ui.tip("Можно указать -100..., @username или ссылку t.me. Реакции ставятся на посты канала.") }}
+          </label>
+          <input class="form-control" name="chat_input" autocomplete="off" required />
+        </div>
+        <div class="col-12">
+          <label class="form-label app-label">
+            <span class="app-label-text">Список реакций (через пробел)</span>
+            {{ ui.tip("Эмодзи, которые бот будет выбирать. Если Telegram упирается в лимит уникальных реакций на сообщении — бот попробует использовать уже существующую реакцию.") }}
+          </label>
+          <input class="form-control" name="reactions" value="👍 ❤️ 🔥" />
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Кол-во реакций</span>
+            {{ ui.tip("Сколько эмодзи поставить одним аккаунтом на один пост (выбирается случайно из списка).") }}
+          </label>
+          <input class="form-control" type="number" min="1" step="1" inputmode="numeric" name="reaction_count" value="1" />
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Шанс (%)</span>
+            {{ ui.tip("Вероятность поставить реакцию на новый пост. Если не сработало — пост пропускается.") }}
+          </label>
+          <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="reaction_chance" value="80" />
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Пауза после поста (сек)</span>
+            {{ ui.tip("Сколько ждать после появления нового поста перед первой реакцией.") }}
+          </label>
+          <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="initial_reaction_delay" value="10" />
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Пауза между реакциями (сек)</span>
+            {{ ui.tip("Если несколько аккаунтов ставят реакции — пауза между их действиями.") }}
+          </label>
+          <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="delay_between_reactions" value="5" />
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Лимит/сутки</span>
+            {{ ui.tip("Суммарный лимит реакций/сутки по этому каналу (учитывает все аккаунты). 0 = без лимита.") }}
+          </label>
+          <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="daily_reaction_limit" value="999" />
+        </div>
+        <div class="col-12">
+          <button class="btn btn-primary" type="submit">Добавить</button>
+          <a class="btn btn-outline-secondary" href="/reaction-targets">Отмена</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

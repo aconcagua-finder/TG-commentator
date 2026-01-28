@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+{% block title %}AI · TG-комментатор{% endblock %}
+{% block content %}
+  <h1 class="h3 mb-3">Глобальные настройки AI</h1>
+  <p class="text-muted">
+    Здесь задаётся «мозг» по умолчанию и ключи. Без ключа выбранного провайдера генерация комментариев/проверки мониторинга не будет работать.
+    Если не уверены в названии модели — откройте <a href="/settings/ai/models">список моделей</a> (подтягивается из API по вашему ключу).
+  </p>
+  {% include "ai_tabs.html" %}
+  {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
+  {% set provider = settings.ai_provider %}
+  {% set current_key = settings.get('api_keys', {}).get(provider) %}
+  {% if not current_key %}
+    <div class="alert alert-warning">Ключ для выбранного провайдера <b>{{ provider|upper }}</b> не задан. Добавьте ключ ниже, иначе бот не сможет генерировать ответы.</div>
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">1) Провайдер по умолчанию</h2>
+          <form method="post" action="/settings/ai/provider" class="d-flex gap-2 align-items-end">
+            <div class="flex-grow-1">
+              <label class="form-label" for="ai_provider">Провайдер</label>
+              <select class="form-select" name="ai_provider" id="ai_provider">
+                <option value="gemini" {% if settings.ai_provider == 'gemini' %}selected{% endif %}>Gemini</option>
+                <option value="openai" {% if settings.ai_provider == 'openai' %}selected{% endif %}>OpenAI</option>
+                <option value="openrouter" {% if settings.ai_provider == 'openrouter' %}selected{% endif %}>OpenRouter</option>
+                <option value="deepseek" {% if settings.ai_provider == 'deepseek' %}selected{% endif %}>DeepSeek</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" type="submit">Сохранить</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">2) API ключи</h2>
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <span class="badge text-bg-light border">Gemini: {{ api_keys_masked.get('gemini','не задан') }}</span>
+            <span class="badge text-bg-light border">OpenAI: {{ api_keys_masked.get('openai','не задан') }}</span>
+            <span class="badge text-bg-light border">OpenRouter: {{ api_keys_masked.get('openrouter','не задан') }}</span>
+            <span class="badge text-bg-light border">DeepSeek: {{ api_keys_masked.get('deepseek','не задан') }}</span>
+          </div>
+          <form method="post" action="/settings/ai/api-keys">
+            <ul class="nav nav-pills mb-3" id="aiKeysTab" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link {% if provider == 'gemini' %}active{% endif %}" id="aiKeysGeminiTab" data-bs-toggle="pill" data-bs-target="#aiKeysGemini" type="button" role="tab" aria-controls="aiKeysGemini" aria-selected="{{ 'true' if provider == 'gemini' else 'false' }}">Gemini</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link {% if provider == 'openai' %}active{% endif %}" id="aiKeysOpenAITab" data-bs-toggle="pill" data-bs-target="#aiKeysOpenAI" type="button" role="tab" aria-controls="aiKeysOpenAI" aria-selected="{{ 'true' if provider == 'openai' else 'false' }}">OpenAI</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link {% if provider == 'openrouter' %}active{% endif %}" id="aiKeysOpenRouterTab" data-bs-toggle="pill" data-bs-target="#aiKeysOpenRouter" type="button" role="tab" aria-controls="aiKeysOpenRouter" aria-selected="{{ 'true' if provider == 'openrouter' else 'false' }}">OpenRouter</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link {% if provider == 'deepseek' %}active{% endif %}" id="aiKeysDeepSeekTab" data-bs-toggle="pill" data-bs-target="#aiKeysDeepSeek" type="button" role="tab" aria-controls="aiKeysDeepSeek" aria-selected="{{ 'true' if provider == 'deepseek' else 'false' }}">DeepSeek</button>
+              </li>
+            </ul>
+
+            <div class="tab-content" id="aiKeysTabContent">
+              <div class="tab-pane fade {% if provider == 'gemini' %}show active{% endif %}" id="aiKeysGemini" role="tabpanel" aria-labelledby="aiKeysGeminiTab" tabindex="0">
+                <label class="form-label app-label" for="gemini_key">
+                  <span class="app-label-text">Gemini API key</span>
+                </label>
+                <div class="input-group">
+                  <input class="form-control" type="password" name="gemini_key" id="gemini_key" placeholder="оставить без изменений" autocomplete="off" spellcheck="false" autocapitalize="off" />
+                  <button class="btn btn-outline-secondary" type="button" data-toggle-password="#gemini_key" aria-pressed="false">Показать</button>
+                </div>
+                <div class="form-check mt-1">
+                  <input class="form-check-input" type="checkbox" name="clear_gemini" id="clear_gemini" />
+                  <label class="form-check-label" for="clear_gemini">очистить</label>
+                </div>
+              </div>
+
+              <div class="tab-pane fade {% if provider == 'openai' %}show active{% endif %}" id="aiKeysOpenAI" role="tabpanel" aria-labelledby="aiKeysOpenAITab" tabindex="0">
+                <label class="form-label app-label" for="openai_key">
+                  <span class="app-label-text">OpenAI API key</span>
+                </label>
+                <div class="input-group">
+                  <input class="form-control" type="password" name="openai_key" id="openai_key" placeholder="оставить без изменений" autocomplete="off" spellcheck="false" autocapitalize="off" />
+                  <button class="btn btn-outline-secondary" type="button" data-toggle-password="#openai_key" aria-pressed="false">Показать</button>
+                </div>
+                <div class="form-check mt-1">
+                  <input class="form-check-input" type="checkbox" name="clear_openai" id="clear_openai" />
+                  <label class="form-check-label" for="clear_openai">очистить</label>
+                </div>
+              </div>
+
+              <div class="tab-pane fade {% if provider == 'openrouter' %}show active{% endif %}" id="aiKeysOpenRouter" role="tabpanel" aria-labelledby="aiKeysOpenRouterTab" tabindex="0">
+                <label class="form-label app-label" for="openrouter_key">
+                  <span class="app-label-text">OpenRouter API key</span>
+                </label>
+                <div class="input-group">
+                  <input class="form-control" type="password" name="openrouter_key" id="openrouter_key" placeholder="оставить без изменений" autocomplete="off" spellcheck="false" autocapitalize="off" />
+                  <button class="btn btn-outline-secondary" type="button" data-toggle-password="#openrouter_key" aria-pressed="false">Показать</button>
+                </div>
+                <div class="form-check mt-1">
+                  <input class="form-check-input" type="checkbox" name="clear_openrouter" id="clear_openrouter" />
+                  <label class="form-check-label" for="clear_openrouter">очистить</label>
+                </div>
+              </div>
+
+              <div class="tab-pane fade {% if provider == 'deepseek' %}show active{% endif %}" id="aiKeysDeepSeek" role="tabpanel" aria-labelledby="aiKeysDeepSeekTab" tabindex="0">
+                <label class="form-label app-label" for="deepseek_key">
+                  <span class="app-label-text">DeepSeek API key</span>
+                </label>
+                <div class="input-group">
+                  <input class="form-control" type="password" name="deepseek_key" id="deepseek_key" placeholder="оставить без изменений" autocomplete="off" spellcheck="false" autocapitalize="off" />
+                  <button class="btn btn-outline-secondary" type="button" data-toggle-password="#deepseek_key" aria-pressed="false">Показать</button>
+                </div>
+                <div class="form-check mt-1">
+                  <input class="form-check-input" type="checkbox" name="clear_deepseek" id="clear_deepseek" />
+                  <label class="form-check-label" for="clear_deepseek">очистить</label>
+                </div>
+              </div>
+            </div>
+
+            <button class="btn btn-primary mt-3" type="submit">Сохранить ключи</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3 mt-0">
+    <div class="col-12">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">3) Модели (необязательно)</h2>
+          <p class="text-muted small mb-2">Если не трогать — используются рекомендуемые значения по умолчанию. Если указали несуществующую модель, генерация может перестать работать.</p>
+          <form method="post" action="/settings/ai/models">
+            <ul class="nav nav-pills mb-3" id="aiModelsTab" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link {% if provider == 'gemini' %}active{% endif %}" id="aiModelsGeminiTab" data-bs-toggle="pill" data-bs-target="#aiModelsGemini" type="button" role="tab" aria-controls="aiModelsGemini" aria-selected="{{ 'true' if provider == 'gemini' else 'false' }}">Gemini</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link {% if provider == 'openai' %}active{% endif %}" id="aiModelsOpenAITab" data-bs-toggle="pill" data-bs-target="#aiModelsOpenAI" type="button" role="tab" aria-controls="aiModelsOpenAI" aria-selected="{{ 'true' if provider == 'openai' else 'false' }}">OpenAI</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link {% if provider == 'openrouter' %}active{% endif %}" id="aiModelsOpenRouterTab" data-bs-toggle="pill" data-bs-target="#aiModelsOpenRouter" type="button" role="tab" aria-controls="aiModelsOpenRouter" aria-selected="{{ 'true' if provider == 'openrouter' else 'false' }}">OpenRouter</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link {% if provider == 'deepseek' %}active{% endif %}" id="aiModelsDeepSeekTab" data-bs-toggle="pill" data-bs-target="#aiModelsDeepSeek" type="button" role="tab" aria-controls="aiModelsDeepSeek" aria-selected="{{ 'true' if provider == 'deepseek' else 'false' }}">DeepSeek</button>
+              </li>
+            </ul>
+
+            <div class="tab-content" id="aiModelsTabContent">
+              <div class="tab-pane fade {% if provider == 'gemini' %}show active{% endif %}" id="aiModelsGemini" role="tabpanel" aria-labelledby="aiModelsGeminiTab" tabindex="0">
+                <div class="row g-2">
+                  <div class="col-12 col-lg-4">
+                    <label class="form-label">Gemini · комментарии</label>
+                    <input class="form-control" name="gemini_chat" value="{{ settings.get('models', {}).get('gemini_chat','') }}" />
+                    <div class="form-text">Напр.: <code>gemini-3-flash-preview</code> (есть fallback на <code>gemini-2.5-flash</code>)</div>
+                  </div>
+                  <div class="col-12 col-lg-4">
+                    <label class="form-label">Gemini · проверка мониторинга</label>
+                    <input class="form-control" name="gemini_eval" value="{{ settings.get('models', {}).get('gemini_eval','') }}" />
+                  </div>
+                  <div class="col-12 col-lg-4">
+                    <label class="form-label">Gemini · генерация имён</label>
+                    <input class="form-control" name="gemini_names" value="{{ settings.get('models', {}).get('gemini_names','') }}" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="tab-pane fade {% if provider == 'openai' %}show active{% endif %}" id="aiModelsOpenAI" role="tabpanel" aria-labelledby="aiModelsOpenAITab" tabindex="0">
+                <div class="row g-2">
+                  <div class="col-12">
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                      <div class="text-muted small me-2">Пресеты (заполняют поля ниже):</div>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#openai_chat_model":"gpt-5.2-chat-latest","#openai_eval_model":"gpt-5.2"}'
+                      >
+                        GPT‑5.2
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#openai_chat_model":"gpt-5-mini","#openai_eval_model":"gpt-5-mini"}'
+                      >
+                        GPT‑5 mini
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#openai_chat_model":"gpt-4.1","#openai_eval_model":"gpt-4.1-mini"}'
+                      >
+                        GPT‑4.1
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#openai_chat_model":"gpt-4.1-mini","#openai_eval_model":"gpt-4.1-mini"}'
+                      >
+                        GPT‑4.1 mini
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="col-12 col-lg-4 mt-3">
+                    <label class="form-label" for="openai_chat_model">OpenAI · комментарии</label>
+                    <input
+                      class="form-control"
+                      id="openai_chat_model"
+                      name="openai_chat"
+                      value="{{ settings.get('models', {}).get('openai_chat','') }}"
+                      list="openai_chat_models"
+                      placeholder="например: gpt-5.2-chat-latest"
+                    />
+                    <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрый выбор модели для комментариев (OpenAI)">
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-5.2-chat-latest">GPT‑5.2 chat</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-5.2">GPT‑5.2</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-5-mini">GPT‑5 mini</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-4.1">GPT‑4.1</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-4.1-mini">GPT‑4.1 mini</button>
+                    </div>
+                    <datalist id="openai_chat_models">
+                      <option value="gpt-5.2-chat-latest"></option>
+                      <option value="gpt-5.2"></option>
+                      <option value="gpt-5-mini"></option>
+                      <option value="gpt-4.1"></option>
+                      <option value="gpt-4.1-mini"></option>
+                      <option value="gpt-4o"></option>
+                      <option value="gpt-4o-mini"></option>
+                    </datalist>
+                    <div class="form-text">Совет: если нет доступа к GPT‑5.2 — попробуйте <code>gpt-4.1</code> или <code>gpt-4.1-mini</code>.</div>
+                  </div>
+                  <div class="col-12 col-lg-4 mt-3">
+                    <label class="form-label" for="openai_eval_model">OpenAI · проверка мониторинга</label>
+                    <input
+                      class="form-control"
+                      id="openai_eval_model"
+                      name="openai_eval"
+                      value="{{ settings.get('models', {}).get('openai_eval','') }}"
+                      list="openai_eval_models"
+                      placeholder="например: gpt-5.2"
+                    />
+                    <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрый выбор модели для мониторинга (OpenAI)">
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_eval_model" data-set-value="gpt-5.2">GPT‑5.2</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_eval_model" data-set-value="gpt-5-mini">GPT‑5 mini</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_eval_model" data-set-value="gpt-4.1-mini">GPT‑4.1 mini</button>
+                    </div>
+                    <datalist id="openai_eval_models">
+                      <option value="gpt-5.2"></option>
+                      <option value="gpt-5-mini"></option>
+                      <option value="gpt-4.1-mini"></option>
+                      <option value="gpt-4o-mini"></option>
+                    </datalist>
+                    <div class="form-text">Если важна скорость/стоимость — чаще всего хватает <code>gpt-4.1-mini</code>.</div>
+                  </div>
+                  <div class="col-12 col-lg-4 mt-3">
+                    <label class="form-label">OpenAI · аватары (ребрендинг)</label>
+                    <input class="form-control" name="openai_image" value="{{ settings.get('models', {}).get('openai_image','') }}" />
+                    <div class="form-text">Напр.: <code>gpt-image-1</code> (есть fallback на <code>dall-e-3</code>)</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="tab-pane fade {% if provider == 'openrouter' %}show active{% endif %}" id="aiModelsOpenRouter" role="tabpanel" aria-labelledby="aiModelsOpenRouterTab" tabindex="0">
+                <div class="row g-2">
+                  <div class="col-12">
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                      <div class="text-muted small me-2">Пресеты (заполняют поля ниже):</div>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#openrouter_chat_model":"x-ai/grok-4.1-fast","#openrouter_eval_model":"x-ai/grok-4.1-fast"}'
+                      >
+                        Grok 4.1 Fast
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#openrouter_chat_model":"x-ai/grok-4-fast","#openrouter_eval_model":"x-ai/grok-4-fast"}'
+                      >
+                        Grok 4 Fast
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#openrouter_chat_model":"openai/gpt-5.2-chat","#openrouter_eval_model":"openai/gpt-5.2"}'
+                      >
+                        OpenAI GPT‑5.2
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#openrouter_chat_model":"openai/gpt-4.1","#openrouter_eval_model":"openai/gpt-4.1-mini"}'
+                      >
+                        OpenAI GPT‑4.1
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#openrouter_chat_model":"openai/gpt-4.1-mini","#openrouter_eval_model":"openai/gpt-4.1-mini"}'
+                      >
+                        OpenAI 4.1 mini
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="col-12 col-lg-6 mt-2">
+                    <label class="form-label" for="openrouter_chat_model">OpenRouter · комментарии</label>
+                    <input
+                      class="form-control"
+                      id="openrouter_chat_model"
+                      name="openrouter_chat"
+                      value="{{ settings.get('models', {}).get('openrouter_chat','') }}"
+                      list="openrouter_chat_models"
+                      placeholder="например: x-ai/grok-4.1-fast"
+                    />
+                    <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрый выбор модели для комментариев (OpenRouter)">
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="x-ai/grok-4.1-fast">Grok 4.1 Fast</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="x-ai/grok-4-fast">Grok 4 Fast</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="openai/gpt-5.2-chat">GPT‑5.2 chat</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="openai/gpt-4.1-mini">GPT‑4.1 mini</button>
+                    </div>
+                    <datalist id="openrouter_chat_models">
+                      <option value="x-ai/grok-4.1-fast"></option>
+                      <option value="x-ai/grok-4-fast"></option>
+                      <option value="x-ai/grok-4.1"></option>
+                      <option value="x-ai/grok-4"></option>
+                      <option value="openai/gpt-5.2-chat"></option>
+                      <option value="openai/gpt-5.2"></option>
+                      <option value="openai/gpt-4.1"></option>
+                      <option value="openai/gpt-4.1-mini"></option>
+                    </datalist>
+                    <div class="form-text">ID модели берите в <a href="/settings/ai/models?provider=openrouter">списке моделей OpenRouter</a> (там же видно контекст и поддерживаемые параметры).</div>
+                  </div>
+
+                  <div class="col-12 col-lg-6 mt-2">
+                    <label class="form-label" for="openrouter_eval_model">OpenRouter · проверка мониторинга</label>
+                    <input
+                      class="form-control"
+                      id="openrouter_eval_model"
+                      name="openrouter_eval"
+                      value="{{ settings.get('models', {}).get('openrouter_eval','') }}"
+                      list="openrouter_eval_models"
+                      placeholder="например: openai/gpt-4.1-mini"
+                    />
+                    <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрый выбор модели для мониторинга (OpenRouter)">
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_eval_model" data-set-value="x-ai/grok-4.1-fast">Grok 4.1 Fast</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_eval_model" data-set-value="openai/gpt-4.1-mini">GPT‑4.1 mini</button>
+                    </div>
+                    <datalist id="openrouter_eval_models">
+                      <option value="x-ai/grok-4.1-fast"></option>
+                      <option value="x-ai/grok-4-fast"></option>
+                      <option value="openai/gpt-5.2"></option>
+                      <option value="openai/gpt-4.1-mini"></option>
+                    </datalist>
+                    <div class="form-text">Для мониторинга обычно достаточно более быстрой/дешёвой модели.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="tab-pane fade {% if provider == 'deepseek' %}show active{% endif %}" id="aiModelsDeepSeek" role="tabpanel" aria-labelledby="aiModelsDeepSeekTab" tabindex="0">
+                <div class="row g-2">
+                  <div class="col-12 col-lg-6">
+                    <label class="form-label">DeepSeek · комментарии</label>
+                    <input class="form-control" name="deepseek_chat" value="{{ settings.get('models', {}).get('deepseek_chat','') }}" />
+                    <div class="form-text">Напр.: <code>deepseek-chat</code></div>
+                  </div>
+                  <div class="col-12 col-lg-6">
+                    <label class="form-label">DeepSeek · проверка мониторинга</label>
+                    <input class="form-control" name="deepseek_eval" value="{{ settings.get('models', {}).get('deepseek_eval','') }}" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="mt-3">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="reset_models" id="reset_models" />
+                <label class="form-check-label" for="reset_models">сбросить все модели к рекомендуемым</label>
+              </div>
+            </div>
+
+            <div class="mt-2">
+              <button class="btn btn-primary" type="submit">Сохранить модели</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

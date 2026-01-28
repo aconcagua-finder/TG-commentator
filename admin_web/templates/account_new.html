@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Добавить аккаунт · TG-комментатор{% endblock %}
+{% block content %}
+  <h1 class="h3 mb-3">Добавить аккаунт</h1>
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Через session string</h2>
+          <form method="post" action="/accounts/new/session">
+            <div class="mb-2">
+              <label class="form-label">Имя сессии (session_name)</label>
+              <input class="form-control" name="session_name" placeholder="acc_01" required />
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Строка сессии (session_string)</label>
+              <textarea class="form-control mono" name="session_string" rows="4" required></textarea>
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Прокси (опционально)</label>
+              <select class="form-select" name="proxy_id">
+                <option value="">без прокси</option>
+                {% for p in proxies %}
+                  <option value="{{ p.id }}">#{{ p.id }} · {{ p.ip }} ({{ p.country }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Persona (опционально)</label>
+              <select class="form-select" name="persona_id">
+                <option value="">без роли</option>
+                {% for pid, pdata in personas.items() %}
+                  <option value="{{ pid }}">{{ pdata.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <button class="btn btn-primary" type="submit">Добавить</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Вход по телефону</h2>
+          <form method="post" action="/accounts/new/phone/start">
+            <div class="mb-2">
+              <label class="form-label">Имя сессии (session_name)</label>
+              <input class="form-control" name="session_name" placeholder="acc_02" required />
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Телефон (+7999...)</label>
+              <input class="form-control" type="tel" inputmode="tel" name="phone" placeholder="+79991234567" required />
+            </div>
+            <div class="mb-2">
+              <label class="form-label">Прокси (опционально)</label>
+              <select class="form-select" name="proxy_id">
+                <option value="">без прокси</option>
+                {% for p in proxies %}
+                  <option value="{{ p.id }}">#{{ p.id }} · {{ p.ip }} ({{ p.country }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <button class="btn btn-primary" type="submit">Отправить код</button>
+          </form>
+          <p class="text-muted small mt-2 mb-0">Код и 2FA вводятся на следующих шагах.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

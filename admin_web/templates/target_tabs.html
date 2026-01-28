@@ -1,0 +1,19 @@
+{% set chat_id = target.chat_id %}
+{% set base = "/targets/" ~ chat_id %}
+{% set cur = request.url.path %}
+
+<ul class="nav nav-pills flex-wrap gap-1 mb-3" aria-label="Навигация по настройкам чата">
+  <li class="nav-item">
+    <a class="nav-link {% if cur == base %}active{% endif %}" href="{{ base }}">Настройки</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if cur.startswith(base ~ '/prompts') %}active{% endif %}" href="{{ base }}/prompts">Промпты</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if cur.startswith(base ~ '/triggers') %}active{% endif %}" href="{{ base }}/triggers">Триггеры</a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if cur.startswith(base ~ '/scenario') %}active{% endif %}" href="{{ base }}/scenario">Сценарий</a>
+  </li>
+</ul>
+

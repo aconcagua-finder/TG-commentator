@@ -1,0 +1,44 @@
+{
+  "status": "stopped",
+  "ai_provider": "deepseek",
+  "api_keys": {},
+  "targets": [],
+  "reaction_targets": [],
+  "monitor_targets": [],
+  "models": {
+    "openai_chat": "gpt-5.2-chat-latest",
+    "openai_eval": "gpt-5.2",
+    "openai_image": "gpt-image-1",
+    "openrouter_chat": "x-ai/grok-4.1-fast",
+    "openrouter_eval": "openai/gpt-4.1-mini",
+    "deepseek_chat": "deepseek-chat",
+    "deepseek_eval": "deepseek-chat",
+    "gemini_chat": "gemini-3-flash-preview",
+    "gemini_eval": "gemini-3-flash-preview",
+    "gemini_names": "gemini-3-flash-preview"
+  },
+  "humanization": {
+    "temperature": null,
+    "repetition_penalty": 0,
+    "typo_chance": 0,
+    "lowercase_chance": 80,
+    "split_chance": 20,
+    "comma_skip_chance": 30,
+    "max_words": 0,
+    "max_tokens": 90,
+    "similarity_threshold": 0.68,
+    "similarity_max_retries": 2
+  },
+  "blacklist": [],
+  "personas": {},
+  "manual_queue": [],
+  "profile_tasks": {},
+  "projects": [
+    {
+      "id": "default",
+      "name": "Default project",
+      "created_at": "2026-01-28T00:00:00+00:00"
+    }
+  ],
+  "active_project_id": "default"
+}

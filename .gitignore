@@ -1,3 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+
+# Virtualenv
+.venv/
+venv/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+
+# Runtime config/secrets
 .env
-.idea
-.venv
+.env.*
+!.env.example
+config.ini
+
+# Runtime data (root)
+accounts.json
+ai_settings.json
+actions.sqlite*
+comment_logs.json
+proxies.txt
+
+# Runtime data (./data)
+data/accounts.json
+data/ai_settings.json
+data/actions.sqlite*
+data/comment_logs.json
+data/proxies.txt

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Быстрый старт · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 class="h3 mb-1">Быстрый старт</h1>
+      <div class="text-muted">Короткий гайд: что сделать, чтобы всё заработало, и где что настраивается.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="/">На дашборд</a>
+  </div>
+
+  <div class="alert alert-warning">
+    <div class="fw-semibold mb-1">Безопасность</div>
+    <div class="small">Поменяйте пароль веб‑админки через `.env` (см. `.env.example`). Не публикуйте админку в интернет без нормальной защиты.</div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h2 class="h5 mb-3">Последовательность (рекомендуется)</h2>
+      <ol class="list-group list-group-numbered">
+        {% for s in steps %}
+          <li class="list-group-item d-flex justify-content-between align-items-start">
+            <div class="ms-2 me-auto">
+              <div class="fw-semibold">
+                {{ s.title }}
+                {% if s.optional %}
+                  <span class="badge text-bg-light border ms-2">опционально</span>
+                {% endif %}
+              </div>
+              <div class="text-muted small">{{ s.hint }}</div>
+            </div>
+            <div class="text-end">
+              {% if s.done %}
+                <span class="badge text-bg-success">готово</span>
+              {% else %}
+                <span class="badge text-bg-secondary">нужно</span>
+              {% endif %}
+              {% if s.href %}
+                <div class="mt-2"><a class="btn btn-sm btn-outline-primary" href="{{ s.href }}">{{ s.action }}</a></div>
+              {% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <h2 class="h5 mb-3">Что где настраивается</h2>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle app-table">
+          <thead>
+            <tr>
+              <th>Раздел</th>
+              <th>Для чего</th>
+              <th>Когда идти</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><a href="/settings/ai">AI</a></td>
+              <td>Провайдер по умолчанию и API ключи.</td>
+              <td>Всегда сначала — без ключей генерация не пойдёт.</td>
+            </tr>
+            <tr>
+              <td><a href="/accounts">Аккаунты</a></td>
+              <td>Добавление/проверка аккаунтов, сон, прокси, роль (persona).</td>
+              <td>После AI — нужен хотя бы 1 авторизованный аккаунт.</td>
+            </tr>
+            <tr>
+              <td><a href="/targets">Комментирование</a></td>
+              <td>Список чатов, где бот будет комментировать; внутри — промпты/триггеры/сценарии.</td>
+              <td>Когда есть аккаунты — добавьте 1–2 чата и настройте.</td>
+            </tr>
+            <tr>
+              <td><a href="/reaction-targets">Реакции</a></td>
+              <td>Авто‑реакции (эмодзи) на новые посты.</td>
+              <td>Опционально, если хотите «оживить» активность.</td>
+            </tr>
+            <tr>
+              <td><a href="/monitor-targets">Мониторинг</a></td>
+              <td>Отслеживание постов в каналах по промпту и уведомления вам.</td>
+              <td>Опционально, если нужен «радар» по теме.</td>
+            </tr>
+            <tr>
+              <td><a href="/proxies">Прокси</a></td>
+              <td>Хранилище прокси + проверка; назначаются на аккаунты.</td>
+              <td>Опционально, если нужно распределять трафик или обходить лимиты.</td>
+            </tr>
+            <tr>
+              <td><a href="/manual">Ручной запуск</a></td>
+              <td>Добавляет задачу «обработать конкретный пост по ссылке» в очередь.</td>
+              <td>Когда нужно отработать старый пост или проверить настройки.</td>
+            </tr>
+            <tr>
+              <td><a href="/rebrand">Ребрендинг</a></td>
+              <td>Меняет имена/аватары аккаунтов по теме или по донору.</td>
+              <td>Опционально, обычно после того как всё стабильно работает.</td>
+            </tr>
+            <tr>
+              <td><a href="/stats">Статистика</a></td>
+              <td>Логи действий из SQLite и экспорт в Excel.</td>
+              <td>После запуска — чтобы понимать, что и кто сделал.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}

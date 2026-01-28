@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Статистика · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 class="h3 mb-1">Статистика</h1>
+      <div class="text-muted">Период: {{ period }}, всего: {{ total }}</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="/stats?period=day">День</a>
+      <a class="btn btn-outline-secondary" href="/stats?period=week">Неделя</a>
+      <a class="btn btn-outline-secondary" href="/stats?period=month">Месяц</a>
+      <a class="btn btn-primary" href="/stats/export?period={{ period }}">Экспорт .xlsx</a>
+    </div>
+  </div>
+  <p class="text-muted">Это лог действий из `actions.sqlite` (комментарии/реакции/ответы/пропуски). Можно выгрузить в Excel.</p>
+  {% if total == 0 %}
+    <div class="alert alert-info">Пока нет логов. Запустите комментатор и дождитесь первых действий — записи появятся здесь.</div>
+  {% endif %}
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle app-table">
+          <caption class="visually-hidden">Логи действий (комментарии/реакции/ответы)</caption>
+          <thead>
+            <tr>
+              <th>Тип</th>
+              <th>Дата</th>
+              <th>Канал</th>
+              <th>Аккаунт</th>
+              <th>Пост</th>
+              <th>Текст</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                {% set lt = r.log_type %}
+                {% if lt == 'reaction' %}
+                  {% set lt_label = 'Реакция' %}
+                {% elif lt == 'comment' %}
+                  {% set lt_label = 'Комментарий' %}
+                {% elif lt == 'comment_reply' %}
+                  {% set lt_label = 'Ответ' %}
+                {% elif lt == 'comment_failed' %}
+                  {% set lt_label = 'Ошибка' %}
+                {% elif lt == 'comment_skip' %}
+                  {% set lt_label = 'Пропуск' %}
+                {% elif lt == 'monitoring' %}
+                  {% set lt_label = 'Мониторинг' %}
+                {% elif lt == 'forbidden' %}
+                  {% set lt_label = 'Запрещено' %}
+                {% else %}
+                  {% set lt_label = lt %}
+                {% endif %}
+                <td title="{{ lt }}" class="small">{{ lt_label }}</td>
+                <td class="mono small">{{ r.timestamp|human_dt }}</td>
+                <td>{{ r.channel_name }}</td>
+                <td class="mono">{{ r.account_session_name or '—' }}</td>
+                <td class="mono">{{ r.post_id }}</td>
+                <td class="small">{{ r.content }}</td>
+              </tr>
+            {% endfor %}
+            {% if rows|length == 0 %}
+              <tr><td colspan="6" class="text-center text-muted py-4">Записей нет.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex justify-content-between align-items-center mt-3">
+    <div class="text-muted">Страница {{ page + 1 }} из {{ total_pages }}</div>
+    <div class="d-flex gap-2">
+      {% if page > 0 %}
+        <a class="btn btn-outline-secondary" href="/stats?period={{ period }}&page={{ page - 1 }}">Назад</a>
+      {% endif %}
+      {% if page + 1 < total_pages %}
+        <a class="btn btn-outline-secondary" href="/stats?period={{ period }}&page={{ page + 1 }}">Вперёд</a>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

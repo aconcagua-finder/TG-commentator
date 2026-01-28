@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Дашборд · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex align-items-center justify-content-between mb-4">
+    <div>
+      <h1 class="h3 mb-1">Дашборд</h1>
+      <div class="text-muted">Статус: <span class="badge text-bg-{{ 'success' if settings.status == 'running' else 'secondary' }}">{{ settings.status }}</span></div>
+      {% if settings_err %}
+        <div class="text-danger small">ai_settings.json: {{ settings_err }}</div>
+      {% endif %}
+      {% if accounts_err %}
+        <div class="text-danger small">accounts.json: {{ accounts_err }}</div>
+      {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+      {% if settings.status == 'running' %}
+        <form method="post" action="/status/stop"><button class="btn btn-outline-danger" type="submit"><i class="bi bi-stop-circle me-1"></i>Остановить</button></form>
+      {% else %}
+        <form method="post" action="/status/start"><button class="btn btn-success" type="submit"><i class="bi bi-play-circle me-1"></i>Запустить</button></form>
+      {% endif %}
+      <a class="btn btn-outline-primary" href="/guide"><i class="bi bi-rocket-takeoff me-1"></i>Быстрый старт</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted small">Аккаунты</div>
+          <div class="display-6">{{ accounts|length }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted small">Комментирование</div>
+          <div class="display-6">{{ settings.targets|length }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted small">Реакции</div>
+          <div class="display-6">{{ settings.reaction_targets|length }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-3">
+      <div class="card">
+        <div class="card-body">
+          <div class="text-muted small">Мониторинг</div>
+          <div class="display-6">{{ settings.monitor_targets|length }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-6">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Прокси / Триггеры / Сценарии</h2>
+          <div class="d-flex flex-wrap gap-2">
+            <span class="badge text-bg-light">Прокси: {{ proxies_total }} (active: {{ proxies_active }})</span>
+            <span class="badge text-bg-light">Триггеры: {{ triggers_total }}</span>
+            <span class="badge text-bg-light">Сценарии: {{ scenarios_total }}</span>
+          </div>
+          <div class="mt-3">
+            <a class="btn btn-sm btn-outline-primary" href="/proxies">Открыть прокси</a>
+            <a class="btn btn-sm btn-outline-primary" href="/targets">Открыть цели</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-6">
+        <div class="card">
+          <div class="card-body">
+            <h2 class="h5">Ручной запуск по ссылке</h2>
+            <form method="post" action="/manual/run" class="d-flex gap-2">
+            <label class="visually-hidden" for="manual_link">Ссылка на пост</label>
+            <input class="form-control" id="manual_link" name="link" placeholder="https://t.me/channel/123" required />
+            <button class="btn btn-primary" type="submit">Добавить</button>
+            </form>
+            <div class="text-muted small mt-2">Добавляет задание в manual_queue, commentator.py подхватит автоматически.</div>
+          </div>
+        </div>
+    </div>
+  </div>
+{% endblock %}

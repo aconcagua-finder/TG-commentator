@@ -1,9 +1,14 @@
 python-telegram-bot
 telethon
-google-generativeai
+google-genai
 openai
 pysocks
 httpx[socks]
 pandas
 openpyxl
 cryptg
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+itsdangerous

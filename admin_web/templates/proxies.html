@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Прокси · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 class="h3 mb-1">Прокси</h1>
+      <div class="text-muted">Всего: {{ total }}, active: {{ active }}, dead: {{ dead }}</div>
+    </div>
+    <div class="d-flex gap-2">
+      <form method="post" action="/proxies/check-all">
+        <button class="btn btn-primary" type="submit">Проверить все</button>
+      </form>
+      <form method="post" action="/proxies/delete-dead" onsubmit="return confirm('Удалить все нерабочие прокси?');">
+        <button class="btn btn-outline-danger" type="submit">Удалить dead</button>
+      </form>
+    </div>
+  </div>
+  <p class="text-muted">Прокси хранятся в базе и назначаются на аккаунты (раздел «Аккаунты»). Удобно, если нужно распределять нагрузку или обходить ограничения.</p>
+  {% if total == 0 %}
+    <div class="alert alert-info">Если прокси не нужны — пропустите. Если нужны — вставьте список ниже (по одному в строке) и нажмите «Импортировать».</div>
+  {% endif %}
+
+  <div class="row g-3">
+    <div class="col-12 col-lg-5">
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Добавить</h2>
+          <form method="post" action="/proxies/add">
+            <label class="form-label" for="proxies_text">Список прокси (по одному в строке)</label>
+            <textarea class="form-control mono" name="proxies_text" id="proxies_text" rows="6" placeholder="protocol://user:password@ip:port" required></textarea>
+            <button class="btn btn-primary mt-2" type="submit">Импортировать</button>
+          </form>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-7">
+      <div class="card">
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle app-table">
+              <caption class="visually-hidden">Список прокси</caption>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>IP</th>
+                  <th>Страна</th>
+                  <th>Статус</th>
+                  <th>URL</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for p in proxies %}
+                  <tr>
+                    <td class="mono">{{ p.id }}</td>
+                    <td class="mono">{{ p.ip or '—' }}</td>
+                    <td>{{ p.country or '—' }}</td>
+                    <td>
+                      <span class="badge text-bg-{{ 'success' if p.status=='active' else 'secondary' }}">{{ p.status }}</span>
+                    </td>
+                    <td class="mono small" title="{{ p.url }}">{{ p.url[:32] }}…</td>
+                    <td class="text-end">
+                      <form method="post" action="/proxies/{{ p.id }}/check" class="d-inline">
+                        <button class="btn btn-sm btn-outline-primary" type="submit">Проверить</button>
+                      </form>
+                      <form method="post" action="/proxies/{{ p.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить прокси?');">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">Удалить</button>
+                      </form>
+                    </td>
+                  </tr>
+                {% endfor %}
+                {% if proxies|length == 0 %}
+                  <tr><td colspan="6" class="text-center text-muted py-4">Прокси нет.</td></tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}
