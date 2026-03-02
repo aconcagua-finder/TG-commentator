@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Выбор цели · Обсуждения{% endblock %}
+{% block content %}
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <a class="btn btn-sm btn-outline-secondary" href="/discussions"><i class="bi bi-arrow-left me-1"></i>К списку целей</a>
+      <h1 class="h4 mb-0 mt-2">В этом чате несколько целей</h1>
+      <div class="text-muted small mono">{{ chat_id }}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <div class="list-group">
+        {% for t in targets %}
+          {% set title = (t.get('title') or '').strip() %}
+          {% set chat_name = t.get('chat_name') or '—' %}
+          {% set chat_id = (t.get('chat_id') or '') %}
+          {% set linked_id = (t.get('linked_chat_id') or '') %}
+          {% set has_linked = linked_id and linked_id != chat_id %}
+          <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-start gap-3" href="/discussions/targets/{{ t.get('id') }}">
+            <div class="me-auto">
+              <div class="fw-semibold">{{ title or 'Без названия' }}</div>
+              <div class="text-muted small">{{ chat_name }}</div>
+              {% if has_linked %}
+                {% set linked_name = (t.get('linked_chat_name') or '') %}
+                <div class="text-muted small">Обсуждение: {{ linked_name or linked_id }}</div>
+                <div class="text-muted small mono">{{ chat_id }} · linked={{ linked_id }}</div>
+              {% else %}
+                <div class="text-muted small mono">{{ chat_id }}</div>
+              {% endif %}
+            </div>
+            <div class="text-muted small text-end">
+              {% if t.get('enabled', True) %}
+                <span class="badge text-bg-success">вкл</span>
+              {% else %}
+                <span class="badge text-bg-secondary">выкл</span>
+              {% endif %}
+              {% if t.get('operator_session_name') %}
+                <div class="mono mt-1">{{ t.get('operator_session_name') }}</div>
+              {% endif %}
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+{% endblock %}

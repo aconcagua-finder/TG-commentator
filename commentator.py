@@ -4,6 +4,7 @@ import json
 import logging
 import asyncio
 import random
+import hashlib
 import httpx
 import os
 import re
@@ -12,7 +13,10 @@ import base64
 import time
 import collections
 import sqlite3
+import uuid
 from datetime import datetime, timezone
+from contextlib import contextmanager
+from typing import Any, Iterator, Literal
 
 from google import genai
 from google.genai import types as genai_types
@@ -23,18 +27,26 @@ from telethon.errors import (
     UserDeactivatedBanError, FloodWaitError, ChatWriteForbiddenError,
     ChannelPrivateError, ChatAdminRequiredError, ReactionInvalidError,
     ReactionsTooManyError, UserAlreadyParticipantError, InviteHashExpiredError,
-    InviteHashInvalidError
+    InviteHashInvalidError, RPCError
 )
 from telethon.tl.functions.channels import JoinChannelRequest, GetFullChannelRequest
 from telethon.tl.functions.messages import SendReactionRequest, ImportChatInviteRequest, GetDiscussionMessageRequest
 from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
 from telethon import utils as tg_utils
 from telethon.tl import types as tl_types
-from telethon.tl.functions.account import UpdatePersonalChannelRequest, UpdateProfileRequest
-from telethon.tl.types import ReactionEmoji
+from telethon.tl.functions.account import UpdatePersonalChannelRequest, UpdateProfileRequest, UpdateUsernameRequest
+from telethon.tl.types import InputPeerChannel, ReactionEmoji
 
 from app_paths import ACCOUNTS_FILE, CONFIG_FILE, DB_FILE, OLD_LOGS_FILE, PROXIES_FILE, SETTINGS_FILE, ensure_data_dir
 from app_storage import load_json, save_json
+from tg_device import device_kwargs, ensure_device_profile
+from role_engine import (
+    build_role_prompt,
+    enforce_emoji_level,
+    ensure_accounts_have_roles,
+    ensure_role_schema,
+    role_for_account,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -45,6 +57,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 SCRIPT_START_TIME = datetime.now(timezone.utc)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ACCOUNTS_DIR = os.getenv("APP_ACCOUNTS_DIR", os.path.join(BASE_DIR, "accounts"))
 
 current_settings = {}
 active_clients = {}
@@ -63,6 +76,13 @@ PROCESSED_BURST_IDS = set()
 CHAT_REPLY_COOLDOWN = {}
 REPLY_PROCESS_CACHE = set()
 POST_PROCESS_CACHE = set()
+POST_PROCESS_CACHE_ORDER = collections.deque()
+POST_PROCESS_CACHE_MAX = 5000
+DISCUSSION_START_CACHE = set()
+DISCUSSION_START_CACHE_ORDER = collections.deque()
+DISCUSSION_START_CACHE_MAX = 2000
+DISCUSSION_ACTIVE_TASKS = {}
+DISCUSSION_START_SUPPRESS_CHAT_IDS = set()
 PENDING_TASKS = set()
 SCENARIO_CONTEXT = {}
 CLIENT_CATCH_UP_STATUS = set()
@@ -83,6 +103,413 @@ DEFAULT_MODELS = {
 }
 
 DEFAULT_PROJECT_ID = "default"
+DISABLED_ACCOUNT_STATUSES = {"banned", "frozen", "limited", "human_check", "unauthorized", "missing_session"}
+JOIN_MAX_RETRIES = 5
+JOIN_RETRY_BACKOFF = [0, 30, 120, 300, 900]
+
+# Connection watchdog settings: keep the service self-healing when Telethon gives up reconnecting.
+CONNECT_RETRY_BACKOFF_SECONDS = [0, 5, 15, 30, 60, 120, 300, 600]
+CONNECT_ATTEMPT_TIMEOUT_SECONDS = 25.0
+SEND_ATTEMPT_TIMEOUT_SECONDS = 35.0
+CONNECT_FAILURE_LOG_INTERVAL_SECONDS = 60.0
+CLIENT_CONNECT_STATE = {}
+CLIENT_CONNECT_LOCKS = {}
+
+
+def _swallow_task_exception(task: asyncio.Task) -> None:
+    try:
+        task.exception()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        pass
+
+
+async def _run_with_soft_timeout(awaitable: Any, timeout_seconds: float) -> Any:
+    timeout = float(timeout_seconds or 0.0)
+    if timeout <= 0:
+        return await awaitable
+    task = asyncio.create_task(awaitable)
+    done, _pending = await asyncio.wait({task}, timeout=timeout)
+    if task in done:
+        return task.result()
+    task.cancel()
+    task.add_done_callback(_swallow_task_exception)
+    raise TimeoutError(f"timeout_after_{timeout_seconds}s")
+
+
+def _connect_state(session_name: str) -> dict:
+    state = CLIENT_CONNECT_STATE.get(session_name)
+    if not isinstance(state, dict):
+        state = {"attempts": 0, "next_attempt_at": 0.0, "last_log_at": 0.0, "last_error": None}
+        CLIENT_CONNECT_STATE[session_name] = state
+    return state
+
+
+def _connect_backoff_delay_seconds(attempt: int) -> float:
+    if attempt <= 0:
+        return 0.0
+    base = CONNECT_RETRY_BACKOFF_SECONDS[min(attempt - 1, len(CONNECT_RETRY_BACKOFF_SECONDS) - 1)]
+    if base <= 0:
+        return 0.0
+    return float(base) + random.uniform(0.0, min(5.0, base * 0.25))
+
+
+def _connect_backoff_ready(session_name: str) -> bool:
+    state = CLIENT_CONNECT_STATE.get(session_name)
+    if not isinstance(state, dict):
+        return True
+    try:
+        next_attempt = float(state.get("next_attempt_at") or 0.0)
+    except Exception:
+        return True
+    return time.time() >= next_attempt
+
+
+def _schedule_connect_backoff(session_name: str, *, error: str | None = None, reason: str | None = None) -> None:
+    if not session_name:
+        return
+    now = time.time()
+    state = _connect_state(session_name)
+    attempts = int(state.get("attempts") or 0) + 1
+    state["attempts"] = attempts
+    state["last_error"] = error
+    state["next_attempt_at"] = now + _connect_backoff_delay_seconds(attempts)
+    if error:
+        _record_account_failure(session_name, "connect", last_error=str(error), last_target=reason)
+
+
+async def ensure_client_connected(client_wrapper, *, reason: str = "unknown") -> bool:
+    if not client_wrapper:
+        return False
+    session_name = str(getattr(client_wrapper, "session_name", "") or "").strip()
+    client = getattr(client_wrapper, "client", None)
+    if client is None:
+        return False
+
+    lock = None
+    if session_name:
+        lock = CLIENT_CONNECT_LOCKS.get(session_name)
+        if lock is None:
+            lock = asyncio.Lock()
+            CLIENT_CONNECT_LOCKS[session_name] = lock
+
+    async def _do_connect() -> bool:
+        if client.is_connected():
+            if session_name:
+                CLIENT_CONNECT_STATE.pop(session_name, None)
+            return True
+
+        if session_name and not _connect_backoff_ready(session_name):
+            return False
+
+        now = time.time()
+        if session_name:
+            state = _connect_state(session_name)
+            state["attempts"] = int(state.get("attempts") or 0) + 1
+            attempt = int(state["attempts"])
+            state["next_attempt_at"] = now + _connect_backoff_delay_seconds(attempt)
+
+            last_log_at = float(state.get("last_log_at") or 0.0)
+            if attempt == 1 or now - last_log_at >= CONNECT_FAILURE_LOG_INTERVAL_SECONDS:
+                logger.warning(f"🔌 [{session_name}] клиент отключен, пробую переподключить (attempt {attempt})...")
+                state["last_log_at"] = now
+
+        try:
+            await _run_with_soft_timeout(client.connect(), CONNECT_ATTEMPT_TIMEOUT_SECONDS)
+            if not client.is_connected():
+                raise ConnectionError("connect_returned_disconnected")
+            # Sanity check: ensure requests are sendable.
+            await _run_with_soft_timeout(client.get_me(), CONNECT_ATTEMPT_TIMEOUT_SECONDS)
+            if session_name:
+                CLIENT_CONNECT_STATE.pop(session_name, None)
+                _clear_account_failure(session_name, "connect")
+            return True
+        except Exception as e:
+            err_text = f"{type(e).__name__}: {e}"
+            if session_name:
+                st = _connect_state(session_name)
+                st["last_error"] = err_text
+                _record_account_failure(session_name, "connect", last_error=err_text, last_target=reason)
+            try:
+                if client.is_connected():
+                    await client.disconnect()
+            except Exception:
+                pass
+            return False
+
+    if lock is not None:
+        async with lock:
+            return await _do_connect()
+    return await _do_connect()
+
+
+def _is_account_active(account_data: dict) -> bool:
+    status = str(account_data.get("status") or "active").lower().strip()
+    return status not in DISABLED_ACCOUNT_STATUSES
+
+
+def _is_account_assigned(target: dict, session_name: str) -> bool:
+    assigned = target.get("assigned_accounts") or []
+    return session_name in assigned
+
+
+@contextmanager
+def _db_connect() -> Iterator[sqlite3.Connection]:
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _mark_post_processed(unique_id: str) -> None:
+    if not unique_id:
+        return
+    if unique_id in POST_PROCESS_CACHE:
+        return
+    POST_PROCESS_CACHE.add(unique_id)
+    POST_PROCESS_CACHE_ORDER.append(unique_id)
+    while len(POST_PROCESS_CACHE_ORDER) > POST_PROCESS_CACHE_MAX:
+        old = POST_PROCESS_CACHE_ORDER.popleft()
+        POST_PROCESS_CACHE.discard(old)
+
+
+def _mark_discussion_started(unique_key: str) -> bool:
+    if not unique_key:
+        return False
+    if unique_key in DISCUSSION_START_CACHE:
+        return False
+    DISCUSSION_START_CACHE.add(unique_key)
+    DISCUSSION_START_CACHE_ORDER.append(unique_key)
+    while len(DISCUSSION_START_CACHE_ORDER) > DISCUSSION_START_CACHE_MAX:
+        old = DISCUSSION_START_CACHE_ORDER.popleft()
+        DISCUSSION_START_CACHE.discard(old)
+    return True
+
+
+def _extract_discussion_seed(text: str, prefix: str) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    prefix = str(prefix or "")
+    if prefix:
+        if not raw.startswith(prefix):
+            return None
+        raw = raw[len(prefix) :].lstrip()
+        if not raw:
+            return None
+    return raw
+
+
+def _extract_discussion_seed_optional_prefix(text: str, prefix: str) -> str | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    prefix = str(prefix or "")
+    if prefix and raw.startswith(prefix):
+        raw = raw[len(prefix) :].lstrip()
+        if not raw:
+            return None
+    return raw
+
+
+def _channel_bare_id(value) -> int | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        if raw.startswith("-100"):
+            return int(raw[4:])
+        if raw.startswith("-"):
+            return int(raw[1:])
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _get_join_status(session_name: str, target_id: str) -> dict | None:
+    try:
+        with _db_connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM join_status WHERE session_name = ? AND target_id = ?",
+                (session_name, target_id),
+            ).fetchone()
+            return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _compute_slow_join_next_retry_at(target_id: str, interval_mins: int) -> float | None:
+    try:
+        mins = int(interval_mins or 0)
+    except Exception:
+        mins = 0
+    if mins <= 0:
+        return None
+
+    interval_sec = float(mins) * 60.0
+    now = time.time()
+
+    max_scheduled = None
+    max_attempt = None
+    try:
+        with _db_connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT MAX(next_retry_at) AS max_scheduled
+                FROM join_status
+                WHERE target_id = ? AND status = 'scheduled' AND next_retry_at IS NOT NULL
+                """,
+                (str(target_id),),
+            ).fetchone()
+            if row is not None and row["max_scheduled"] is not None:
+                max_scheduled = float(row["max_scheduled"])
+
+            row = conn.execute(
+                """
+                SELECT MAX(last_attempt) AS max_attempt
+                FROM join_status
+                WHERE target_id = ? AND last_attempt IS NOT NULL
+                """,
+                (str(target_id),),
+            ).fetchone()
+            if row is not None and row["max_attempt"] is not None:
+                max_attempt = float(row["max_attempt"])
+    except Exception:
+        max_scheduled = None
+        max_attempt = None
+
+    slot = None
+    if max_scheduled is not None and max_attempt is not None:
+        slot = max(max_scheduled, max_attempt)
+    elif max_scheduled is not None:
+        slot = max_scheduled
+    elif max_attempt is not None:
+        slot = max_attempt
+
+    if slot is None:
+        scheduled = now
+    else:
+        scheduled = max(now, float(slot) + interval_sec)
+
+    # Add a small jitter so joins don't look "robotic" (caps at 60s).
+    jitter_max = min(60.0, interval_sec * 0.2)
+    if jitter_max > 0:
+        try:
+            scheduled += random.uniform(0.0, float(jitter_max))
+        except Exception:
+            pass
+
+    return float(scheduled)
+
+
+def _record_account_failure(session_name: str, kind: str, *, last_error: str | None = None, last_target: str | None = None) -> int:
+    if not session_name or not kind:
+        return 0
+    now = time.time()
+    try:
+        with _db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO account_failures (session_name, kind, count, last_error, last_attempt, last_target)
+                VALUES (?, ?, 1, ?, ?, ?)
+                ON CONFLICT(session_name, kind) DO UPDATE SET
+                    count = account_failures.count + 1,
+                    last_error = excluded.last_error,
+                    last_attempt = excluded.last_attempt,
+                    last_target = excluded.last_target
+                """,
+                (session_name, kind, last_error, now, last_target),
+            )
+            row = conn.execute(
+                "SELECT count FROM account_failures WHERE session_name = ? AND kind = ?",
+                (session_name, kind),
+            ).fetchone()
+            conn.commit()
+            return int(row[0]) if row else 1
+    except Exception:
+        return 0
+
+
+def _clear_account_failure(session_name: str, kind: str) -> None:
+    if not session_name or not kind:
+        return
+    try:
+        with _db_connect() as conn:
+            conn.execute(
+                "DELETE FROM account_failures WHERE session_name = ? AND kind = ?",
+                (session_name, kind),
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _parse_iso_ts(value) -> float | None:
+    if not value:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return datetime.fromisoformat(str(value)).timestamp()
+    except Exception:
+        return None
+
+
+def _upsert_join_status(
+    session_name: str,
+    target_id: str,
+    status: str,
+    *,
+    last_error: str | None = None,
+    last_method: str | None = None,
+    retry_count: int | None = None,
+    next_retry_at: float | None = None,
+):
+    try:
+        with _db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO join_status (
+                    session_name, target_id, status,
+                    last_error, last_method, last_attempt, retry_count, next_retry_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_name, target_id) DO UPDATE SET
+                    status=excluded.status,
+                    last_error=excluded.last_error,
+                    last_method=excluded.last_method,
+                    last_attempt=excluded.last_attempt,
+                    retry_count=excluded.retry_count,
+                    next_retry_at=excluded.next_retry_at
+                """,
+                (
+                    session_name,
+                    target_id,
+                    status,
+                    last_error,
+                    last_method,
+                    time.time(),
+                    retry_count if retry_count is not None else 0,
+                    next_retry_at,
+                ),
+            )
+            conn.commit()
+    except Exception:
+        pass
 
 
 def _active_project_id(settings=None):
@@ -113,6 +540,71 @@ def get_project_targets(settings=None):
     return _filter_project_items((s or {}).get("targets", []) or [], pid)
 
 
+def get_project_discussion_targets(settings=None):
+    s = settings if isinstance(settings, dict) else current_settings
+    pid = _active_project_id(s)
+    return _filter_project_items((s or {}).get("discussion_targets", []) or [], pid)
+
+
+def ensure_discussion_targets_schema(settings: dict) -> bool:
+    targets = settings.get("discussion_targets")
+    if not isinstance(targets, list):
+        return False
+    changed = False
+    used: set[str] = set()
+    for t in targets:
+        if not isinstance(t, dict):
+            continue
+        target_id = str(t.get("id") or "").strip()
+        if not target_id or target_id in used:
+            target_id = uuid.uuid4().hex
+            while target_id in used:
+                target_id = uuid.uuid4().hex
+            t["id"] = target_id
+            changed = True
+        used.add(target_id)
+        if "title" not in t or t.get("title") is None:
+            t["title"] = ""
+            changed = True
+
+        scenes = t.get("scenes")
+        if scenes is None:
+            continue
+        if not isinstance(scenes, list):
+            t["scenes"] = []
+            changed = True
+            continue
+        used_scene_ids: set[str] = set()
+        cleaned_scenes: list[dict] = []
+        for sc in scenes:
+            if not isinstance(sc, dict):
+                changed = True
+                continue
+            scene_id = str(sc.get("id") or "").strip()
+            if not scene_id or scene_id in used_scene_ids:
+                scene_id = uuid.uuid4().hex
+                while scene_id in used_scene_ids:
+                    scene_id = uuid.uuid4().hex
+                sc["id"] = scene_id
+                changed = True
+            used_scene_ids.add(scene_id)
+
+            if "title" not in sc or sc.get("title") is None:
+                sc["title"] = ""
+                changed = True
+            if "operator_text" not in sc or sc.get("operator_text") is None:
+                sc["operator_text"] = ""
+                changed = True
+            if "vector_prompt" not in sc or sc.get("vector_prompt") is None:
+                sc["vector_prompt"] = ""
+                changed = True
+            cleaned_scenes.append(sc)
+        if len(cleaned_scenes) != len(scenes):
+            t["scenes"] = cleaned_scenes
+            changed = True
+    return changed
+
+
 def get_project_reaction_targets(settings=None):
     s = settings if isinstance(settings, dict) else current_settings
     pid = _active_project_id(s)
@@ -131,10 +623,341 @@ def get_project_manual_queue(settings=None):
     return _filter_project_items((s or {}).get("manual_queue", []) or [], pid)
 
 
+def _parse_manual_overrides(raw_overrides):
+    if not raw_overrides:
+        return {}
+    if isinstance(raw_overrides, dict):
+        return raw_overrides
+    try:
+        parsed = json.loads(raw_overrides)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+    return {}
+
+
+def _claim_project_manual_tasks(project_id, limit=50):
+    project_id = str(project_id or DEFAULT_PROJECT_ID).strip() or DEFAULT_PROJECT_ID
+    limit = max(1, int(limit))
+    now_ts = time.time()
+    claimed = []
+    with _db_connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, project_id, chat_id, message_chat_id, post_id, overrides_json
+            FROM manual_tasks
+            WHERE project_id = ? AND status = 'pending'
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (project_id, limit),
+        ).fetchall()
+        for row in rows:
+            task_id = int(row["id"])
+            cur = conn.execute(
+                """
+                UPDATE manual_tasks
+                SET status = 'processing', started_at = ?, last_error = NULL
+                WHERE id = ? AND status = 'pending'
+                """,
+                (now_ts, task_id),
+            )
+            if int(cur.rowcount or 0) != 1:
+                continue
+            claimed.append(
+                {
+                    "id": task_id,
+                    "project_id": str(row["project_id"] or DEFAULT_PROJECT_ID),
+                    "chat_id": str(row["chat_id"] or "").strip(),
+                    "message_chat_id": str(row["message_chat_id"] or "").strip(),
+                    "post_id": row["post_id"],
+                    "overrides": _parse_manual_overrides(row["overrides_json"]),
+                }
+            )
+    return claimed
+
+
+def _set_manual_task_status(task_id, status, error=None):
+    if not task_id:
+        return
+    status = str(status or "").strip().lower()
+    if status not in {"pending", "processing", "done", "failed"}:
+        status = "failed"
+    now_ts = time.time()
+    with _db_connect() as conn:
+        if status == "pending":
+            conn.execute(
+                """
+                UPDATE manual_tasks
+                SET status = 'pending', started_at = NULL, finished_at = NULL, last_error = ?
+                WHERE id = ?
+                """,
+                (str(error or "")[:1000] or None, int(task_id)),
+            )
+            return
+        conn.execute(
+            """
+            UPDATE manual_tasks
+            SET status = ?, finished_at = ?, last_error = ?
+            WHERE id = ?
+            """,
+            (status, now_ts, str(error or "")[:1000] or None, int(task_id)),
+        )
+
+
+def _migrate_legacy_manual_queue_to_db():
+    global current_settings
+    legacy_queue = current_settings.get("manual_queue")
+    if not isinstance(legacy_queue, list) or not legacy_queue:
+        return 0
+    moved = 0
+    now_ts = time.time()
+    with _db_connect() as conn:
+        for task in legacy_queue:
+            if not isinstance(task, dict):
+                continue
+            chat_id = str(task.get("chat_id") or "").strip()
+            post_id_raw = task.get("post_id")
+            if not chat_id or post_id_raw in (None, ""):
+                continue
+            try:
+                post_id = int(post_id_raw)
+            except Exception:
+                continue
+            message_chat_id = str(task.get("message_chat_id") or "").strip() or chat_id
+            project_id = _project_id_for(task)
+            overrides = task.get("overrides") if isinstance(task.get("overrides"), dict) else {}
+            conn.execute(
+                """
+                INSERT INTO manual_tasks (
+                    project_id, chat_id, message_chat_id, post_id,
+                    overrides_json, status, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (
+                    project_id,
+                    chat_id,
+                    message_chat_id,
+                    post_id,
+                    json.dumps(overrides, ensure_ascii=False),
+                    now_ts,
+                ),
+            )
+            moved += 1
+    if moved:
+        current_settings["manual_queue"] = []
+        save_data(SETTINGS_FILE, current_settings)
+    return moved
+
+
+def get_project_discussion_queue(settings=None):
+    s = settings if isinstance(settings, dict) else current_settings
+    pid = _active_project_id(s)
+    return _filter_project_items((s or {}).get("discussion_queue", []) or [], pid)
+
+
+def get_project_discussion_start_queue(settings=None):
+    s = settings if isinstance(settings, dict) else current_settings
+    pid = _active_project_id(s)
+    return _filter_project_items((s or {}).get("discussion_start_queue", []) or [], pid)
+
+
 def load_project_accounts(settings=None):
-    pid = _active_project_id(settings)
+    settings_obj = settings if isinstance(settings, dict) else current_settings
+    if not isinstance(settings_obj, dict):
+        settings_obj = {}
+    ensure_role_schema(settings_obj)
+
+    pid = _active_project_id(settings_obj)
     accounts = load_json_data(ACCOUNTS_FILE, [])
-    return _filter_project_items(accounts, pid)
+    changed = False
+    if isinstance(accounts, list):
+        for acc in accounts:
+            if isinstance(acc, dict) and ensure_device_profile(acc):
+                changed = True
+        if ensure_accounts_have_roles(accounts, settings_obj):
+            changed = True
+    if changed:
+        try:
+            save_json(ACCOUNTS_FILE, accounts)
+        except Exception:
+            pass
+    accounts = _filter_project_items(accounts, pid)
+    dir_accounts = _load_accounts_from_dir(pid, settings_obj)
+    return _merge_accounts_by_session_name(accounts, dir_accounts)
+
+
+def _merge_accounts_by_session_name(primary: list, secondary: list) -> list:
+    merged: dict[str, dict] = {}
+    for acc in secondary or []:
+        if isinstance(acc, dict):
+            name = str(acc.get("session_name") or "").strip()
+            if name:
+                merged[name] = acc
+    for acc in primary or []:
+        if isinstance(acc, dict):
+            name = str(acc.get("session_name") or "").strip()
+            if not name:
+                continue
+            if name in merged:
+                merged[name] = {**merged[name], **acc}
+            else:
+                merged[name] = acc
+    return list(merged.values())
+
+
+def _load_accounts_from_dir(project_id: str, settings: dict | None = None) -> list[dict]:
+    accounts_dir = ACCOUNTS_DIR
+    if not accounts_dir or not os.path.isdir(accounts_dir):
+        return []
+
+    settings_obj = settings if isinstance(settings, dict) else {}
+    if settings_obj:
+        ensure_role_schema(settings_obj)
+
+    accounts: list[dict] = []
+    try:
+        entries = sorted(os.listdir(accounts_dir))
+    except Exception:
+        return []
+
+    for filename in entries:
+        if not filename.endswith(".json"):
+            continue
+        path = os.path.join(accounts_dir, filename)
+        data = load_json_data(path, None)
+        if not isinstance(data, dict):
+            continue
+
+        if ensure_device_profile(data):
+            try:
+                save_json(path, data)
+            except Exception:
+                pass
+
+        session_file = str(data.get("session_file") or data.get("phone") or os.path.splitext(filename)[0] or "").strip()
+        if not session_file:
+            continue
+
+        session_name = str(data.get("session_name") or session_file).strip()
+        session_path = _find_session_file_path(session_file, accounts_dir)
+
+        sleep_settings = data.get("sleep_settings")
+        if not isinstance(sleep_settings, dict):
+            sleep_settings = {"start_hour": 0, "end_hour": 23}
+
+        account = {
+            "session_name": session_name,
+            "session_file": session_file,
+            "session_path": session_path,
+            "app_id": data.get("app_id"),
+            "app_hash": data.get("app_hash"),
+            "proxy": data.get("proxy"),
+            "user_id": data.get("user_id"),
+            "first_name": data.get("first_name") or "",
+            "last_name": data.get("last_name") or "",
+            "username": data.get("username") or "",
+            "status": data.get("status") or "active",
+            "sleep_settings": sleep_settings,
+            "project_id": data.get("project_id") or project_id,
+            "device_type": data.get("device_type"),
+            "device_model": data.get("device_model"),
+            "system_version": data.get("system_version"),
+            "app_version": data.get("app_version"),
+            "lang_code": data.get("lang_code"),
+            "system_lang_code": data.get("system_lang_code"),
+            "role_id": data.get("role_id"),
+            "persona_id": data.get("persona_id"),
+        }
+        if settings_obj:
+            resolved_role_id, _ = role_for_account(account, settings_obj)
+            if resolved_role_id:
+                account["role_id"] = resolved_role_id
+        accounts.append(account)
+
+    return accounts
+
+
+def _find_session_file_path(session_file: str, accounts_dir: str) -> str | None:
+    if not session_file:
+        return None
+    candidates = []
+    raw = str(session_file)
+    if os.path.isabs(raw):
+        candidates.append(raw)
+    if raw.endswith(".session"):
+        candidates.append(raw)
+    if not os.path.isabs(raw):
+        candidates.append(os.path.join(accounts_dir, raw))
+        candidates.append(os.path.join(accounts_dir, f"{raw}.session"))
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return None
+
+
+def _resolve_account_credentials(account_data: dict, fallback_api_id: int, fallback_api_hash: str) -> tuple[int, str | None]:
+    api_id = account_data.get("app_id") or account_data.get("api_id") or fallback_api_id
+    api_hash = account_data.get("app_hash") or account_data.get("api_hash") or fallback_api_hash
+    try:
+        api_id = int(api_id)
+    except Exception:
+        api_id = fallback_api_id
+    return api_id, api_hash
+
+
+def _resolve_account_session(account_data: dict) -> StringSession | str | None:
+    session_string = (account_data.get("session_string") or "").strip()
+    if session_string:
+        return StringSession(session_string)
+
+    session_path = account_data.get("session_path")
+    if isinstance(session_path, str) and session_path and os.path.exists(session_path):
+        return session_path
+
+    session_file = account_data.get("session_file") or account_data.get("session_name")
+    if not session_file:
+        return None
+    return _find_session_file_path(str(session_file), ACCOUNTS_DIR)
+
+
+def _resolve_account_proxy(account_data: dict):
+    proxy_url = account_data.get("proxy_url")
+    if proxy_url:
+        return _parse_proxy_url(proxy_url)
+
+    proxy_tuple = account_data.get("proxy")
+    if not isinstance(proxy_tuple, (list, tuple)) or len(proxy_tuple) < 3:
+        return None
+
+    proxy_type_raw = proxy_tuple[0]
+    host = proxy_tuple[1]
+    port = proxy_tuple[2]
+    user = proxy_tuple[3] if len(proxy_tuple) > 3 else None
+    password = proxy_tuple[4] if len(proxy_tuple) > 4 else None
+
+    if not host or not port:
+        return None
+
+    proxy_type = "socks5"
+    if isinstance(proxy_type_raw, str) and proxy_type_raw:
+        proxy_type = proxy_type_raw.lower()
+    elif isinstance(proxy_type_raw, int):
+        if proxy_type_raw == 1:
+            proxy_type = "socks4"
+        elif proxy_type_raw in (2, 3):
+            proxy_type = "http" if proxy_type_raw == 3 else "socks5"
+        else:
+            proxy_type = "socks5"
+
+    try:
+        port = int(port)
+    except Exception:
+        return None
+
+    return (proxy_type, host, port, True, user, password)
 
 
 def get_model_setting(settings, key, default_value=None):
@@ -237,7 +1060,7 @@ def is_bot_awake(account_data):
 
 def init_database():
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             conn.execute('PRAGMA journal_mode=WAL;')
             conn.execute('PRAGMA synchronous=NORMAL;')
 
@@ -287,15 +1110,6 @@ def init_database():
                 )
             ''')
             conn.execute('''
-                CREATE TABLE IF NOT EXISTS alert_context (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id TEXT,
-                    msg_id INTEGER,
-                    session_name TEXT,
-                    created_at REAL
-                )
-            ''')
-            conn.execute('''
                 CREATE TABLE IF NOT EXISTS outbound_queue (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     chat_id TEXT,
@@ -323,16 +1137,191 @@ def init_database():
                     chat_username TEXT,
                     text TEXT,
                     replied_to_text TEXT,
+                    reactions_summary TEXT,
+                    reactions_updated_at TEXT,
                     is_read INTEGER DEFAULT 0,
                     error TEXT
                 )
             ''')
+            inbox_cols = {row[1] for row in conn.execute("PRAGMA table_info(inbox_messages)").fetchall()}
+            if "reactions_summary" not in inbox_cols:
+                conn.execute("ALTER TABLE inbox_messages ADD COLUMN reactions_summary TEXT")
+            if "reactions_updated_at" not in inbox_cols:
+                conn.execute("ALTER TABLE inbox_messages ADD COLUMN reactions_updated_at TEXT")
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_unique ON inbox_messages(session_name, chat_id, msg_id, direction)"
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_inbox_kind_unread ON inbox_messages(kind, is_read, id)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS join_status (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_name TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    last_error TEXT,
+                    last_method TEXT,
+                    last_attempt REAL,
+                    retry_count INTEGER DEFAULT 0,
+                    next_retry_at REAL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_join_status_unique ON join_status(session_name, target_id)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS account_failures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    count INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    last_attempt REAL,
+                    last_target TEXT
+                )
+                """
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_account_failures_unique ON account_failures(session_name, kind)"
+            )
 
-            conn.execute("DELETE FROM post_scenarios")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS chat_last_post_times (
+                    kind TEXT NOT NULL,
+                    chat_key TEXT NOT NULL,
+                    last_post_ts REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(kind, chat_key)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scenario_msg_history (
+                    chat_id TEXT NOT NULL,
+                    post_id INTEGER NOT NULL,
+                    ref_idx INTEGER NOT NULL,
+                    msg_id INTEGER NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(chat_id, post_id, ref_idx)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_scenario_msg_hist_post ON scenario_msg_history(chat_id, post_id)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS post_comment_plans (
+                    chat_key TEXT NOT NULL,
+                    post_id INTEGER NOT NULL,
+                    planned_count INTEGER NOT NULL,
+                    planned_accounts TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(chat_key, post_id)
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_logs_dest_post_type ON logs(destination_chat_id, post_id, log_type)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_logs_dest_post_type_account ON logs(destination_chat_id, post_id, log_type, account_session_name)"
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS used_identities (
+                    user_id INTEGER PRIMARY KEY,
+                    date_used TEXT
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS discussion_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT NOT NULL,
+                    discussion_target_id TEXT,
+                    discussion_target_chat_id TEXT NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    started_at REAL,
+                    finished_at REAL,
+                    schedule_at REAL,
+                    operator_session_name TEXT,
+                    seed_msg_id INTEGER,
+                    seed_text TEXT,
+                    settings_json TEXT,
+                    participants_json TEXT,
+                    error TEXT
+                )
+                """
+            )
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(discussion_sessions)").fetchall()}
+            if "discussion_target_id" not in cols:
+                conn.execute("ALTER TABLE discussion_sessions ADD COLUMN discussion_target_id TEXT")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_discussion_sessions_target "
+                "ON discussion_sessions(project_id, discussion_target_chat_id, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_discussion_sessions_target_id "
+                "ON discussion_sessions(project_id, discussion_target_id, created_at)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_discussion_sessions_status "
+                "ON discussion_sessions(project_id, status, schedule_at)"
+            )
+
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS discussion_messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    created_at REAL NOT NULL,
+                    speaker_type TEXT NOT NULL,
+                    speaker_session_name TEXT,
+                    speaker_label TEXT,
+                    msg_id INTEGER,
+                    reply_to_msg_id INTEGER,
+                    text TEXT,
+                    prompt_info TEXT,
+                    error TEXT
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_discussion_messages_session "
+                "ON discussion_messages(session_id, id)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS manual_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT NOT NULL,
+                    chat_id TEXT NOT NULL,
+                    message_chat_id TEXT,
+                    post_id INTEGER NOT NULL,
+                    overrides_json TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    created_at REAL NOT NULL,
+                    started_at REAL,
+                    finished_at REAL,
+                    last_error TEXT
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_manual_tasks_project_status "
+                "ON manual_tasks(project_id, status, id)"
+            )
             conn.commit()
 
     except sqlite3.Error as e:
@@ -388,11 +1377,13 @@ def get_daily_action_count_from_db(chat_id, action_type='comment'):
     try:
         chat_id_str = str(chat_id).replace('-100', '')
 
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             cursor = conn.cursor()
             today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
-            variants = [chat_id, int(chat_id_str), int(f"-100{chat_id_str}")]
+            variants = [chat_id, int(chat_id_str)]
+            if str(chat_id).startswith("-100") or (str(chat_id).strip().lstrip("-").isdigit() and int(chat_id) > 0):
+                variants.append(int(f"-100{chat_id_str}"))
             placeholders = ','.join('?' for _ in variants)
 
             query = f'''
@@ -420,8 +1411,9 @@ def check_if_already_commented(destination_chat_id, post_id):
         variants = set()
         variants.add(norm_id)
         variants.add(str(norm_id))
-        variants.add(int(f"-100{norm_id}"))
-        variants.add(f"-100{norm_id}")
+        if str(destination_chat_id).startswith("-100") or norm_id > 0:
+            variants.add(int(f"-100{norm_id}"))
+            variants.add(f"-100{norm_id}")
 
         variants.add(destination_chat_id)
         variants.add(str(destination_chat_id))
@@ -435,7 +1427,7 @@ def check_if_already_commented(destination_chat_id, post_id):
             AND log_type IN ('comment', 'comment_reply', 'forbidden')
         '''
 
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             cursor = conn.cursor()
             args = [post_id, str(post_id)] + list(variants)
 
@@ -447,6 +1439,345 @@ def check_if_already_commented(destination_chat_id, post_id):
         return True
 
 
+def _dt_to_utc(dt: datetime) -> datetime:
+    if not isinstance(dt, datetime):
+        return datetime.now(timezone.utc)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    try:
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return dt
+
+
+def _db_get_last_post_time(kind: str, chat_key: str) -> datetime | None:
+    kind = (kind or "").strip()
+    chat_key = (chat_key or "").strip()
+    if not kind or not chat_key:
+        return None
+    try:
+        with _db_connect() as conn:
+            row = conn.execute(
+                "SELECT last_post_ts FROM chat_last_post_times WHERE kind = ? AND chat_key = ?",
+                (kind, chat_key),
+            ).fetchone()
+        if not row:
+            return None
+        ts = float(row[0] or 0.0)
+        if ts <= 0:
+            return None
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+    except Exception:
+        return None
+
+
+def _db_set_last_post_time(kind: str, chat_key: str, post_time: datetime) -> None:
+    kind = (kind or "").strip()
+    chat_key = (chat_key or "").strip()
+    if not kind or not chat_key:
+        return
+    dt = _dt_to_utc(post_time)
+    now = time.time()
+    try:
+        with _db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO chat_last_post_times(kind, chat_key, last_post_ts, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(kind, chat_key) DO UPDATE SET
+                    last_post_ts = excluded.last_post_ts,
+                    updated_at = excluded.updated_at
+                """,
+                (kind, chat_key, float(dt.timestamp()), now),
+            )
+            conn.commit()
+    except Exception:
+        return
+
+
+def _scenario_history_load(chat_id: str, post_id: int) -> dict[int, int]:
+    chat_id = (chat_id or "").strip()
+    if not chat_id or not post_id:
+        return {}
+    try:
+        with _db_connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT ref_idx, msg_id
+                FROM scenario_msg_history
+                WHERE chat_id = ? AND post_id = ?
+                """,
+                (chat_id, int(post_id)),
+            ).fetchall()
+        out: dict[int, int] = {}
+        for ref_idx, msg_id in rows or []:
+            try:
+                out[int(ref_idx)] = int(msg_id)
+            except Exception:
+                continue
+        return out
+    except Exception:
+        return {}
+
+
+def _scenario_history_set(chat_id: str, post_id: int, ref_idx: int, msg_id: int) -> None:
+    chat_id = (chat_id or "").strip()
+    if not chat_id or not post_id or not ref_idx or not msg_id:
+        return
+    now = time.time()
+    try:
+        with _db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO scenario_msg_history(chat_id, post_id, ref_idx, msg_id, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id, post_id, ref_idx) DO UPDATE SET
+                    msg_id = excluded.msg_id,
+                    updated_at = excluded.updated_at
+                """,
+                (chat_id, int(post_id), int(ref_idx), int(msg_id), now),
+            )
+            conn.commit()
+    except Exception:
+        return
+
+
+def _scenario_history_clear(chat_id: str, post_id: int) -> None:
+    chat_id = (chat_id or "").strip()
+    if not chat_id or not post_id:
+        return
+    try:
+        with _db_connect() as conn:
+            conn.execute(
+                "DELETE FROM scenario_msg_history WHERE chat_id = ? AND post_id = ?",
+                (chat_id, int(post_id)),
+            )
+            conn.commit()
+    except Exception:
+        return
+
+
+def _post_plan_seed(chat_key: str, post_id: int) -> int:
+    base = f"{chat_key}:{post_id}".encode("utf-8")
+    return int(hashlib.sha256(base).hexdigest()[:16], 16)
+
+
+def _load_post_comment_plan(chat_key: str, post_id: int) -> tuple[int, list[str]] | None:
+    if not chat_key or not post_id:
+        return None
+    try:
+        with _db_connect() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT planned_count, planned_accounts FROM post_comment_plans WHERE chat_key = ? AND post_id = ?",
+                (str(chat_key), int(post_id)),
+            ).fetchone()
+            if not row:
+                return None
+            planned_count = int(row["planned_count"] or 0)
+            raw = row["planned_accounts"]
+            planned_accounts = []
+            if raw:
+                try:
+                    planned_accounts = json.loads(raw) or []
+                except Exception:
+                    planned_accounts = []
+            planned_accounts = [str(x) for x in planned_accounts if str(x).strip()]
+            return planned_count, planned_accounts
+    except Exception:
+        return None
+
+
+def _save_post_comment_plan(chat_key: str, post_id: int, planned_count: int, planned_accounts: list[str]) -> None:
+    if not chat_key or not post_id:
+        return
+    now = time.time()
+    try:
+        payload = json.dumps(list(planned_accounts or []), ensure_ascii=False)
+    except Exception:
+        payload = "[]"
+    try:
+        with _db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO post_comment_plans(chat_key, post_id, planned_count, planned_accounts, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_key, post_id) DO UPDATE SET
+                    planned_count = excluded.planned_count,
+                    planned_accounts = excluded.planned_accounts,
+                    updated_at = excluded.updated_at
+                """,
+                (str(chat_key), int(post_id), int(planned_count), payload, now, now),
+            )
+            conn.commit()
+    except Exception:
+        return
+
+
+def _comment_range_for_target(target_chat: dict, available: int) -> tuple[int, int] | None:
+    if available <= 0:
+        return None
+    try:
+        range_min = int(target_chat.get("accounts_per_post_min", 0) or 0)
+    except Exception:
+        range_min = 0
+    try:
+        range_max = int(target_chat.get("accounts_per_post_max", 0) or 0)
+    except Exception:
+        range_max = 0
+
+    range_min = max(range_min, 0)
+    range_max = max(range_max, 0)
+
+    if range_min == 0 and range_max == 0:
+        return (available, available)
+
+    if range_max < range_min:
+        range_max = range_min
+    if range_max == 0:
+        range_max = range_min
+    if range_min == 0:
+        range_min = 1
+
+    range_min = min(range_min, available)
+    range_max = min(range_max, available)
+    if range_max < range_min:
+        range_max = range_min
+    return (range_min, range_max)
+
+
+def _get_post_our_accounts_from_db(destination_chat_id: int, post_id: int) -> set[str]:
+    """
+    Returns session_names of *our* accounts that already acted on this post in this destination chat.
+    Used to avoid duplicate comments after restarts/catch-up.
+    """
+    try:
+        raw = str(destination_chat_id).strip()
+        variants: set[int] = set()
+        try:
+            v = int(raw)
+            variants.add(v)
+        except Exception:
+            variants = set()
+
+        if raw.startswith("-100"):
+            try:
+                bare = int(raw[4:])
+                variants.add(bare)
+                variants.add(int(f"-100{bare}"))
+            except Exception:
+                pass
+        else:
+            # For safety keep both signed/unsigned variants (older logs might normalize).
+            try:
+                bare = int(raw.lstrip("-"))
+                if bare:
+                    variants.add(bare)
+                    variants.add(-bare)
+            except Exception:
+                pass
+
+        variants_list = list(variants)
+        if not variants_list:
+            return set()
+
+        placeholders = ",".join("?" for _ in variants_list)
+        query = f"""
+            SELECT DISTINCT account_session_name
+            FROM logs
+            WHERE destination_chat_id IN ({placeholders})
+              AND (post_id = ? OR post_id = ?)
+              AND log_type IN ('comment', 'comment_reply', 'forbidden')
+              AND account_session_name IS NOT NULL
+              AND account_session_name != ''
+        """
+        with _db_connect() as conn:
+            rows = conn.execute(query, (*variants_list, int(post_id), str(post_id))).fetchall()
+        return {str(r[0]) for r in rows if r and r[0]}
+    except Exception:
+        return set()
+
+
+def _ensure_post_comment_plan(
+    *,
+    chat_key: str,
+    post_id: int,
+    target_chat: dict,
+    eligible_session_names: list[str],
+) -> tuple[int, list[str]]:
+    existing = _load_post_comment_plan(chat_key, post_id)
+    if existing:
+        planned_count, planned_accounts = existing
+        if planned_count <= 0:
+            planned_count = 0
+        if planned_accounts:
+            return planned_count, planned_accounts
+
+    available = len(eligible_session_names)
+    if available <= 0:
+        planned_count = 0
+        planned_accounts = []
+        _save_post_comment_plan(chat_key, post_id, planned_count, planned_accounts)
+        return planned_count, planned_accounts
+
+    r = _comment_range_for_target(target_chat, available)
+    if not r:
+        planned_count = 0
+    else:
+        rmin, rmax = r
+        rnd = random.Random(_post_plan_seed(str(chat_key), int(post_id)))
+        planned_count = rnd.randint(rmin, rmax)
+
+    rnd = random.Random(_post_plan_seed(str(chat_key), int(post_id)) ^ 0xA5A5A5A5)
+    planned_accounts = eligible_session_names.copy()
+    rnd.shuffle(planned_accounts)
+
+    _save_post_comment_plan(chat_key, post_id, planned_count, planned_accounts)
+    return planned_count, planned_accounts
+
+
+def _select_accounts_for_post(
+    *,
+    chat_key: str,
+    post_id: int,
+    destination_chat_id: int,
+    target_chat: dict,
+    eligible_clients: list,
+) -> tuple[list, int, int, set[str]]:
+    if not eligible_clients:
+        return [], 0, 0, set()
+
+    eligible_by_name = {c.session_name: c for c in eligible_clients if getattr(c, "session_name", None)}
+    eligible_names = list(eligible_by_name.keys())
+
+    planned_count, planned_accounts = _ensure_post_comment_plan(
+        chat_key=str(chat_key),
+        post_id=int(post_id),
+        target_chat=target_chat,
+        eligible_session_names=eligible_names,
+    )
+
+    already_accounts = _get_post_our_accounts_from_db(int(destination_chat_id), int(post_id))
+    already_count = len(already_accounts)
+    remaining_needed = max(int(planned_count) - already_count, 0)
+    if remaining_needed <= 0:
+        return [], planned_count, already_count, already_accounts
+
+    remaining_names = [n for n in eligible_names if n not in already_accounts]
+    remaining_set = set(remaining_names)
+    ordered: list[str] = [n for n in planned_accounts if n in remaining_set]
+
+    # If eligible set changed since plan creation, fill from the rest in deterministic order.
+    extras = [n for n in remaining_names if n not in set(ordered)]
+    if extras:
+        rnd = random.Random(_post_plan_seed(str(chat_key), int(post_id)) ^ 0x5C5C5C5C)
+        rnd.shuffle(extras)
+        ordered.extend(extras)
+
+    selected_names = ordered[:remaining_needed]
+    return [eligible_by_name[n] for n in selected_names if n in eligible_by_name], planned_count, already_count, already_accounts
+
+
 def log_action_to_db(log_entry):
     content = ""
     if log_entry.get('type') == 'reaction':
@@ -455,7 +1786,7 @@ def log_action_to_db(log_entry):
         content = log_entry.get('comment', '')
 
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO logs (
@@ -481,6 +1812,162 @@ def log_action_to_db(log_entry):
             f"Подробный лог ({log_entry.get('type')}) сохранен в БД для аккаунта {log_entry.get('account', {}).get('session_name')}")
     except sqlite3.Error as e:
         logger.error(f"Ошибка при записи лога в БД: {e}")
+
+
+def _safe_json_dumps(value) -> str | None:
+    if value is None:
+        return None
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        try:
+            return json.dumps(str(value), ensure_ascii=False)
+        except Exception:
+            return None
+
+
+def _db_create_discussion_session(
+    *,
+    project_id: str,
+    discussion_target_id: str | None = None,
+    discussion_target_chat_id: str,
+    chat_id: str,
+    status: str,
+    operator_session_name: str | None = None,
+    seed_msg_id: int | None = None,
+    seed_text: str | None = None,
+    settings: dict | None = None,
+    participants: list | None = None,
+    schedule_at: float | None = None,
+    error: str | None = None,
+) -> int | None:
+    project_id = str(project_id or "").strip() or DEFAULT_PROJECT_ID
+    discussion_target_id = str(discussion_target_id or "").strip() or None
+    discussion_target_chat_id = str(discussion_target_chat_id or "").strip()
+    chat_id = str(chat_id or "").strip()
+    status = str(status or "").strip() or "planned"
+    if not discussion_target_chat_id or not chat_id:
+        return None
+    now = time.time()
+    started_at = now if status == "running" else None
+    try:
+        with _db_connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO discussion_sessions (
+                    project_id, discussion_target_id, discussion_target_chat_id, chat_id,
+                    status, created_at, started_at, finished_at, schedule_at,
+                    operator_session_name, seed_msg_id, seed_text,
+                    settings_json, participants_json, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    project_id,
+                    discussion_target_id,
+                    discussion_target_chat_id,
+                    chat_id,
+                    status,
+                    float(now),
+                    float(started_at) if started_at is not None else None,
+                    None,
+                    float(schedule_at) if schedule_at is not None else None,
+                    str(operator_session_name or "").strip() or None,
+                    int(seed_msg_id) if seed_msg_id is not None else None,
+                    str(seed_text or "") if seed_text is not None else None,
+                    _safe_json_dumps(settings),
+                    _safe_json_dumps(participants),
+                    str(error or "") if error else None,
+                ),
+            )
+            return int(cur.lastrowid)
+    except Exception:
+        return None
+
+
+def _db_update_discussion_session(session_id: int, **fields) -> None:
+    if not session_id:
+        return
+    allowed = {
+        "project_id",
+        "discussion_target_id",
+        "discussion_target_chat_id",
+        "chat_id",
+        "status",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "schedule_at",
+        "operator_session_name",
+        "seed_msg_id",
+        "seed_text",
+        "settings_json",
+        "participants_json",
+        "error",
+    }
+    updates = []
+    params = []
+    for key, value in fields.items():
+        if key not in allowed:
+            continue
+        updates.append(f"{key} = ?")
+        params.append(value)
+    if not updates:
+        return
+    params.append(int(session_id))
+    try:
+        with _db_connect() as conn:
+            conn.execute(
+                f"UPDATE discussion_sessions SET {', '.join(updates)} WHERE id = ?",
+                tuple(params),
+            )
+            conn.commit()
+    except Exception:
+        pass
+
+
+def _db_add_discussion_message(
+    *,
+    session_id: int,
+    speaker_type: str,
+    speaker_session_name: str | None = None,
+    speaker_label: str | None = None,
+    msg_id: int | None = None,
+    reply_to_msg_id: int | None = None,
+    text: str | None = None,
+    prompt_info: str | None = None,
+    error: str | None = None,
+) -> None:
+    if not session_id:
+        return
+    speaker_type = str(speaker_type or "").strip() or "bot"
+    now = time.time()
+    try:
+        with _db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO discussion_messages (
+                    session_id, created_at, speaker_type,
+                    speaker_session_name, speaker_label,
+                    msg_id, reply_to_msg_id,
+                    text, prompt_info, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(session_id),
+                    float(now),
+                    speaker_type,
+                    str(speaker_session_name or "").strip() or None,
+                    str(speaker_label or "").strip() or None,
+                    int(msg_id) if msg_id is not None else None,
+                    int(reply_to_msg_id) if reply_to_msg_id is not None else None,
+                    str(text or "") if text is not None else None,
+                    str(prompt_info or "") if prompt_info else None,
+                    str(error or "") if error else None,
+                ),
+            )
+            conn.commit()
+    except Exception:
+        pass
 
 
 def log_comment_skip_to_db(post_id, target_chat, destination_chat_id, reason):
@@ -520,6 +2007,8 @@ def log_inbox_message_to_db(
     chat_username: str | None = None,
     text: str | None = None,
     replied_to_text: str | None = None,
+    reactions_summary: str | None = None,
+    reactions_updated_at: str | None = None,
     is_read: int = 0,
     error: str | None = None,
 ) -> int | None:
@@ -533,7 +2022,7 @@ def log_inbox_message_to_db(
 
     created_at = datetime.now(timezone.utc).isoformat()
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -543,8 +2032,9 @@ def log_inbox_message_to_db(
                     sender_id, sender_username, sender_name,
                     chat_title, chat_username,
                     text, replied_to_text,
+                    reactions_summary, reactions_updated_at,
                     is_read, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     kind,
@@ -562,6 +2052,8 @@ def log_inbox_message_to_db(
                     (chat_username or "").strip() or None,
                     (text or "").strip() or None,
                     (replied_to_text or "").strip() or None,
+                    (reactions_summary or "").strip() or None,
+                    (reactions_updated_at or "").strip() or None,
                     int(bool(is_read)),
                     (error or "").strip() or None,
                 ),
@@ -570,6 +2062,187 @@ def log_inbox_message_to_db(
             return cursor.lastrowid or None
     except Exception:
         return None
+
+
+def _message_text_preview(message) -> str:
+    text = getattr(message, "text", None) or getattr(message, "message", None) or ""
+    if text:
+        return text
+    try:
+        if getattr(message, "photo", None):
+            return "[фото]"
+        if getattr(message, "video", None) or getattr(message, "gif", None):
+            return "[видео]"
+        if getattr(message, "voice", None):
+            return "[голосовое]"
+        if getattr(message, "audio", None):
+            return "[аудио]"
+        if getattr(message, "document", None) or getattr(message, "file", None):
+            return "[файл]"
+    except Exception:
+        pass
+    return ""
+
+
+def _peer_chat_id(peer) -> str | None:
+    if isinstance(peer, tl_types.PeerChannel):
+        return f"-100{peer.channel_id}"
+    if isinstance(peer, tl_types.PeerChat):
+        return f"-{peer.chat_id}"
+    if isinstance(peer, tl_types.PeerUser):
+        return str(peer.user_id)
+    return None
+
+
+def _reaction_label(reaction_obj) -> str:
+    if not reaction_obj:
+        return ""
+    emoticon = getattr(reaction_obj, "emoticon", None)
+    if emoticon:
+        return str(emoticon)
+    if hasattr(reaction_obj, "document_id"):
+        return "кастом"
+    if reaction_obj.__class__.__name__ == "ReactionPaid":
+        return "paid"
+    return ""
+
+
+def _reaction_summary_from_update(update) -> str:
+    grouped: collections.OrderedDict[str, int] = collections.OrderedDict()
+
+    def add(label: str, count: int) -> None:
+        if not label:
+            return
+        grouped[label] = grouped.get(label, 0) + max(int(count or 0), 0)
+
+    if isinstance(update, tl_types.UpdateMessageReactions):
+        for item in (getattr(getattr(update, "reactions", None), "results", None) or []):
+            add(_reaction_label(getattr(item, "reaction", None)), int(getattr(item, "count", 0) or 0))
+    elif isinstance(update, tl_types.UpdateBotMessageReactions):
+        for item in (getattr(update, "reactions", None) or []):
+            add(_reaction_label(getattr(item, "reaction", None)), int(getattr(item, "count", 0) or 0))
+    elif isinstance(update, tl_types.UpdateBotMessageReaction):
+        for reaction_obj in (getattr(update, "new_reactions", None) or []):
+            add(_reaction_label(reaction_obj), 1)
+
+    parts: list[str] = []
+    for label, count in grouped.items():
+        if count <= 0:
+            continue
+        parts.append(f"{label}×{count}" if count > 1 else label)
+    return " ".join(parts)
+
+
+def _store_message_reaction_event(
+    *,
+    session_name: str,
+    chat_id: str,
+    msg_id: int,
+    kind: str,
+    text: str | None,
+    chat_title: str | None,
+    chat_username: str | None,
+    reactions_summary: str | None,
+) -> None:
+    if not session_name or not chat_id or not msg_id:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    summary = (reactions_summary or "").strip()
+
+    with _db_connect() as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            """
+            INSERT INTO inbox_messages (
+                kind, direction, status, created_at,
+                session_name, chat_id, msg_id,
+                chat_title, chat_username, text,
+                reactions_summary, reactions_updated_at,
+                is_read
+            )
+            VALUES (?, 'out', 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            ON CONFLICT(session_name, chat_id, msg_id, direction) DO UPDATE SET
+                kind=excluded.kind,
+                status='sent',
+                chat_title=COALESCE(excluded.chat_title, inbox_messages.chat_title),
+                chat_username=COALESCE(excluded.chat_username, inbox_messages.chat_username),
+                text=COALESCE(excluded.text, inbox_messages.text),
+                reactions_summary=CASE
+                    WHEN excluded.reactions_summary IS NULL OR excluded.reactions_summary = ''
+                    THEN NULL
+                    ELSE excluded.reactions_summary
+                END,
+                reactions_updated_at=CASE
+                    WHEN excluded.reactions_summary IS NULL OR excluded.reactions_summary = ''
+                    THEN NULL
+                    ELSE excluded.reactions_updated_at
+                END
+            """,
+            (
+                kind,
+                now,
+                session_name,
+                chat_id,
+                int(msg_id),
+                (chat_title or "").strip() or None,
+                (chat_username or "").strip() or None,
+                (text or "").strip() or None,
+                summary or None,
+                now if summary else None,
+            ),
+        )
+
+        if summary:
+            event_text = f"Реакция на сообщение бота: {summary}"
+            conn.execute(
+                """
+                INSERT INTO inbox_messages (
+                    kind, direction, status, created_at,
+                    session_name, chat_id, msg_id, reply_to_msg_id,
+                    chat_title, chat_username, text, replied_to_text,
+                    reactions_summary, reactions_updated_at,
+                    is_read
+                )
+                VALUES (?, 'in', 'reaction', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                ON CONFLICT(session_name, chat_id, msg_id, direction) DO UPDATE SET
+                    kind=excluded.kind,
+                    status='reaction',
+                    created_at=excluded.created_at,
+                    reply_to_msg_id=excluded.reply_to_msg_id,
+                    chat_title=COALESCE(excluded.chat_title, inbox_messages.chat_title),
+                    chat_username=COALESCE(excluded.chat_username, inbox_messages.chat_username),
+                    text=excluded.text,
+                    replied_to_text=COALESCE(excluded.replied_to_text, inbox_messages.replied_to_text),
+                    reactions_summary=excluded.reactions_summary,
+                    reactions_updated_at=excluded.reactions_updated_at,
+                    is_read=0,
+                    error=NULL
+                """,
+                (
+                    kind,
+                    now,
+                    session_name,
+                    chat_id,
+                    int(msg_id),
+                    int(msg_id),
+                    (chat_title or "").strip() or None,
+                    (chat_username or "").strip() or None,
+                    event_text,
+                    (text or "").strip() or None,
+                    summary,
+                    now,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                DELETE FROM inbox_messages
+                WHERE session_name=? AND chat_id=? AND msg_id=? AND direction='in' AND status='reaction'
+                """,
+                (session_name, chat_id, int(msg_id)),
+            )
+
+        conn.commit()
 
 
 def _queued_outgoing_exists(
@@ -583,7 +2256,7 @@ def _queued_outgoing_exists(
     if not session_name or not chat_id:
         return False
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             row = conn.execute(
                 """
                 SELECT 1
@@ -649,39 +2322,36 @@ async def generate_comment(
     if provider == 'default':
         provider = current_settings.get('ai_provider', 'gemini')
 
-    accounts_data = load_project_accounts()
+    accounts_data = load_project_accounts(current_settings)
     account = next((a for a in accounts_data if a['session_name'] == session_name), None)
-    user_persona = None
-    prompt_info = "Общий промпт"
-    if account and 'persona_id' in account:
-        p_id = str(account['persona_id'])
-        personas = current_settings.get('personas', {})
-        if p_id in personas:
-            user_persona = personas[p_id].get('prompt', '')
-            prompt_info = f"Роль: {personas[p_id].get('name')}"
+    role_id, role_data = role_for_account(account or {}, current_settings)
+    role_prompt, role_meta = build_role_prompt(role_data, current_settings)
+    role_name = str(role_data.get("name") or role_id or "Роль")
+    mood_name = str(role_meta.get("mood") or "").strip()
+    prompt_info = f"Роль: {role_name}" + (f" · настроение: {mood_name}" if mood_name else "")
+    emoji_level = str(role_meta.get("emoji_level") or role_data.get("emoji_level") or "minimal")
 
-    if not user_persona:
-        prompts_dict = target_chat.get('prompts', {})
-        if session_name in prompts_dict:
-            user_persona = prompts_dict[session_name]
-            prompt_info = "Персональный промпт"
-        else:
-            user_persona = prompts_dict.get('default', target_chat.get('prompt', ''))
-
-    if not user_persona:
-        user_persona = (
-            "Коротенький небрежно написанный коммент, как в чатах телеграм на тему поста. "
-            "Без избыточного количества эмодзи, рандомно, обращаясь к одному из ключевых тезисов поста. "
-            "Не пиши как нейросеть, пиши как обычный человек с присущими ему опечатками или речевыми ошибками (не обязательно). "
-            "Без всяких длинных тире и кавычек-елочек. "
-            "Сообщение может быть как очень короткое, так и чуть длиннее, иногда звучать как вопрос или сомнение, "
-            "мягкое отрицание написанного. "
-            "От двух до 40 слов в ответе, как захочется, лучше длинных фраз и мыслей избегать."
+    if not role_prompt:
+        role_prompt = (
+            "Пиши коротко и по теме поста как живой пользователь Telegram. "
+            "Избегай канцелярита, штампов и тона нейросети."
         )
 
     global_blacklist = current_settings.get('blacklist', [])
     h_set = current_settings.get('humanization', {})
     custom_rules = h_set.get('custom_rules', "")
+    vector_prompt = ""
+    try:
+        vector_prompt = str((target_chat or {}).get("vector_prompt") or "").strip()
+    except Exception:
+        vector_prompt = ""
+    product_knowledge_prompt = ""
+    try:
+        product_knowledge_prompt = str(
+            ((current_settings.get("product_knowledge", {}) or {}).get("prompt") or "")
+        ).strip()
+    except Exception:
+        product_knowledge_prompt = ""
     raw_penalty = float(h_set.get('repetition_penalty', 0))
     frequency_penalty_val = min(max(raw_penalty / 50, 0.0), 2.0)
     try:
@@ -693,19 +2363,46 @@ async def generate_comment(
         max_tokens_val = 90
     custom_temp = h_set.get('temperature')
 
-    system_prompt = (
-        f"ТВОЯ РОЛЬ (ОТЫГРЫВАЙ ЕЕ ДОСЛОВНО):\n{user_persona}\n\n"
-        f"ПРАВИЛА ОФОРМЛЕНИЯ ТЕКСТА:\n{custom_rules}\n"
-    )
+    system_prompt = f"ТВОЯ РОЛЬ (ОТЫГРЫВАЙ ЕЕ ДОСЛОВНО):\n{role_prompt}\n\n"
+    if vector_prompt:
+        system_prompt += (
+            "ВЕКТОР / ТЕМА (ОБЯЗАТЕЛЬНО):\n"
+            f"{vector_prompt}\n\n"
+            "Твоя реплика должна соответствовать этому вектору. "
+            "Если в векторе перечислены конкретные объекты/модели/сервисы/проблемы — "
+            "естественно упоминай 1–2 из них по месту.\n\n"
+        )
+    if product_knowledge_prompt:
+        system_prompt += (
+            "ЗНАНИЕ О ПРОДУКТЕ (ДОП. КОНТЕКСТ):\n"
+            f"{product_knowledge_prompt}\n\n"
+            "Используй это знание только если оно уместно по роли и текущему контексту. "
+            "Не обязано проявляться в каждом ответе. Не противоречь теме беседы и не выдумывай факты.\n\n"
+        )
+    system_prompt += f"ПРАВИЛА ОФОРМЛЕНИЯ ТЕКСТА:\n{custom_rules}\n"
     if global_blacklist:
         system_prompt += f"\nНЕ ИСПОЛЬЗУЙ СЛОВА: {', '.join(global_blacklist)}"
 
     if is_reply_mode:
         context_prefix = f"ТЕБЕ ГОВОРИТ {reply_to_name}: " if reply_to_name else ""
-        user_template = "КОНТЕКСТ ДИАЛОГА:\n{context}{post}\n\nОтветь согласно своей роли:"
+        user_template = (
+            "КОНТЕКСТ ДИАЛОГА:\n{context}{post}\n\n"
+            "Ответь согласно своей роли.\n"
+            "{length_hint}\n"
+            "{style_hint}\n"
+            "{question_hint}"
+        )
     else:
         context_prefix = ""
-        user_template = "ТЕКСТ ПОСТА:\n{post}\n\nНапиши комментарий от своей роли:"
+        user_template = (
+            "ТЕКСТ ПОСТА:\n{post}\n\n"
+            "Напиши комментарий от своей роли.\n"
+            "Если текста поста нет — не проси прислать текст и не пиши, что ты его не видишь. "
+            "Просто оставь короткую нейтральную реплику по ситуации, без вопросов.\n"
+            "{length_hint}\n"
+            "{style_hint}\n"
+            "{question_hint}"
+        )
 
     base_extra = (extra_instructions or "").strip()
 
@@ -798,6 +2495,35 @@ async def generate_comment(
             return t
         return t[: max(limit - 1, 1)].rstrip() + "…"
 
+    def _sample_format_hints() -> tuple[str, str]:
+        roll = random.randint(1, 100)
+        if roll <= 30:
+            return (
+                "Длина: 1 короткое предложение, примерно 4-12 слов.",
+                "Подача: ленивая бытовая реплика без длинного вступления.",
+            )
+        if roll <= 68:
+            return (
+                "Длина: 2 коротких предложения, примерно 10-24 слова.",
+                "Подача: первая фраза - реакция, вторая - короткое уточнение по той же мысли.",
+            )
+        if roll <= 85:
+            return (
+                "Длина: 2 коротких предложения, примерно 14-30 слов.",
+                "Подача: мягкое согласие или сомнение + одна конкретная деталь из поста.",
+            )
+        return (
+            "Длина: 2-3 коротких предложения, примерно 18-36 слов, максимум 4 предложения.",
+            "Подача: разверни мысль в 2-3 короткие фразы, без воды и без абзацев.",
+        )
+
+    def _sample_question_hint() -> str:
+        # Questions should be rare to avoid repetitive "interview style" comments.
+        roll = random.randint(1, 100)
+        if roll <= 25:
+            return "Вопросительный знак допустим, но только один и только если реально уместно."
+        return "Предпочти формат без вопросительного знака: утверждение, сомнение или наблюдение."
+
     def _retry_adjustments(attempt_index: int, failure: str, base_max_tokens: int) -> tuple[str, int, int | None]:
         s = (failure or "").lower()
         extra_lines: list[str] = []
@@ -855,7 +2581,15 @@ async def generate_comment(
                     final_temp = None
             generated_text = None
 
-            user_message_content = user_template.format(context=context_prefix, post=post_text_for_prompt)
+            length_hint, style_hint = _sample_format_hints()
+            question_hint = _sample_question_hint()
+            user_message_content = user_template.format(
+                context=context_prefix,
+                post=post_text_for_prompt,
+                length_hint=length_hint,
+                style_hint=style_hint,
+                question_hint=question_hint,
+            )
             if base_extra:
                 user_message_content = f"{user_message_content}\n\n{base_extra}"
             if retry_extra:
@@ -1024,6 +2758,7 @@ async def generate_comment(
                         continue
 
             if generated_text:
+                generated_text = enforce_emoji_level(generated_text, emoji_level)
                 clean_gen = generated_text.replace('"', '').replace("'", "").lower().strip()
                 if len(clean_gen) < 2:
                     last_failure = "empty_or_too_short(output)"
@@ -1132,12 +2867,29 @@ def make_fallback_comment_variant(base_text: str, session_name: str, msg_id: int
 
 
 COMMENT_DIVERSITY_MODES = [
-    "Короткий уточняющий вопрос (1 предложение).",
-    "Лёгкий скепсис/контраргумент (без токсичности).",
-    "Практичный совет/лайфхак по теме.",
-    "Лёгкая ирония/юмор (без оскорблений).",
-    "Согласие + один новый аргумент.",
-    "Короткое резюме одной мысли + вывод.",
+    "Ленивая бытовая реплика в 1 короткую фразу.",
+    "Короткая реакция + короткое уточнение второй фразой.",
+    "Мягкое сомнение по одной детали из поста без агрессии.",
+    "Нейтральное согласие или несогласие + личное наблюдение.",
+    "Спокойный практичный комментарий без умных формулировок.",
+    "Лёгкая ирония без грубости и без шуток в лоб.",
+]
+
+SEMANTIC_DIVERSITY_ANGLES = [
+    "Уточни детали: задай один конкретный вопрос по теме.",
+    "Дай практический совет/следующий шаг (без категоричности).",
+    "Озвучь ограничение/условие: когда это может не сработать.",
+    "Добавь возможное последствие/влияние (в перспективе).",
+    "Предложи критерий/метрику: как понять, что получилось.",
+    "Приведи мягкий пример «из жизни» без выдуманных фактов.",
+    "Мягко не согласись по одной детали (без токсичности).",
+    "Добавь личное наблюдение/опыт (без конкретных фактов/цифр).",
+    "Сформулируй альтернативный взгляд: другой приоритет/цель.",
+    "Спроси про условия/границы: для кого/когда это актуально.",
+    "Отметь риск/подводный камень и как его снизить.",
+    "Сделай короткое сравнение с похожим кейсом (без ссылок/имен).",
+    "Займи позицию «скепсис, но без хейта»: что нужно проверить.",
+    "Поддержи автора и добавь одно уточнение по делу.",
 ]
 
 
@@ -1405,6 +3157,86 @@ def _extract_keywords(text: str, max_keywords: int = 2) -> list[str]:
     return [w for (w, _) in counts.most_common(max_keywords)]
 
 
+def _stable_seed_int(seed_text: str) -> int:
+    try:
+        import hashlib
+
+        return int(hashlib.sha256(str(seed_text).encode("utf-8")).hexdigest()[:8], 16)
+    except Exception:
+        return abs(hash(str(seed_text))) % (2**31)
+
+
+def _stable_shuffled(items: list[str], seed_text: str) -> list[str]:
+    if not items:
+        return []
+    out = items.copy()
+    rnd = random.Random(_stable_seed_int(seed_text))
+    rnd.shuffle(out)
+    return out
+
+
+def _content_tokens(text: str) -> list[str]:
+    return [t for t in _word_tokens(text) if t not in _RU_STOPWORDS and not t.isdigit() and len(t) >= 4]
+
+
+def build_semantic_diversity_instructions(
+    post_text: str,
+    *,
+    angle_hint: str | None = None,
+    strict: bool = False,
+    previous_candidate: str | None = None,
+) -> str:
+    kws = _extract_keywords(post_text, max_keywords=2)
+    kw_line = f"Ключевые слова поста: {', '.join(kws)}." if kws else ""
+
+    parts: list[str] = [
+        "ВАЖНО: не пересказывай и не перефразируй уже написанное другими нашими аккаунтами под этим постом.",
+        "Сделай комментарий по теме поста, но с ДРУГИМ смысловым ходом (новый аспект/угол).",
+    ]
+    if angle_hint:
+        parts.append(f"СМЫСЛОВОЙ УГОЛ (обязателен): {angle_hint}")
+    if kw_line:
+        parts.append(kw_line)
+    parts.append("Опирайся на 1 деталь из поста, чтобы было естественно и по теме.")
+    parts.append("Если контекста не хватает — лучше задай один уточняющий вопрос, чем делай утверждения.")
+
+    if strict:
+        parts.append(
+            "Проверка разнообразия сработала: перепиши так, чтобы это была ДРУГАЯ мысль/ход (вопрос/совет/последствие/пример)."
+        )
+    if previous_candidate:
+        parts.append("ТВОЙ ПРОШЛЫЙ ВАРИАНТ (НЕ ПОВТОРЯЙ): " + _truncate_one_line(previous_candidate))
+
+    return "\n".join([p for p in parts if p]).strip()
+
+
+def comment_needs_more_novelty(
+    candidate: str,
+    *,
+    post_text: str,
+    existing_comments: list[str],
+    min_new_tokens: int,
+) -> tuple[bool, int]:
+    if min_new_tokens <= 0:
+        return False, 0
+    if not (candidate or "").strip():
+        return True, 0
+    if not existing_comments:
+        return False, 0
+
+    base = set(_content_tokens(post_text))
+    seen = set()
+    for c in existing_comments or []:
+        seen.update(_content_tokens(c))
+
+    cand = set(_content_tokens(candidate))
+    if not cand:
+        return True, 0
+
+    new = {t for t in cand if t not in base and t not in seen}
+    return (len(new) < min_new_tokens), len(new)
+
+
 def make_emergency_comment(
     post_text: str,
     session_name: str,
@@ -1456,6 +3288,97 @@ def make_emergency_comment(
     return (pool[0].format(kw=keyword) if keyword else pool[0]).strip()
 
 
+def _normalize_post_text_for_compare(text: str) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()
+
+
+def _extract_message_text(message) -> str:
+    if not message:
+        return ""
+    text = getattr(message, "message", None)
+    if text is None:
+        text = getattr(message, "text", None)
+    if text is None:
+        try:
+            text = getattr(message, "raw_text", None)
+        except Exception:
+            text = None
+    return str(text or "")
+
+
+def _message_media_fingerprint(message) -> str:
+    if not message:
+        return ""
+    try:
+        photo = getattr(message, "photo", None)
+        if photo is not None:
+            pid = getattr(photo, "id", None)
+            if pid:
+                return f"photo:{pid}"
+        document = getattr(message, "document", None)
+        if document is not None:
+            did = getattr(document, "id", None)
+            mime = getattr(document, "mime_type", None)
+            if not mime:
+                msg_file = getattr(message, "file", None)
+                mime = getattr(msg_file, "mime_type", None) if msg_file else None
+            if did or mime:
+                return f"doc:{did}:{mime}"
+        msg_file = getattr(message, "file", None)
+        if msg_file is not None:
+            mime = getattr(msg_file, "mime_type", None)
+            size = getattr(msg_file, "size", None)
+            if mime or size:
+                return f"file:{mime}:{size}"
+    except Exception:
+        return ""
+    return ""
+
+
+def _message_has_image(message) -> bool:
+    if not message:
+        return False
+    try:
+        if getattr(message, "photo", None):
+            return True
+        msg_file = getattr(message, "file", None)
+        mime_type = getattr(msg_file, "mime_type", None) if msg_file else None
+        return isinstance(mime_type, str) and mime_type.lower().startswith("image/")
+    except Exception:
+        return False
+
+
+async def _download_message_image_bytes(message):
+    if not _message_has_image(message):
+        return None
+    try:
+        return await _run_with_soft_timeout(
+            message.download_media(file=bytes),
+            SEND_ATTEMPT_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        return None
+
+
+async def _refetch_post_message(client, chat_id: int, msg_id: int):
+    if client is None:
+        return None
+    try:
+        entity = await _run_with_soft_timeout(
+            client.get_input_entity(int(chat_id)),
+            SEND_ATTEMPT_TIMEOUT_SECONDS,
+        )
+        messages = await _run_with_soft_timeout(
+            client.get_messages(entity, ids=[int(msg_id)]),
+            SEND_ATTEMPT_TIMEOUT_SECONDS,
+        )
+        if messages and isinstance(messages, list):
+            return messages[0]
+    except Exception:
+        return None
+    return None
+
+
 async def catch_up_missed_posts(client_wrapper, target_chat):
     global POST_PROCESS_CACHE, handled_grouped_ids, PENDING_TASKS
     task = asyncio.current_task()
@@ -1486,12 +3409,6 @@ async def catch_up_missed_posts(client_wrapper, target_chat):
         messages_to_scan = []
         async for message in client_wrapper.client.iter_messages(entity, limit=SCAN_LIMIT):
             messages_to_scan.append(message)
-
-        for message in messages_to_scan:
-            if message.grouped_id:
-                if check_if_already_commented(destination_chat_id, message.id):
-                    if message.grouped_id not in handled_grouped_ids:
-                        handled_grouped_ids.append(message.grouped_id)
 
         me = await client_wrapper.client.get_me()
         my_id = me.id
@@ -1529,11 +3446,9 @@ async def catch_up_missed_posts(client_wrapper, target_chat):
             unique_process_id = f"{target_chat.get('chat_id')}_{message.id}"
             if unique_process_id in POST_PROCESS_CACHE:
                 continue
-
-            if check_if_already_commented(destination_chat_id, message.id):
+            if unique_process_id in PROCESSING_CACHE:
                 continue
 
-            POST_PROCESS_CACHE.add(unique_process_id)
             logger.info(f"💡 [CATCH-UP] Нашел свежий пропущенный пост {message.id} в {chat_name}")
 
             try:
@@ -1554,18 +3469,25 @@ async def catch_up_missed_posts(client_wrapper, target_chat):
 
 
 async def process_new_post(event, target_chat, from_catch_up=False, is_manual=False):
-    global active_clients, POST_PROCESS_CACHE, PENDING_TASKS, current_settings, SCENARIO_CONTEXT
+    global active_clients, PENDING_TASKS, current_settings, SCENARIO_CONTEXT, PROCESSING_CACHE
     task = asyncio.current_task()
     PENDING_TASKS.add(task)
+    unique_id = None
+    processing_added = False
+    any_comment_sent = False
     try:
         channel_id = target_chat.get('chat_id')
         msg_id = event.message.id
         destination_chat_id_for_logs = event.chat_id
         unique_id = f"{channel_id}_{msg_id}"
 
-        if not from_catch_up and not is_manual:
-            if unique_id in POST_PROCESS_CACHE: return
-            POST_PROCESS_CACHE.add(unique_id)
+        if not is_manual and unique_id in POST_PROCESS_CACHE:
+            return
+
+        if unique_id in PROCESSING_CACHE:
+            return
+        PROCESSING_CACHE.add(unique_id)
+        processing_added = True
 
         raw_id = str(channel_id)
         norm_id = raw_id.replace('-100', '')
@@ -1574,7 +3496,7 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
         has_scenario = False
 
         try:
-            with sqlite3.connect(DB_FILE) as conn:
+            with _db_connect() as conn:
                 cursor = conn.cursor()
                 placeholders = ','.join('?' for _ in ids_to_check)
                 query = f"SELECT chat_id, script_content, status FROM scenarios WHERE chat_id IN ({placeholders})"
@@ -1585,6 +3507,7 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                     found_chat_id, content, status = row
                     if content and content.strip() and status != 'stopped':
                         if from_catch_up:
+                            _mark_post_processed(unique_id)
                             return
 
                         has_scenario = True
@@ -1601,22 +3524,31 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
 
         if has_scenario:
             SCENARIO_CONTEXT[f"{channel_id}_{msg_id}"] = msg_id
+            _mark_post_processed(unique_id)
             return
 
         chat_id_check = target_chat.get('chat_id')
         actual_ai_enabled = True
         found_fresh_settings = False
-        if current_settings and 'targets' in current_settings:
-            for t in current_settings['targets']:
-                if t.get('chat_id') == chat_id_check:
-                    actual_ai_enabled = t.get('ai_enabled', True)
-                    found_fresh_settings = True
-                    break
+        for t in get_project_targets(current_settings):
+            if t.get('chat_id') == chat_id_check:
+                actual_ai_enabled = t.get('ai_enabled', True)
+                found_fresh_settings = True
+                break
 
-        if found_fresh_settings and not actual_ai_enabled and not is_manual: return
-        if not found_fresh_settings and not target_chat.get('ai_enabled', True) and not is_manual: return
+        if found_fresh_settings and not actual_ai_enabled and not is_manual:
+            _mark_post_processed(unique_id)
+            return
+        if not found_fresh_settings and not target_chat.get('ai_enabled', True) and not is_manual:
+            _mark_post_processed(unique_id)
+            return
 
-        post_text = event.message.text or ""
+        post_text = str(getattr(event.message, "message", None) or "")
+        if not post_text:
+            try:
+                post_text = str(getattr(event.message, "text", None) or "")
+            except Exception:
+                post_text = ""
 
         try:
             min_words = int(target_chat.get("min_word_count", 0) or 0)
@@ -1632,6 +3564,7 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                     destination_chat_id_for_logs,
                     f"слишком короткий ({wc}/{min_words} слов)",
                 )
+                _mark_post_processed(unique_id)
                 return
 
         try:
@@ -1647,6 +3580,7 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                 destination_chat_id_for_logs,
                 f"шанс коммента {comment_chance}%",
             )
+            _mark_post_processed(unique_id)
             return
 
         if not is_manual:
@@ -1662,6 +3596,7 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                     destination_chat_id_for_logs,
                     str(reason or ""),
                 )
+                _mark_post_processed(unique_id)
                 return
 
         accounts_data = load_project_accounts()
@@ -1669,10 +3604,7 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
             c
             for c in list(active_clients.values())
             if is_bot_awake(next((a for a in accounts_data if a["session_name"] == c.session_name), {}))
-            and (
-                not target_chat.get("assigned_accounts", [])
-                or c.session_name in target_chat.get("assigned_accounts", [])
-            )
+            and _is_account_assigned(target_chat, c.session_name)
         ]
 
         if not eligible_clients:
@@ -1682,6 +3614,7 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                 destination_chat_id_for_logs,
                 "нет подходящих аккаунтов (все спят / не назначены / не подключены)",
             )
+            _mark_post_processed(unique_id)
             return
 
         channel_key = normalize_id(target_chat.get("chat_id")) or target_chat.get("chat_id") or event.chat_id
@@ -1695,6 +3628,10 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
             if isinstance(msg_date, datetime) and msg_date.tzinfo is None:
                 msg_date = msg_date.replace(tzinfo=timezone.utc)
 
+            if channel_key not in CHANNEL_LAST_POST_TIME:
+                persisted = _db_get_last_post_time("comment", str(channel_key))
+                if persisted:
+                    CHANNEL_LAST_POST_TIME[channel_key] = persisted
             last_time = CHANNEL_LAST_POST_TIME.get(channel_key)
             if last_time:
                 try:
@@ -1711,39 +3648,33 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                         destination_chat_id_for_logs,
                         f"мин. интервал {min_interval_mins} мин (прошло {int(delta_sec)} сек)",
                     )
+                    _mark_post_processed(unique_id)
                     return
 
+            msg_date = _dt_to_utc(msg_date)
             CHANNEL_LAST_POST_TIME[channel_key] = msg_date
+            _db_set_last_post_time("comment", str(channel_key), msg_date)
 
-        try:
-            range_min = int(target_chat.get("accounts_per_post_min", 0) or 0)
-        except Exception:
-            range_min = 0
-        try:
-            range_max = int(target_chat.get("accounts_per_post_max", 0) or 0)
-        except Exception:
-            range_max = 0
-        range_min = max(range_min, 0)
-        range_max = max(range_max, 0)
+        selected_clients, planned_count, already_count, already_accounts = _select_accounts_for_post(
+            chat_key=str(channel_key),
+            post_id=int(msg_id),
+            destination_chat_id=int(destination_chat_id_for_logs),
+            target_chat=target_chat,
+            eligible_clients=eligible_clients,
+        )
+        if not selected_clients:
+            if planned_count > 0 and already_count >= planned_count:
+                reason = f"уже есть комментарии от {already_count}/{planned_count} аккаунтов"
+            elif already_accounts:
+                reason = f"уже комментировали: {', '.join(sorted(already_accounts))}"
+            else:
+                reason = "не нужно выбирать аккаунты (planned_count=0)"
+            logger.info(f"⏭️ Пост {msg_id} пропущен: {reason}.")
+            log_comment_skip_to_db(msg_id, target_chat, destination_chat_id_for_logs, reason)
+            _mark_post_processed(unique_id)
+            return
 
-        if range_min == 0 and range_max == 0:
-            selected_count = len(eligible_clients)
-        else:
-            if range_max < range_min:
-                range_max = range_min
-            if range_max == 0:
-                range_max = range_min
-            if range_min == 0:
-                range_min = 1
-            available = len(eligible_clients)
-            if available > 0:
-                range_min = min(range_min, available)
-                range_max = min(range_max, available)
-                if range_max < range_min:
-                    range_max = range_min
-            selected_count = random.randint(range_min, range_max)
-
-        eligible_clients = _select_accounts_with_rotation(channel_key, eligible_clients, selected_count)
+        eligible_clients = selected_clients
 
         logger.info(
             f"👥 Аккаунты для коммента поста {msg_id}: {', '.join([c.session_name for c in eligible_clients])}"
@@ -1770,6 +3701,35 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
         except Exception:
             image_bytes = None
 
+        post_media_fingerprint = _message_media_fingerprint(event.message)
+        post_last_refresh_at = 0.0
+
+        async def _refresh_post_content(client_wrapper, *, force: bool = False):
+            nonlocal post_text, image_bytes, post_media_fingerprint, post_last_refresh_at
+
+            now_ts = time.time()
+            if (not force) and post_last_refresh_at and (now_ts - post_last_refresh_at) < 3.0:
+                return False
+            post_last_refresh_at = now_ts
+
+            latest_msg = await _refetch_post_message(client_wrapper.client, int(event.chat_id), int(msg_id))
+            if latest_msg is None:
+                return False
+
+            latest_text = _extract_message_text(latest_msg)
+            text_changed = _normalize_post_text_for_compare(latest_text) != _normalize_post_text_for_compare(post_text)
+
+            latest_media_fp = _message_media_fingerprint(latest_msg)
+            media_changed = latest_media_fp != (post_media_fingerprint or "")
+            if media_changed:
+                post_media_fingerprint = latest_media_fp
+                image_bytes = await _download_message_image_bytes(latest_msg)
+
+            if text_changed:
+                post_text = latest_text
+
+            return bool(text_changed or media_changed)
+
         destination_chat_id_for_logs = event.chat_id
         daily_limit = int(target_chat.get("daily_comment_limit", 999) or 0)
         delay_between = max(int(target_chat.get("delay_between_accounts", 10) or 0), 0)
@@ -1786,13 +3746,29 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
             similarity_retries = 1
         similarity_retries = max(min(similarity_retries, 3), 0)
 
+        try:
+            semantic_diversify = bool(h_set.get("short_post_diversify", True))
+        except Exception:
+            semantic_diversify = True
+        try:
+            semantic_min_new_tokens = int(h_set.get("short_post_min_new_tokens", 2) or 0)
+        except Exception:
+            semantic_min_new_tokens = 2
+        semantic_min_new_tokens = max(min(semantic_min_new_tokens, 6), 0)
+
+        angle_pool = []
+        if semantic_diversify:
+            angle_seed = f"angles:{destination_chat_id_for_logs}:{msg_id}"
+            angle_pool = _stable_shuffled(SEMANTIC_DIVERSITY_ANGLES, angle_seed)
+
         sent_comments: list[str] = []
-        use_modes = len(eligible_clients) > 1
-        mode_pool = COMMENT_DIVERSITY_MODES.copy()
-        random.shuffle(mode_pool)
+        use_modes = True
+        mode_seed = f"modes:{destination_chat_id_for_logs}:{msg_id}"
+        mode_pool = _stable_shuffled(COMMENT_DIVERSITY_MODES, mode_seed)
 
         for idx, client_wrapper in enumerate(eligible_clients):
             try:
+                attempted_send = False
                 if daily_limit > 0:
                     current_daily_count = get_daily_action_count_from_db(destination_chat_id_for_logs, "comment")
                     if current_daily_count >= daily_limit:
@@ -1801,15 +3777,35 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                         )
                         break
 
+                if not await ensure_client_connected(client_wrapper, reason="comment"):
+                    continue
+
+                media_fp_for_generation = post_media_fingerprint
+                try:
+                    if await _refresh_post_content(client_wrapper):
+                        logger.info(f"✏️ Пост {msg_id} обновлён — беру актуальный текст перед комментированием.")
+                        media_fp_for_generation = post_media_fingerprint
+                except Exception:
+                    pass
+
                 mode_hint = None
                 if use_modes and mode_pool:
                     mode_hint = mode_pool[idx % len(mode_pool)]
 
-                extra = build_comment_diversity_instructions(
+                angle_hint = None
+                if semantic_diversify and angle_pool:
+                    angle_hint = angle_pool[idx % len(angle_pool)]
+
+                extra_base = build_comment_diversity_instructions(
                     sent_comments,
                     mode_hint=mode_hint,
                 )
+                short_extra = ""
+                if semantic_diversify:
+                    short_extra = build_semantic_diversity_instructions(post_text, angle_hint=angle_hint)
+                extra = "\n\n".join([p for p in [extra_base, short_extra] if p]).strip()
 
+                post_text_for_generation = post_text
                 generated_text = None
                 prompt_info = None
                 failure_reason = None
@@ -1834,19 +3830,63 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                     too_similar, score, best = is_comment_too_similar(
                         generated_text, sent_comments, similarity_threshold
                     )
-                    if not too_similar:
+                    needs_novelty = False
+                    new_token_count = 0
+                    required_new_tokens = 0
+                    if semantic_min_new_tokens > 0:
+                        required_new_tokens = semantic_min_new_tokens + (1 if len(sent_comments) >= 2 else 0)
+                    if semantic_diversify and required_new_tokens > 0:
+                        needs_novelty, new_token_count = comment_needs_more_novelty(
+                            generated_text,
+                            post_text=post_text,
+                            existing_comments=sent_comments,
+                            min_new_tokens=required_new_tokens,
+                        )
+                    if (not too_similar) and (not needs_novelty):
                         break
 
-                    failure_reason = f"too_similar(score={score:.2f})"
-                    logger.info(
-                        f"♻️ [{client_wrapper.session_name}] комментарий слишком похож (score={score:.2f}). Перегенерирую..."
-                    )
-                    extra = build_comment_diversity_instructions(
+                    if too_similar:
+                        failure_reason = f"too_similar(score={score:.2f})"
+                        logger.info(
+                            f"♻️ [{client_wrapper.session_name}] комментарий слишком похож (score={score:.2f}). Перегенерирую..."
+                        )
+                    else:
+                        failure_reason = f"low_novelty(new_tokens={new_token_count})"
+                        logger.info(
+                            f"🧩 [{client_wrapper.session_name}] комментарий выглядит как перефраз ({new_token_count} новых слов). Перегенерирую..."
+                        )
+
+                    if attempt >= similarity_retries:
+                        try:
+                            emg = make_emergency_comment(
+                                post_text,
+                                client_wrapper.session_name,
+                                msg_id,
+                                existing_comments=sent_comments,
+                                threshold=similarity_threshold,
+                            )
+                        except Exception:
+                            emg = ""
+                        if emg:
+                            generated_text = emg
+                            prompt_info = (prompt_info or "comment") + " · EMG"
+                            break
+
+                    extra_base = build_comment_diversity_instructions(
                         sent_comments,
                         mode_hint=mode_hint,
                         strict=True,
                         previous_candidate=generated_text,
                     )
+                    short_extra = ""
+                    if semantic_diversify:
+                        short_extra = build_semantic_diversity_instructions(
+                            post_text,
+                            angle_hint=angle_hint,
+                            strict=True,
+                            previous_candidate=generated_text,
+                        )
+                    extra = "\n\n".join([p for p in [extra_base, short_extra] if p]).strip()
                     generated_text = None
                     prompt_info = None
 
@@ -1872,12 +3912,63 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                     )
                     continue
 
+                attempted_send = True
+                tag_chance = target_chat.get("tag_comment_chance", 50)
+                try:
+                    tag_chance = int(tag_chance or 0)
+                except Exception:
+                    tag_chance = 50
+                tag_chance = max(min(tag_chance, 100), 0)
+                actual_reply_id = msg_id if (is_manual or random.randint(1, 100) <= tag_chance) else None
+                thread_top_id = int(msg_id) if actual_reply_id is None else None
+
+                # Re-check the post right before sending: SMM may have edited the text last-minute.
+                try:
+                    if await _refresh_post_content(client_wrapper, force=True):
+                        text_changed = _normalize_post_text_for_compare(post_text) != _normalize_post_text_for_compare(
+                            post_text_for_generation
+                        )
+                        media_changed = post_media_fingerprint != (media_fp_for_generation or "")
+                        if text_changed or media_changed:
+                            logger.info(f"✏️ Пост {msg_id} изменился прямо перед отправкой — перегенерирую комментарий.")
+                            regen_extra_base = build_comment_diversity_instructions(
+                                sent_comments,
+                                mode_hint=mode_hint,
+                                strict=True,
+                                previous_candidate=generated_text,
+                            )
+                            regen_short_extra = ""
+                            if semantic_diversify:
+                                regen_short_extra = build_semantic_diversity_instructions(
+                                    post_text,
+                                    angle_hint=angle_hint,
+                                    strict=True,
+                                    previous_candidate=generated_text,
+                                )
+                            regen_extra = "\n\n".join([p for p in [regen_extra_base, regen_short_extra] if p]).strip()
+
+                            regen_text, regen_info = await generate_comment(
+                                post_text,
+                                target_chat,
+                                client_wrapper.session_name,
+                                image_bytes=image_bytes,
+                                extra_instructions=regen_extra,
+                            )
+                            if regen_text:
+                                generated_text = regen_text
+                                prompt_info = (regen_info or prompt_info or "comment") + " · UPD"
+                except Exception:
+                    pass
+
                 await human_type_and_send(
                     client_wrapper.client,
                     event.chat_id,
                     generated_text,
-                    reply_to_msg_id=msg_id,
+                    reply_to_msg_id=actual_reply_id,
+                    thread_top_msg_id=thread_top_id,
+                    split_mode="smart_ru_no_comma",
                 )
+                any_comment_sent = True
                 me = await client_wrapper.client.get_me()
                 logger.info(f"✅ [{client_wrapper.session_name}] прокомментировал пост {msg_id} ({prompt_info})")
                 sent_comments.append(generated_text)
@@ -1902,6 +3993,7 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                         },
                     }
                 )
+                _clear_account_failure(client_wrapper.session_name, "comment")
 
                 if delay_between > 0 and idx != len(eligible_clients) - 1:
                     await asyncio.sleep(delay_between)
@@ -1909,9 +4001,21 @@ async def process_new_post(event, target_chat, from_catch_up=False, is_manual=Fa
                 raise
             except Exception as e:
                 logger.error(f"❌ Ошибка комментирования ({client_wrapper.session_name}): {e}")
+                if attempted_send:
+                    _record_account_failure(
+                        client_wrapper.session_name,
+                        "comment",
+                        last_error=str(e),
+                        last_target=str(destination_chat_id_for_logs),
+                    )
+
+        if any_comment_sent:
+            _mark_post_processed(unique_id)
     except asyncio.CancelledError:
         pass
     finally:
+        if processing_added and unique_id:
+            PROCESSING_CACHE.discard(unique_id)
         PENDING_TASKS.discard(task)
 
 
@@ -2061,9 +4165,8 @@ async def process_new_post_for_reaction(source_channel_peer, original_post_id, r
         eligible_clients = []
         for c in list(active_clients.values()):
             acc_data = next((a for a in accounts_data if a['session_name'] == c.session_name), None)
-            if acc_data and is_bot_awake(acc_data):
-                if not reaction_target.get('assigned_accounts', []) or c.session_name in reaction_target.get('assigned_accounts', []):
-                    eligible_clients.append(c)
+            if acc_data and is_bot_awake(acc_data) and _is_account_assigned(reaction_target, c.session_name):
+                eligible_clients.append(c)
         if not eligible_clients:
             return
         random.shuffle(eligible_clients)
@@ -2075,10 +4178,14 @@ async def process_new_post_for_reaction(source_channel_peer, original_post_id, r
         existing_reactions = _extract_existing_reaction_emojis(message)
         for client_wrapper in eligible_clients:
             try:
+                attempted_send = False
                 current_daily_count = get_daily_action_count_from_db(destination_chat_id_for_logs, 'reaction')
                 if current_daily_count >= daily_limit:
                     break
                 if not desired_reactions and not existing_reactions:
+                    continue
+
+                if not await ensure_client_connected(client_wrapper, reason="reaction"):
                     continue
 
                 num_to_set = reaction_target.get("reaction_count", 1)
@@ -2098,6 +4205,7 @@ async def process_new_post_for_reaction(source_channel_peer, original_post_id, r
                     pass
                 await asyncio.sleep(random.uniform(1, 3))
                 try:
+                    attempted_send = True
                     await client_wrapper.client(
                         SendReactionRequest(peer=actual_peer, msg_id=original_post_id, reaction=tl_reactions)
                     )
@@ -2115,6 +4223,7 @@ async def process_new_post_for_reaction(source_channel_peer, original_post_id, r
                         raise
                     reactions_to_set_str = fallback
                     tl_reactions = [ReactionEmoji(emoticon=r) for r in reactions_to_set_str]
+                    attempted_send = True
                     await client_wrapper.client(
                         SendReactionRequest(peer=actual_peer, msg_id=original_post_id, reaction=tl_reactions)
                     )
@@ -2130,12 +4239,20 @@ async def process_new_post_for_reaction(source_channel_peer, original_post_id, r
                                'channel_id': reaction_target.get('chat_id'),
                                'destination_chat_id': destination_chat_id_for_logs}
                 })
+                _clear_account_failure(client_wrapper.session_name, "reaction")
                 if delay_between > 0 and client_wrapper != eligible_clients[-1]:
                     await asyncio.sleep(delay_between)
             except FloodWaitError as e:
                 await asyncio.sleep(e.seconds + 2)
             except Exception as e:
                 logger.error(f"❌ Ошибка отправки реакции ({client_wrapper.session_name}): {e}")
+                if attempted_send:
+                    _record_account_failure(
+                        client_wrapper.session_name,
+                        "reaction",
+                        last_error=str(e),
+                        last_target=str(destination_chat_id_for_logs),
+                    )
     except asyncio.CancelledError:
         pass
     finally:
@@ -2148,20 +4265,29 @@ async def process_post_for_monitoring(event, monitor_target):
     PENDING_TASKS.add(task)
     try:
         channel_id = event.chat_id
+        channel_key = normalize_id(channel_id) or channel_id
         post_content = event.message.text or ""
         post_id = event.message.id
+        msg_date = _dt_to_utc(event.message.date)
         min_interval = monitor_target.get('min_post_interval_mins', 0)
         if min_interval > 0:
-            last_post_time = MONITOR_CHANNEL_LAST_POST_TIME.get(channel_id)
-            if last_post_time and (event.message.date - last_post_time).total_seconds() < min_interval * 60:
+            if channel_key not in MONITOR_CHANNEL_LAST_POST_TIME:
+                persisted = _db_get_last_post_time("monitor", str(channel_key))
+                if persisted:
+                    MONITOR_CHANNEL_LAST_POST_TIME[channel_key] = persisted
+            last_post_time = MONITOR_CHANNEL_LAST_POST_TIME.get(channel_key)
+            if last_post_time and (msg_date - last_post_time).total_seconds() < min_interval * 60:
                 return
-            MONITOR_CHANNEL_LAST_POST_TIME[channel_id] = event.message.date
+            MONITOR_CHANNEL_LAST_POST_TIME[channel_key] = msg_date
+            _db_set_last_post_time("monitor", str(channel_key), msg_date)
         if len(post_content.split()) < monitor_target.get('min_word_count', 0):
             return
         daily_limit = monitor_target.get('daily_limit', 999)
         if daily_limit > 0 and get_daily_action_count_from_db(channel_id, 'monitoring') >= daily_limit:
             return
-        eligible_clients = [c for c in list(active_clients.values()) if not monitor_target.get('assigned_accounts', []) or c.session_name in monitor_target.get('assigned_accounts', [])]
+        eligible_clients = [
+            c for c in list(active_clients.values()) if _is_account_assigned(monitor_target, c.session_name)
+        ]
         if not eligible_clients:
             return
         client_wrapper = random.choice(eligible_clients)
@@ -2192,67 +4318,6 @@ async def process_post_for_monitoring(event, monitor_target):
         PENDING_TASKS.discard(task)
 
 
-async def send_admin_notification(text, reply_context=None):
-    try:
-        admin_conf = load_config('admin_bot')
-        token = admin_conf['token']
-        owners_str = admin_conf.get('allowed_ids', '')
-
-        if not owners_str: return
-        owners = [oid.strip() for oid in owners_str.split(',') if oid.strip()]
-
-        reply_markup = None
-        if reply_context:
-            try:
-                with sqlite3.connect(DB_FILE) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        INSERT INTO alert_context (chat_id, msg_id, session_name, created_at)
-                        VALUES (?, ?, ?, ?)
-                    ''', (reply_context['chat_id'], reply_context['msg_id'], reply_context['session_name'],
-                          time.time()))
-                    alert_id = cursor.lastrowid
-                    conn.commit()
-
-                reply_markup = {
-                    "inline_keyboard": [[
-                        {"text": "🗣 Ответить", "callback_data": f"reply_alert_{alert_id}"}
-                    ]]
-                }
-            except Exception as e:
-                logger.error(f"Ошибка сохранения контекста ответа: {e}")
-
-        safe_text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-
-        safe_text = safe_text.replace('&lt;b&gt;', '<b>').replace('&lt;/b&gt;', '</b>')
-        safe_text = safe_text.replace('&lt;i&gt;', '<i>').replace('&lt;/i&gt;', '</i>')
-        safe_text = safe_text.replace('&lt;a href=', '<a href=').replace('&lt;/a&gt;', '</a>')
-        safe_text = safe_text.replace("'&gt;", "'>").replace('"&gt;', '">')
-
-        timeout = httpx.Timeout(20.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            for owner_id in owners:
-                try:
-                    payload = {
-                        "chat_id": int(owner_id),
-                        "text": safe_text,
-                        "parse_mode": "HTML",
-                        "link_preview_options": {"is_disabled": True},
-                    }
-                    if reply_markup:
-                        payload["reply_markup"] = reply_markup
-
-                    await client.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload)
-                except Exception:
-                    try:
-                        payload.pop("parse_mode", None)
-                        await client.post(f"https://api.telegram.org/bot{token}/sendMessage", json=payload)
-                    except:
-                        pass
-    except Exception as e:
-        logger.error(f"Не удалось отправить уведомление админу: {e}")
-
-
 async def process_trigger(event, found_target, our_ids):
     global active_clients, REPLY_PROCESS_CACHE
 
@@ -2268,7 +4333,7 @@ async def process_trigger(event, found_target, our_ids):
     try:
         chat_id_target = str(found_target.get('chat_id'))
 
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT trigger_phrase, answer_text FROM triggers WHERE chat_id = ?",
@@ -2294,8 +4359,7 @@ async def process_trigger(event, found_target, our_ids):
         for c in list(active_clients.values()):
             acc_conf = next((a for a in accounts_data if a['session_name'] == c.session_name), None)
             if acc_conf and is_bot_awake(acc_conf):
-                assigned = found_target.get('assigned_accounts', [])
-                if not assigned or c.session_name in assigned:
+                if _is_account_assigned(found_target, c.session_name):
                     eligible.append(c)
 
         if not eligible:
@@ -2307,20 +4371,50 @@ async def process_trigger(event, found_target, our_ids):
         await asyncio.sleep(random.uniform(3, 7))
 
         try:
+            attempted_send = True
             await human_type_and_send(client_wrapper.client, event.chat_id, answer_text, reply_to_msg_id=msg_id)
             logger.info(f"⚡ [{client_wrapper.session_name}] ответил по триггеру на сообщение {msg_id}")
+            _clear_account_failure(client_wrapper.session_name, "reply")
         except Exception as e:
             logger.error(f"Ошибка отправки триггера: {e}")
+            _record_account_failure(
+                client_wrapper.session_name,
+                "reply",
+                last_error=str(e),
+                last_target=str(event.chat_id),
+            )
             REPLY_PROCESS_CACHE.discard(msg_id)
 
 
 class CommentatorClient:
     def __init__(self, account_data, api_id, api_hash):
         self.session_name = account_data['session_name']
-        self.session_string = account_data['session_string']
-        self.proxy_url = account_data.get('proxy_url')
-        self.proxy = self._parse_proxy(self.proxy_url) if self.proxy_url else None
-        self.client = TelegramClient(StringSession(self.session_string), api_id, api_hash, proxy=self.proxy)
+        self.session_string = account_data.get('session_string')
+        self.session_file = account_data.get("session_file") or account_data.get("session_path")
+        self.api_id, self.api_hash = _resolve_account_credentials(account_data, api_id, api_hash)
+        self.proxy = _resolve_account_proxy(account_data)
+        self.client = None
+        self._init_error = None
+
+        if not self.api_id or not self.api_hash:
+            self._init_error = "missing_api_credentials"
+            return
+
+        session = _resolve_account_session(account_data)
+        if not session:
+            self._init_error = "missing_session"
+            return
+
+        try:
+            self.client = TelegramClient(
+                session,
+                self.api_id,
+                self.api_hash,
+                proxy=self.proxy,
+                **device_kwargs(account_data),
+            )
+        except Exception as e:
+            self._init_error = f"init_error:{e}"
 
     def _parse_proxy(self, url):
         try:
@@ -2334,12 +4428,21 @@ class CommentatorClient:
 
     async def start(self):
         try:
+            if not self.client:
+                if self._init_error:
+                    logger.error(f"Ошибка инициализации {self.session_name}: {self._init_error}")
+                return False
             await self.client.connect()
             if not await self.client.is_user_authorized():
+                self._init_error = "unauthorized"
                 return False
             me = await self.client.get_me()
             self.user_id = me.id
             self.client.add_event_handler(self.event_handler, events.NewMessage)
+            self.client.add_event_handler(
+                self.reaction_event_handler,
+                events.Raw(types=(tl_types.UpdateMessageReactions, tl_types.UpdateBotMessageReaction, tl_types.UpdateBotMessageReactions)),
+            )
             return True
         except Exception as e:
             logger.error(f"Ошибка подключения {self.session_name}: {e}")
@@ -2348,6 +4451,47 @@ class CommentatorClient:
     async def stop(self):
         if self.client.is_connected():
             await self.client.disconnect()
+
+    async def reaction_event_handler(self, update):
+        try:
+            peer = getattr(update, "peer", None)
+            msg_id = int(getattr(update, "msg_id", 0) or 0)
+            chat_id = _peer_chat_id(peer)
+            if not chat_id or msg_id <= 0:
+                return
+
+            summary = _reaction_summary_from_update(update)
+            entity = await self.client.get_entity(peer)
+            msg = await self.client.get_messages(entity, ids=msg_id)
+            if isinstance(msg, list):
+                msg = msg[0] if msg else None
+            if not msg:
+                return
+
+            if getattr(msg, "sender_id", None) != getattr(self, "user_id", None):
+                return
+
+            kind = "dm" if isinstance(peer, tl_types.PeerUser) else "quote"
+            chat_username = getattr(entity, "username", None)
+            if isinstance(peer, tl_types.PeerUser):
+                first_name = getattr(entity, "first_name", "") or ""
+                last_name = getattr(entity, "last_name", "") or ""
+                chat_title = (f"{first_name} {last_name}").strip() or chat_username or chat_id
+            else:
+                chat_title = getattr(entity, "title", None) or chat_username or chat_id
+
+            _store_message_reaction_event(
+                session_name=self.session_name,
+                chat_id=str(chat_id),
+                msg_id=msg_id,
+                kind=kind,
+                text=_message_text_preview(msg),
+                chat_title=chat_title,
+                chat_username=chat_username,
+                reactions_summary=summary,
+            )
+        except Exception:
+            return
 
     async def event_handler(self, event):
         async with EVENT_HANDLER_LOCK:
@@ -2427,7 +4571,7 @@ class CommentatorClient:
                     elif event.is_reply:
                         reply_id = getattr(event.message, "reply_to_msg_id", None)
                         if reply_id:
-                            with sqlite3.connect(DB_FILE) as conn:
+                            with _db_connect() as conn:
                                 found = conn.execute(
                                     """
                                     SELECT 1 FROM inbox_messages
@@ -2613,6 +4757,95 @@ class CommentatorClient:
                     found_target = t
                     break
 
+            discussion_targets = []
+            for t in get_project_discussion_targets(current_settings):
+                try:
+                    t_linked = int(str(t.get("linked_chat_id", 0)).replace("-100", ""))
+                    t_main = int(str(t.get("chat_id", 0)).replace("-100", ""))
+                except Exception:
+                    continue
+                if event_chat_id == t_linked or event_chat_id == t_main:
+                    discussion_targets.append(t)
+
+            if discussion_targets and (not event.message.fwd_from) and event.is_group:
+                # Prevent double-start when we auto-send the operator seed from the start-queue.
+                if event.out and event_chat_id in DISCUSSION_START_SUPPRESS_CHAT_IDS:
+                    discussion_targets = []
+
+                if discussion_targets and event.out:
+                    msg_text = getattr(event.message, "text", None) or ""
+                    raw = str(msg_text or "").strip()
+                    matches: list[dict] = []
+                    for t in discussion_targets:
+                        if not bool(t.get("enabled", True)):
+                            continue
+                        operator_session = str(t.get("operator_session_name") or "").strip()
+                        if not operator_session or operator_session != self.session_name:
+                            continue
+
+                        start_prefix = str(t.get("start_prefix") or "")
+                        start_on_operator_message = bool(t.get("start_on_operator_message", False))
+
+                        seed: str | None = None
+                        if start_on_operator_message:
+                            if event.is_reply:
+                                seed = _extract_discussion_seed(raw, start_prefix) if start_prefix else None
+                            else:
+                                seed = _extract_discussion_seed_optional_prefix(raw, start_prefix)
+                        else:
+                            seed = _extract_discussion_seed(raw, start_prefix)
+                        if not seed:
+                            continue
+
+                        explicit_prefix = bool(start_prefix and raw.startswith(start_prefix))
+                        matches.append(
+                            {
+                                "target": t,
+                                "seed": seed,
+                                "start_prefix": start_prefix,
+                                "explicit_prefix": explicit_prefix,
+                            }
+                        )
+
+                    chosen = None
+                    if matches:
+                        explicit = [m for m in matches if m.get("explicit_prefix")]
+                        if explicit:
+                            explicit.sort(key=lambda m: len(str(m.get("start_prefix") or "")), reverse=True)
+                            best_len = len(str(explicit[0].get("start_prefix") or ""))
+                            tied = [m for m in explicit if len(str(m.get("start_prefix") or "")) == best_len]
+                            if len(tied) == 1:
+                                chosen = tied[0]
+                            else:
+                                ids = [
+                                    str(m.get("target", {}).get("id") or m.get("target", {}).get("chat_id"))
+                                    for m in tied
+                                ]
+                                logger.warning(
+                                    f"⚠️ [discussion] неоднозначный старт по префиксу в чате {event_chat_id}: {ids}"
+                                )
+                        else:
+                            # Start-without-prefix is allowed only when the choice is unambiguous.
+                            if len(matches) == 1:
+                                chosen = matches[0]
+                            else:
+                                ids = [
+                                    str(m.get("target", {}).get("id") or m.get("target", {}).get("chat_id"))
+                                    for m in matches
+                                ]
+                                logger.warning(
+                                    f"⚠️ [discussion] неоднозначный старт без префикса в чате {event_chat_id}: {ids}"
+                                )
+
+                    if chosen:
+                        _schedule_discussion_run(
+                            chat_bare_id=event_chat_id,
+                            chat_id=event.chat_id,
+                            seed_msg_id=msg_id,
+                            seed_text=str(chosen.get("seed") or "").strip(),
+                            target=chosen.get("target") or {},
+                        )
+
             if found_target:
                 our_ids = get_all_our_user_ids()
 
@@ -2630,33 +4863,6 @@ class CommentatorClient:
 
                         if is_reply_to_us:
                             REPLY_PROCESS_CACHE.add(msg_id)
-                            post_text = event.message.text or ""
-                            chat_title = "Чат"
-                            try:
-                                chat = await event.get_chat()
-                                chat_title = chat.title
-                            except:
-                                pass
-
-                            user_name = "Неизвестный"
-                            try:
-                                sender = await event.get_sender()
-                                user_name = f"{getattr(sender, 'first_name', '')} {getattr(sender, 'last_name', '')}".strip()
-                                if not user_name: user_name = f"ID: {sender_id}"
-                            except:
-                                pass
-
-                            msg_link = f"https://t.me/c/{str(event_chat_id)}/{msg_id}"
-                            alert_text = (
-                                f"🚨 <b>Живой человек</b>\n"
-                                f"Ответил боту: <b>{self.session_name}</b>\n"
-                                f"В чате: {chat_title}\n"
-                                f"Кто: {user_name}\n\n"
-                                f"💬: <i>{post_text}</i>\n\n"
-                                f"👉 <a href='{msg_link}'>Перейти к сообщению</a>"
-                            )
-                            ctx = {'chat_id': str(event.chat_id), 'msg_id': msg_id, 'session_name': self.session_name}
-                            asyncio.create_task(send_admin_notification(alert_text, reply_context=ctx))
 
                 if is_channel_post:
                     if event.message.grouped_id:
@@ -2704,7 +4910,7 @@ class CommentatorClient:
                             asyncio.create_task(process_post_for_monitoring(event, m_t))
 
 
-async def ensure_account_joined(client_wrapper, target_config):
+async def ensure_account_joined(client_wrapper, target_config, *, force: bool = False):
     global JOINED_CACHE
 
     targets_to_join = set()
@@ -2719,6 +4925,8 @@ async def ensure_account_joined(client_wrapper, target_config):
 
     username = target_config.get('chat_username')
     invite_link = target_config.get('invite_link')
+    chat_id = str(target_config.get('chat_id') or '')
+    linked_id = str(target_config.get('linked_chat_id') or '')
 
     all_success = True
 
@@ -2728,7 +4936,50 @@ async def ensure_account_joined(client_wrapper, target_config):
         if cache_key in JOINED_CACHE:
             continue
 
+        row = _get_join_status(client_wrapper.session_name, target_id)
+        now = time.time()
+        if row:
+            if row.get("status") == "joined":
+                JOINED_CACHE.add(cache_key)
+                continue
+            next_retry = row.get("next_retry_at")
+            retry_count = int(row.get("retry_count") or 0)
+            if retry_count >= JOIN_MAX_RETRIES and not force:
+                continue
+            if (not force) and next_retry and now < float(next_retry):
+                continue
+        else:
+            try:
+                slow_join_mins = int(target_config.get("slow_join_interval_mins", 0) or 0)
+            except Exception:
+                slow_join_mins = 0
+            if slow_join_mins > 0 and not force:
+                scheduled_ts = _compute_slow_join_next_retry_at(str(target_id), slow_join_mins)
+                if scheduled_ts is None:
+                    scheduled_ts = now
+                _upsert_join_status(
+                    client_wrapper.session_name,
+                    str(target_id),
+                    "scheduled",
+                    last_error=None,
+                    last_method="slow_join",
+                    retry_count=0,
+                    next_retry_at=float(scheduled_ts),
+                )
+                try:
+                    delay_sec = max(float(scheduled_ts) - now, 0.0)
+                    if delay_sec >= 1.0:
+                        logger.info(
+                            f"[{client_wrapper.session_name}] Медленное вступление: {target_id} через ~{int(delay_sec)} сек (интервал={slow_join_mins} мин)"
+                        )
+                except Exception:
+                    pass
+                all_success = False
+                continue
+
         joined = False
+        last_error = None
+        last_method = None
 
         if invite_link and not joined:
             try:
@@ -2739,33 +4990,71 @@ async def ensure_account_joined(client_wrapper, target_config):
                     joined = True
             except UserAlreadyParticipantError:
                 joined = True
-            except Exception:
-                pass
+            except Exception as e:
+                last_error = e
+                last_method = "invite"
+                logger.warning(
+                    f"[{client_wrapper.session_name}] Не удалось вступить по инвайту в {target_id}: {type(e).__name__}: {e}"
+                )
 
-        if username and not joined:
+        access_hash = None
+        if str(target_id) == chat_id:
+            access_hash = target_config.get("chat_access_hash")
+        elif str(target_id) == linked_id:
+            access_hash = target_config.get("linked_chat_access_hash")
+
+        if access_hash and not joined:
+            try:
+                channel_id = _channel_bare_id(target_id) or _channel_bare_id(chat_id) or _channel_bare_id(linked_id)
+                if channel_id is None:
+                    raise ValueError("invalid_channel_id")
+                peer = InputPeerChannel(channel_id, int(access_hash))
+                await client_wrapper.client(JoinChannelRequest(peer))
+                logger.info(f"[{client_wrapper.session_name}] Вступил по access_hash в {target_id}")
+                joined = True
+            except UserAlreadyParticipantError:
+                joined = True
+            except Exception as e:
+                last_error = e
+                last_method = "access_hash"
+                logger.warning(
+                    f"[{client_wrapper.session_name}] Не удалось вступить по access_hash в {target_id}: {type(e).__name__}: {e}"
+                )
+
+        if username and not joined and str(target_id) == chat_id:
             try:
                 await client_wrapper.client(JoinChannelRequest(username))
                 joined = True
 
-                if linked_chat_id and target_id == str(linked_chat_id):
-                    try:
-                        entity = await client_wrapper.client.get_entity(username)
-                        full = await client_wrapper.client(GetFullChannelRequest(entity))
-                        if full.full_chat.linked_chat_id:
-                            linked_entity = await client_wrapper.client.get_input_entity(full.full_chat.linked_chat_id)
-                            await client_wrapper.client(JoinChannelRequest(linked_entity))
-                            logger.info(f"[{client_wrapper.session_name}] Довступил в привязанный чат через канал")
-                    except Exception as e:
-                        pass
-
             except UserAlreadyParticipantError:
                 joined = True
-            except Exception:
-                pass
+            except Exception as e:
+                last_error = e
+                last_method = "username"
+                logger.warning(
+                    f"[{client_wrapper.session_name}] Не удалось вступить по username в {target_id}: {type(e).__name__}: {e}"
+                )
+
+        if username and not joined and str(target_id) == linked_id:
+            try:
+                entity = await client_wrapper.client.get_entity(username)
+                full = await client_wrapper.client(GetFullChannelRequest(entity))
+                if full.full_chat.linked_chat_id:
+                    linked_entity = await client_wrapper.client.get_input_entity(full.full_chat.linked_chat_id)
+                    await client_wrapper.client(JoinChannelRequest(linked_entity))
+                    logger.info(f"[{client_wrapper.session_name}] Довступил в привязанный чат через канал")
+                    joined = True
+            except UserAlreadyParticipantError:
+                joined = True
+            except Exception as e:
+                last_error = e
+                last_method = "linked"
+                logger.warning(
+                    f"[{client_wrapper.session_name}] Не удалось довступить в привязанный чат {linked_chat_id}: {type(e).__name__}: {e}"
+                )
 
         if not joined:
             try:
-                real_id = int(str(target_id).replace("-100", ""))
                 entity = await client_wrapper.client.get_input_entity(int(target_id))
                 await client_wrapper.client(JoinChannelRequest(entity))
                 logger.info(f"[{client_wrapper.session_name}] Вступил по ID в {target_id}")
@@ -2773,12 +5062,50 @@ async def ensure_account_joined(client_wrapper, target_config):
             except UserAlreadyParticipantError:
                 joined = True
             except Exception as e:
-                pass
+                last_error = e
+                last_method = "id"
+                logger.warning(
+                    f"[{client_wrapper.session_name}] Не удалось вступить по ID в {target_id}: {type(e).__name__}: {e}"
+                )
 
         if joined:
             JOINED_CACHE.add(cache_key)
+            _upsert_join_status(
+                client_wrapper.session_name,
+                target_id,
+                "joined",
+                last_error=None,
+                last_method=None,
+                retry_count=0,
+                next_retry_at=None,
+            )
         else:
             all_success = False
+            row_retry = _get_join_status(client_wrapper.session_name, target_id)
+            retry_count = int((row_retry or {}).get("retry_count") or 0) + 1
+            if retry_count >= JOIN_MAX_RETRIES:
+                next_retry = None
+            else:
+                backoff = JOIN_RETRY_BACKOFF[min(retry_count, len(JOIN_RETRY_BACKOFF) - 1)]
+                next_retry = now + backoff
+            _upsert_join_status(
+                client_wrapper.session_name,
+                target_id,
+                "failed",
+                last_error=str(last_error) if last_error else "unknown_error",
+                last_method=last_method,
+                retry_count=retry_count,
+                next_retry_at=next_retry,
+            )
+            _record_account_failure(
+                client_wrapper.session_name,
+                "join",
+                last_error=str(last_error) if last_error else None,
+                last_target=str(target_id),
+            )
+
+    if all_success:
+        _clear_account_failure(client_wrapper.session_name, "join")
 
     return all_success
 
@@ -2787,9 +5114,12 @@ async def manage_clients(api_id, api_hash):
     global active_clients, current_settings, CLIENT_CATCH_UP_STATUS
 
     current_settings = load_json_data(SETTINGS_FILE)
+    if not isinstance(current_settings, dict):
+        current_settings = {}
+    ensure_role_schema(current_settings)
     accounts_from_file = load_project_accounts(current_settings)
 
-    file_session_names = {acc['session_name'] for acc in accounts_from_file if acc.get('status') != 'banned'}
+    file_session_names = {acc['session_name'] for acc in accounts_from_file if _is_account_active(acc)}
     for session_name in list(active_clients.keys()):
         acc_data = next((a for a in accounts_from_file if a['session_name'] == session_name), None)
         if session_name not in file_session_names or not acc_data:
@@ -2798,43 +5128,73 @@ async def manage_clients(api_id, api_hash):
             keys_to_remove = [k for k in CLIENT_CATCH_UP_STATUS if k.startswith(f"{session_name}_")]
             for k in keys_to_remove:
                 CLIENT_CATCH_UP_STATUS.discard(k)
+            CLIENT_CONNECT_STATE.pop(session_name, None)
             logger.info(f"Клиент {session_name} остановлен (удален или время сна).")
 
     for account_data in accounts_from_file:
         session_name = account_data['session_name']
 
-        if account_data.get('status') == 'banned':
+        if not _is_account_active(account_data):
             continue
 
-        if session_name not in active_clients:
-            client_wrapper = CommentatorClient(account_data, api_id, api_hash)
-            if await client_wrapper.start():
-                active_clients[session_name] = client_wrapper
-                logger.info(f"Клиент {session_name} запущен.")
-            else:
-                continue
+        client_wrapper = active_clients.get(session_name)
+        just_reconnected = False
 
-        client_wrapper = active_clients[session_name]
+        if client_wrapper is None:
+            if not _connect_backoff_ready(session_name):
+                continue
+            client_wrapper = CommentatorClient(account_data, api_id, api_hash)
+            try:
+                if await client_wrapper.start():
+                    active_clients[session_name] = client_wrapper
+                    just_reconnected = True
+                    CLIENT_CONNECT_STATE.pop(session_name, None)
+                    logger.info(f"Клиент {session_name} запущен.")
+                else:
+                    err = getattr(client_wrapper, "_init_error", None) or "start_failed"
+                    _schedule_connect_backoff(session_name, error=str(err), reason="start")
+                    await client_wrapper.stop()
+                    continue
+            except Exception as e:
+                _schedule_connect_backoff(session_name, error=str(e), reason="start")
+                try:
+                    await client_wrapper.stop()
+                except Exception:
+                    pass
+                continue
+        else:
+            was_connected = bool(getattr(client_wrapper, "client", None) and client_wrapper.client.is_connected())
+            if not await ensure_client_connected(client_wrapper, reason="manage_clients"):
+                continue
+            if not was_connected and client_wrapper.client.is_connected():
+                just_reconnected = True
+
+        if just_reconnected:
+            keys_to_remove = [k for k in CLIENT_CATCH_UP_STATUS if k.startswith(f"{session_name}_")]
+            for k in keys_to_remove:
+                CLIENT_CATCH_UP_STATUS.discard(k)
 
         for target in get_project_targets(current_settings):
-            assigned = target.get('assigned_accounts', [])
-            if not assigned or session_name in assigned:
-                await ensure_account_joined(client_wrapper, target)
+            if _is_account_assigned(target, session_name):
+                joined_ok = await ensure_account_joined(client_wrapper, target)
 
                 catch_up_key = f"{session_name}_{target.get('chat_id')}"
-                if catch_up_key not in CLIENT_CATCH_UP_STATUS:
+                if joined_ok and catch_up_key not in CLIENT_CATCH_UP_STATUS:
                     CLIENT_CATCH_UP_STATUS.add(catch_up_key)
                     asyncio.create_task(catch_up_missed_posts(client_wrapper, target))
 
-            for target in get_project_reaction_targets(current_settings):
-                assigned = target.get('assigned_accounts', [])
-                if not assigned or session_name in assigned:
-                    await ensure_account_joined(client_wrapper, target)
+        for r_target in get_project_reaction_targets(current_settings):
+            if _is_account_assigned(r_target, session_name):
+                await ensure_account_joined(client_wrapper, r_target)
 
-            for target in get_project_monitor_targets(current_settings):
-                assigned = target.get('assigned_accounts', [])
-                if not assigned or session_name in assigned:
-                    await ensure_account_joined(client_wrapper, target)
+        for d_target in get_project_discussion_targets(current_settings):
+            operator_session = str(d_target.get("operator_session_name") or "").strip()
+            if session_name == operator_session or _is_account_assigned(d_target, session_name):
+                await ensure_account_joined(client_wrapper, d_target)
+
+        for m_target in get_project_monitor_targets(current_settings):
+            if _is_account_assigned(m_target, session_name):
+                await ensure_account_joined(client_wrapper, m_target)
 
 
 async def check_dialogue_depth(client, message_object, max_depth):
@@ -2869,9 +5229,88 @@ async def check_dialogue_depth(client, message_object, max_depth):
         return True
 
 
+async def count_dialogue_ai_replies(
+    client,
+    message_object,
+    our_ids: set,
+    max_depth: int | None = None,
+    include_current: bool = False,
+    early_stop: int | None = None,
+) -> int:
+    try:
+        if not message_object or not our_ids:
+            return 0
+
+        count = 0
+        if include_current and getattr(message_object, "sender_id", None) in our_ids:
+            count += 1
+            if early_stop is not None and count >= early_stop:
+                return count
+
+        depth = 0
+        reply_ptr = getattr(message_object, "reply_to", None)
+        chat_id = getattr(message_object, "chat_id", None)
+        if chat_id is None:
+            return count
+
+        while reply_ptr:
+            depth += 1
+            if max_depth is not None and depth >= int(max_depth):
+                break
+
+            next_id = getattr(reply_ptr, "reply_to_msg_id", None)
+            if not next_id:
+                break
+
+            parent_msg = await client.get_messages(chat_id, ids=next_id)
+            if isinstance(parent_msg, list):
+                parent_msg = parent_msg[0] if parent_msg else None
+            if not parent_msg:
+                break
+
+            if getattr(parent_msg, "sender_id", None) in our_ids:
+                count += 1
+                if early_stop is not None and count >= early_stop:
+                    return count
+
+            reply_ptr = getattr(parent_msg, "reply_to", None)
+
+        return count
+    except Exception:
+        return int(early_stop) if early_stop is not None else 0
+
+
 def get_all_our_user_ids():
+    ids: set[int] = set()
+
+    try:
+        for client_wrapper in list(active_clients.values()):
+            uid = getattr(client_wrapper, "user_id", None)
+            if uid is None or uid == "":
+                continue
+            try:
+                ids.add(int(uid))
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    if ids:
+        return ids
+
     accounts = load_project_accounts()
-    return {acc.get('user_id') for acc in accounts if acc.get('user_id')}
+    for acc in accounts:
+        if not isinstance(acc, dict):
+            continue
+        uid = acc.get("user_id")
+        if uid is None or uid == "":
+            continue
+        try:
+            ids.add(int(uid))
+        except Exception:
+            continue
+
+    return ids
 
 
 async def get_user_burst_messages(client, chat_id, original_msg):
@@ -2898,10 +5337,11 @@ async def execute_reply_with_fallback(candidate_list, chat_id, target_chat, prom
     global PENDING_TASKS
     task = asyncio.current_task()
     PENDING_TASKS.add(task)
+    attempted_send = False
+    active_client = None
     try:
         await asyncio.sleep(delay)
-        tag_chance = target_chat.get('tag_reply_chance', 50)
-        actual_reply_id = reply_to_msg_id if random.randint(1, 100) <= tag_chance else None
+        actual_reply_id = reply_to_msg_id
         for client_wrapper in candidate_list:
             reply_text, prompt_info = await generate_comment(
                 prompt_base,
@@ -2912,7 +5352,14 @@ async def execute_reply_with_fallback(candidate_list, chat_id, target_chat, prom
                 reply_to_name=reply_to_name
             )
             if reply_text:
-                await human_type_and_send(client_wrapper.client, chat_id, reply_text, actual_reply_id)
+                attempted_send = True
+                active_client = client_wrapper
+                await human_type_and_send(
+                    client_wrapper.client,
+                    chat_id,
+                    reply_text,
+                    reply_to_msg_id=actual_reply_id,
+                )
                 me = await client_wrapper.client.get_me()
                 action_label = "ВМЕШАТЕЛЬСТВО" if is_intervention else "ОТВЕТ"
                 logger.info(f"✅ [{client_wrapper.session_name}] ({action_label}) на сообщение {reply_to_msg_id} ({prompt_info})")
@@ -2926,11 +5373,19 @@ async def execute_reply_with_fallback(candidate_list, chat_id, target_chat, prom
                                 'username': me.username},
                     'target': {'chat_name': target_chat.get('chat_name'), 'destination_chat_id': chat_id}
                 })
+                _clear_account_failure(client_wrapper.session_name, "reply")
                 return
     except asyncio.CancelledError:
         pass
     except Exception as e:
         logger.error(f"Ошибка в цепочке ответов: {e}")
+        if attempted_send and active_client:
+            _record_account_failure(
+                active_client.session_name,
+                "reply",
+                last_error=str(e),
+                last_target=str(chat_id),
+            )
     finally:
         PENDING_TASKS.discard(task)
 
@@ -2971,29 +5426,53 @@ async def process_reply_to_comment(event, target_chat):
         return
     REPLY_PROCESS_CACHE.add(msg_id)
     chat_id = event.chat_id
-    max_history = target_chat.get('max_dialogue_depth', 6)
-    if not await check_dialogue_depth(event.client, event.message, max_history):
-        logger.info(f"⏭ Сообщение {msg_id} пропущено: превышена глубина диалога ({max_history})")
-        return
-    accounts_data = load_project_accounts(current_settings)
     sender_id = event.message.sender_id
-    our_ids = get_all_our_user_ids()
-    target_user_id, target_name = await get_thread_context(event.client, event, our_ids)
-    is_reply_to_us = target_user_id in our_ids
+    accounts_data = load_project_accounts(current_settings)
     eligible_candidates = []
     for c in list(active_clients.values()):
         acc_conf = next((a for a in accounts_data if a['session_name'] == c.session_name), None)
         if acc_conf and is_bot_awake(acc_conf) and getattr(c, 'user_id', None) != sender_id:
-            if not target_chat.get('assigned_accounts', []) or c.session_name in target_chat.get('assigned_accounts', []):
+            if _is_account_assigned(target_chat, c.session_name):
                 eligible_candidates.append(c)
     if not eligible_candidates:
         logger.info(f"⏭ Нет доступных аккаунтов для ответа на {msg_id}")
         return
+
     intervention_chance = target_chat.get('intervention_chance', 30)
     roll = random.randint(1, 100)
     if roll > intervention_chance:
         logger.info(f"🎲 Шанс не сработал ({roll} > {intervention_chance}%) для {msg_id}. Никто не ответил")
         return
+
+    max_history = target_chat.get('max_dialogue_depth', 6)
+    if not await check_dialogue_depth(event.client, event.message, max_history):
+        logger.info(f"⏭ Сообщение {msg_id} пропущено: превышена глубина диалога ({max_history})")
+        return
+
+    our_ids = get_all_our_user_ids()
+
+    max_ai_replies = target_chat.get("max_dialogue_ai_replies", 2)
+    try:
+        max_ai_replies = int(max_ai_replies or 0)
+    except Exception:
+        max_ai_replies = 2
+    max_ai_replies = max(max_ai_replies, 0)
+
+    if max_ai_replies > 0:
+        ai_replies = await count_dialogue_ai_replies(
+            event.client,
+            event.message,
+            our_ids=our_ids,
+            max_depth=max_history,
+            include_current=True,
+            early_stop=max_ai_replies,
+        )
+        if ai_replies >= max_ai_replies:
+            logger.info(f"⏭ Сообщение {msg_id} пропущено: лимит ответов ИИ в диалоге ({max_ai_replies})")
+            return
+
+    target_user_id, target_name = await get_thread_context(event.client, event, our_ids)
+    is_reply_to_us = target_user_id in our_ids
     triggered_client = random.choice(eligible_candidates)
     is_intervention = getattr(triggered_client, 'user_id', None) != target_user_id
     d_min, d_max = target_chat.get('reply_delay_min', 20), target_chat.get('reply_delay_max', 80)
@@ -3004,6 +5483,623 @@ async def process_reply_to_comment(event, target_chat):
     asyncio.create_task(execute_reply_with_fallback([triggered_client], chat_id, target_chat,
                                                     f"{event.message.text}", personal_delay,
                                                     msg_id, reply_to_name=target_name, is_intervention=is_intervention))
+
+
+def _schedule_discussion_run(
+    *,
+    chat_bare_id: int,
+    chat_id: int,
+    seed_msg_id: int,
+    seed_text: str,
+    target: dict,
+    session_id: int | None = None,
+) -> None:
+    if not seed_text or not seed_msg_id:
+        return
+    try:
+        chat_bare_id = int(chat_bare_id)
+    except Exception:
+        return
+
+    unique_key = f"discussion:{chat_bare_id}:{seed_msg_id}"
+    if not _mark_discussion_started(unique_key):
+        return
+
+    existing = DISCUSSION_ACTIVE_TASKS.get(chat_bare_id)
+    if existing is not None and not existing.done():
+        logger.info(f"⏭ [discussion] уже идёт обсуждение в чате {chat_bare_id}; пропускаю триггер {seed_msg_id}")
+        return
+
+    if session_id is None:
+        try:
+            project_id = _active_project_id(current_settings)
+        except Exception:
+            project_id = DEFAULT_PROJECT_ID
+        operator_session = str((target or {}).get("operator_session_name") or "").strip() or None
+        target_id = str((target or {}).get("id") or "").strip() or None
+        settings_snapshot = {"target": target} if isinstance(target, dict) else {"target": {}}
+        session_id = _db_create_discussion_session(
+            project_id=str(project_id),
+            discussion_target_id=target_id,
+            discussion_target_chat_id=str((target or {}).get("chat_id") or "").strip() or str(chat_id),
+            chat_id=str(chat_id),
+            status="running",
+            operator_session_name=operator_session,
+            seed_msg_id=int(seed_msg_id),
+            seed_text=str(seed_text),
+            settings=settings_snapshot,
+        )
+        if session_id:
+            _db_add_discussion_message(
+                session_id=int(session_id),
+                speaker_type="operator",
+                speaker_session_name=operator_session,
+                speaker_label="Оператор",
+                msg_id=int(seed_msg_id),
+                reply_to_msg_id=None,
+                text=str(seed_text),
+            )
+
+    REPLY_PROCESS_CACHE.add(seed_msg_id)
+    task = asyncio.create_task(
+        run_discussion_session(
+            chat_id=chat_id,
+            chat_bare_id=chat_bare_id,
+            seed_msg_id=seed_msg_id,
+            seed_text=seed_text,
+            target=target,
+            session_id=int(session_id) if session_id else None,
+        )
+    )
+    try:
+        setattr(task, "discussion_session_id", int(session_id) if session_id else None)
+    except Exception:
+        pass
+    DISCUSSION_ACTIVE_TASKS[chat_bare_id] = task
+
+    def _cleanup(done_task: asyncio.Task) -> None:  # noqa: ANN001
+        cur = DISCUSSION_ACTIVE_TASKS.get(chat_bare_id)
+        if cur is done_task:
+            DISCUSSION_ACTIVE_TASKS.pop(chat_bare_id, None)
+
+    task.add_done_callback(_cleanup)
+
+
+async def run_discussion_session(
+    *,
+    chat_id: int,
+    chat_bare_id: int,
+    seed_msg_id: int,
+    seed_text: str,
+    target: dict,
+    session_id: int | None = None,
+) -> None:
+    global active_clients, current_settings, PENDING_TASKS
+    current_task = asyncio.current_task()
+    if current_task:
+        PENDING_TASKS.add(current_task)
+
+    try:
+        seed_text = str(seed_text or "").strip()
+        if not seed_text:
+            return
+
+        session_id_int: int | None = None
+        try:
+            session_id_int = int(session_id) if session_id else None
+        except Exception:
+            session_id_int = None
+
+        if session_id_int:
+            try:
+                _db_update_discussion_session(session_id_int, status="running", started_at=float(time.time()))
+            except Exception:
+                pass
+
+        target = target if isinstance(target, dict) else {}
+        operator_session = str(target.get("operator_session_name") or "").strip()
+        base_vector = str(target.get("vector_prompt") or "").strip()
+
+        extra_scenes_raw = target.get("scenes")
+        extra_scenes: list[dict] = []
+        if isinstance(extra_scenes_raw, list):
+            extra_scenes = [sc for sc in extra_scenes_raw if isinstance(sc, dict)]
+        total_scenes = 1 + len(extra_scenes)
+
+        def _int_setting_from(
+            scene: dict,
+            key: str,
+            default: int,
+            *,
+            min_value: int | None = None,
+            max_value: int | None = None,
+        ) -> int:
+            raw = None
+            if isinstance(scene, dict) and key in scene:
+                raw = scene.get(key)
+            if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+                raw = target.get(key, default)
+            if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+                raw = default
+            try:
+                value = int(raw)
+            except Exception:
+                value = int(default)
+            if min_value is not None:
+                value = max(value, int(min_value))
+            if max_value is not None:
+                value = min(value, int(max_value))
+            return int(value)
+
+        def _vector_for(scene: dict) -> str:
+            v = str((scene or {}).get("vector_prompt") or "").strip()
+            return v if v else base_vector
+
+        def _assigned_accounts_for(scene: dict) -> list[str]:
+            raw = (scene or {}).get("assigned_accounts")
+            if isinstance(raw, list):
+                items = [str(s).strip() for s in raw if str(s).strip()]
+                if items:
+                    return items
+            return [str(s).strip() for s in (target.get("assigned_accounts") or []) if str(s).strip()]
+
+        accounts_data = load_project_accounts(current_settings)
+        account_by_session = {
+            str(a.get("session_name")).strip(): a
+            for a in (accounts_data or [])
+            if isinstance(a, dict) and a.get("session_name")
+        }
+
+        labels: dict[str, str] = {}
+        next_label = {"idx": 1}
+        participants_snapshot: list[dict] = []
+        participants_seen: set[str] = set()
+        excluded_sessions: set[str] = set()
+
+        def _ensure_labels_for(clients: list) -> None:
+            for c in clients:
+                sess = str(getattr(c, "session_name", "") or "").strip()
+                if not sess:
+                    continue
+                if sess not in labels:
+                    labels[sess] = f"Участник {next_label['idx']}"
+                    next_label["idx"] += 1
+
+        def _update_participants_snapshot(clients: list) -> None:
+            if not session_id_int:
+                return
+            changed_participants = False
+            for c in clients:
+                sess = str(getattr(c, "session_name", "") or "").strip()
+                if not sess or sess in participants_seen:
+                    continue
+                participants_seen.add(sess)
+                acc_conf = account_by_session.get(sess, {}) if isinstance(account_by_session, dict) else {}
+                role_id, role_data = role_for_account(acc_conf or {}, current_settings)
+                role_prompt, role_meta = build_role_prompt(role_data or {}, current_settings)
+                participants_snapshot.append(
+                    {
+                        "session_name": sess,
+                        "label": labels.get(sess),
+                        "role_id": role_id,
+                        "role_name": str((role_data or {}).get("name") or role_id or "Роль"),
+                        "role_prompt": role_prompt,
+                        "role_meta": role_meta,
+                        "persona_id": acc_conf.get("persona_id") if isinstance(acc_conf, dict) else None,
+                    }
+                )
+                changed_participants = True
+            if changed_participants:
+                try:
+                    _db_update_discussion_session(
+                        session_id_int,
+                        participants_json=_safe_json_dumps(participants_snapshot),
+                    )
+                except Exception:
+                    pass
+
+        def _eligible_clients_for(assigned_list: list[str]) -> list:
+            eligible: list = []
+            for client_wrapper in list(active_clients.values()):
+                session_name = str(getattr(client_wrapper, "session_name", "") or "").strip()
+                if not session_name or session_name not in assigned_list:
+                    continue
+                if session_name in excluded_sessions:
+                    continue
+                if operator_session and session_name == operator_session:
+                    continue
+                acc_conf = account_by_session.get(session_name)
+                if acc_conf and is_bot_awake(acc_conf):
+                    eligible.append(client_wrapper)
+            return eligible
+
+        last_speaker = "Оператор"
+        history: list[dict[str, str]] = []
+        reply_to_msg_id: int = int(seed_msg_id)
+        last_sender_session: str | None = None
+
+        def _truncate_memory_line(value: str, limit: int = 280) -> str:
+            s = re.sub(r"\s+", " ", str(value or "")).strip()
+            if limit > 0 and len(s) > limit:
+                return s[: limit - 1].rstrip() + "…"
+            return s
+
+        def _build_memory_block(items: list[dict[str, str]], max_items: int, *, exclude_last: bool = True) -> str:
+            if max_items <= 0:
+                return ""
+            mem = items[-max_items:] if items else []
+            if exclude_last and mem:
+                mem = mem[:-1]
+            lines: list[str] = []
+            for it in mem:
+                speaker = str(it.get("speaker") or "Участник").strip() or "Участник"
+                text = _truncate_memory_line(str(it.get("text") or ""))
+                if text:
+                    lines.append(f"{speaker}: {text}")
+            return "\n".join(lines).strip()
+
+        for scene_number, scene in enumerate([{}, *extra_scenes], start=1):
+            scene_title = str((scene or {}).get("title") or "").strip()
+            scene_vector = _vector_for(scene)
+            assigned = _assigned_accounts_for(scene)
+
+            if not assigned:
+                logger.info(f"⏭ [discussion] чат {chat_bare_id}: нет assigned_accounts — обсуждение не запускаю")
+                if session_id_int and scene_number == 1:
+                    try:
+                        _db_update_discussion_session(
+                            session_id_int,
+                            status="failed",
+                            finished_at=float(time.time()),
+                            error="no_assigned_accounts",
+                        )
+                    except Exception:
+                        pass
+                return
+
+            eligible_clients = _eligible_clients_for(assigned)
+            if not eligible_clients:
+                if scene_number == 1:
+                    logger.info(f"⏭ [discussion] чат {chat_bare_id}: нет доступных аккаунтов‑участников")
+                    if session_id_int:
+                        try:
+                            _db_update_discussion_session(
+                                session_id_int,
+                                status="failed",
+                                finished_at=float(time.time()),
+                                error="no_available_participants",
+                            )
+                        except Exception:
+                            pass
+                    return
+                logger.info(f"⏭ [discussion] сцена {scene_number}/{total_scenes} пропущена: нет доступных участников")
+                continue
+
+            random.shuffle(eligible_clients)
+            _ensure_labels_for(eligible_clients)
+            _update_participants_snapshot(eligible_clients)
+
+            if scene_number == 1:
+                scene_seed_text = seed_text
+                if not history:
+                    history.append({"speaker": "Оператор", "text": scene_seed_text})
+            else:
+                operator_text = str((scene or {}).get("operator_text") or "").strip()
+                if not operator_text:
+                    logger.info(f"⏭ [discussion] сцена {scene_number}/{total_scenes} пропущена: пустая фраза оператора")
+                    continue
+                if not operator_session:
+                    logger.warning(
+                        f"⚠️ [discussion] сцена {scene_number}/{total_scenes}: не задан operator_session_name — остановка"
+                    )
+                    break
+
+                prev_reply_to = int(reply_to_msg_id) if reply_to_msg_id else None
+                op_wrapper = active_clients.get(operator_session) if operator_session else None
+                temp_client = None
+                op_client = None
+                if op_wrapper is not None and getattr(op_wrapper, "client", None) is not None:
+                    if not await ensure_client_connected(op_wrapper, reason="discussion_scene"):
+                        raise RuntimeError("operator_connect_failed")
+                    op_client = op_wrapper.client
+                else:
+                    telethon_config = load_config('telethon_credentials')
+                    api_id, api_hash = int(telethon_config['api_id']), telethon_config['api_hash']
+                    acc_conf = account_by_session.get(operator_session)
+                    if not acc_conf:
+                        raise KeyError("operator_account_not_found")
+                    temp_client = await _connect_temp_client(acc_conf, api_id, api_hash)
+                    op_client = temp_client
+
+                sent_op = None
+                try:
+                    DISCUSSION_START_SUPPRESS_CHAT_IDS.add(int(chat_bare_id))
+                    sent_op = await human_type_and_send(
+                        op_client,
+                        chat_id,
+                        operator_text,
+                        reply_to_msg_id=prev_reply_to,
+                        skip_processing=True,
+                        split_mode="off",
+                    )
+                finally:
+                    try:
+                        DISCUSSION_START_SUPPRESS_CHAT_IDS.discard(int(chat_bare_id))
+                    except Exception:
+                        pass
+                    if temp_client is not None:
+                        try:
+                            if temp_client.is_connected():
+                                await temp_client.disconnect()
+                        except Exception:
+                            pass
+
+                op_msg_id = getattr(sent_op, "id", None)
+                if not op_msg_id:
+                    logger.warning(f"⚠️ [discussion] сцена {scene_number}/{total_scenes}: не удалось отправить фразу оператора")
+                    break
+
+                try:
+                    REPLY_PROCESS_CACHE.add(int(op_msg_id))
+                except Exception:
+                    pass
+
+                if session_id_int:
+                    try:
+                        _db_add_discussion_message(
+                            session_id=session_id_int,
+                            speaker_type="operator",
+                            speaker_session_name=str(operator_session or "").strip() or None,
+                            speaker_label="Оператор",
+                            msg_id=int(op_msg_id),
+                            reply_to_msg_id=int(prev_reply_to) if prev_reply_to else None,
+                            text=str(operator_text),
+                            prompt_info=f"sc{scene_number}/{total_scenes}",
+                        )
+                    except Exception:
+                        pass
+
+                reply_to_msg_id = int(op_msg_id)
+                last_speaker = "Оператор"
+                scene_seed_text = operator_text
+                history.append({"speaker": "Оператор", "text": operator_text.strip()})
+
+            turns_min = _int_setting_from(scene, "turns_min", 6, min_value=1, max_value=200)
+            turns_max = _int_setting_from(scene, "turns_max", 10, min_value=1, max_value=200)
+            if turns_max < turns_min:
+                turns_max = turns_min
+            total_turns = random.randint(turns_min, turns_max)
+
+            start_delay_min = _int_setting_from(scene, "initial_delay_min", 10, min_value=0, max_value=86400)
+            start_delay_max = _int_setting_from(scene, "initial_delay_max", 40, min_value=0, max_value=86400)
+            if start_delay_max < start_delay_min:
+                start_delay_max = start_delay_min
+
+            between_delay_min = _int_setting_from(scene, "delay_between_min", 20, min_value=0, max_value=86400)
+            between_delay_max = _int_setting_from(scene, "delay_between_max", 80, min_value=0, max_value=86400)
+            if between_delay_max < between_delay_min:
+                between_delay_max = between_delay_min
+
+            if start_delay_max > 0:
+                await asyncio.sleep(random.uniform(float(start_delay_min), float(start_delay_max)))
+
+            for turn_idx in range(total_turns):
+                if turn_idx > 0 and between_delay_max > 0:
+                    await asyncio.sleep(random.uniform(float(between_delay_min), float(between_delay_max)))
+
+                # Pick next speaker; avoid immediate repeats when possible.
+                candidates = [c for c in eligible_clients if c.session_name != last_sender_session] or list(eligible_clients)
+                random.shuffle(candidates)
+                client_wrapper = None
+
+                for cand in list(candidates):
+                    if not await ensure_client_connected(cand, reason="discussion"):
+                        _record_account_failure(
+                            cand.session_name,
+                            "discussion",
+                            last_error="connect_failed",
+                            last_target=str(chat_id),
+                        )
+                        excluded_sessions.add(str(cand.session_name))
+                        eligible_clients = [c for c in eligible_clients if c.session_name != cand.session_name]
+                        continue
+                    client_wrapper = cand
+                    break
+
+                if client_wrapper is None:
+                    logger.warning(
+                        f"⚠️ [discussion] сцена {scene_number}/{total_scenes}: нет доступных участников для реплики {turn_idx + 1}/{total_turns}"
+                    )
+                    break
+
+                memory_turns = _int_setting_from(scene, "memory_turns", 20, min_value=0, max_value=200)
+                memory_block = _build_memory_block(history, memory_turns, exclude_last=True)
+                reply_to_text = ""
+                try:
+                    reply_to_text = str((history[-1] or {}).get("text") or "").strip() if history else ""
+                except Exception:
+                    reply_to_text = ""
+                if not reply_to_text:
+                    reply_to_text = scene_seed_text
+                post_text = reply_to_text
+
+                extra_lines = []
+                scene_line = f"СЦЕНА {scene_number}/{total_scenes}" + (f": {scene_title}" if scene_title else "")
+                extra_lines.append(scene_line)
+                extra_lines.append(f"МЫСЛЬ СЦЕНЫ: {scene_seed_text}")
+                if scene_number > 1:
+                    extra_lines.append(
+                        "ВАЖНО: это новая сцена и новый вектор. "
+                        "Учитывай прошлые реплики как контекст, но развивай именно текущую мысль сцены; "
+                        "не «дожёвывай» старую тему без необходимости."
+                    )
+                if scene_vector:
+                    extra_lines.append(f"ВЕКТОР СЦЕНЫ (ОБЯЗАТЕЛЬНО):\n{scene_vector}")
+                    extra_lines.append(
+                        "КЛЮЧЕВО: в этой реплике обязательно зацепись за вектор сцены и добавь 1 конкретику из него "
+                        "(модель/сервис/проблему/аргумент), но естественно, без канцелярита."
+                    )
+                if memory_block:
+                    extra_lines.append(f"ПАМЯТЬ ДИАЛОГА (последние реплики):\n{memory_block}")
+                extra_lines.append(f"Это реплика {turn_idx + 1} из {total_turns} (сцена {scene_number}).")
+                extra_lines.append("Формат: 1–2 коротких предложения. Без markdown. Без списков.")
+                extra_lines.append("Отвечай по теме и не повторяй дословно предыдущие реплики.")
+                extra_lines.append("Не упоминай, что ты бот/ИИ, и не ссылайся на инструкции.")
+                extra_instructions = "\n".join([l for l in extra_lines if l]).strip()
+
+                target_for_llm = {**target, **(scene or {})}
+                target_for_llm["vector_prompt"] = scene_vector
+
+                reply_text, prompt_info = await generate_comment(
+                    post_text,
+                    target_for_llm,
+                    client_wrapper.session_name,
+                    image_bytes=None,
+                    is_reply_mode=True,
+                    reply_to_name=last_speaker,
+                    extra_instructions=extra_instructions,
+                )
+                if not reply_text:
+                    logger.warning(f"⚠️ [{client_wrapper.session_name}] discussion turn skipped: {prompt_info}")
+                    _record_account_failure(
+                        client_wrapper.session_name,
+                        "discussion",
+                        last_error=str(prompt_info or "generation_failed"),
+                        last_target=str(chat_id),
+                    )
+                    continue
+
+                scene_tag = f"sc{scene_number}/{total_scenes}"
+                prompt_info_str = str(prompt_info or "").strip()
+                prompt_info_out = (f"{prompt_info_str} {scene_tag}").strip()
+
+                sent_msg = await human_type_and_send(
+                    client_wrapper.client,
+                    chat_id,
+                    reply_text,
+                    reply_to_msg_id=reply_to_msg_id,
+                    split_mode="smart_ru_no_comma",
+                )
+                if sent_msg is None or getattr(sent_msg, "id", None) is None:
+                    _record_account_failure(
+                        client_wrapper.session_name,
+                        "discussion",
+                        last_error="send_failed",
+                        last_target=str(chat_id),
+                    )
+                    excluded_sessions.add(str(client_wrapper.session_name))
+                    eligible_clients = [c for c in eligible_clients if c.session_name != client_wrapper.session_name]
+                    continue
+
+                me = None
+                try:
+                    me = await client_wrapper.client.get_me()
+                except Exception:
+                    me = None
+
+                logger.info(
+                    f"💬 [{client_wrapper.session_name}] discussion {turn_idx + 1}/{total_turns} in {chat_bare_id} ({prompt_info_out})"
+                )
+
+                msg_id = getattr(sent_msg, "id", None)
+                if session_id_int:
+                    try:
+                        _db_add_discussion_message(
+                            session_id=session_id_int,
+                            speaker_type="bot",
+                            speaker_session_name=str(client_wrapper.session_name),
+                            speaker_label=labels.get(client_wrapper.session_name),
+                            msg_id=int(msg_id) if msg_id else None,
+                            reply_to_msg_id=int(reply_to_msg_id) if reply_to_msg_id else None,
+                            text=str(reply_text or ""),
+                            prompt_info=str(prompt_info_out or ""),
+                        )
+                    except Exception:
+                        pass
+
+                try:
+                    log_action_to_db(
+                        {
+                            "type": "discussion",
+                            "post_id": seed_msg_id,
+                            "comment": f"[{prompt_info_out}] {reply_text}",
+                            "date": datetime.now(timezone.utc).isoformat(),
+                            "account": {
+                                "session_name": client_wrapper.session_name,
+                                "first_name": getattr(me, "first_name", "") if me else "",
+                                "username": getattr(me, "username", "") if me else "",
+                            },
+                            "target": {
+                                "chat_name": target.get("chat_name"),
+                                "chat_username": target.get("chat_username"),
+                                "destination_chat_id": chat_id,
+                            },
+                        }
+                    )
+                except Exception:
+                    pass
+
+                _clear_account_failure(client_wrapper.session_name, "discussion")
+                if msg_id:
+                    try:
+                        reply_to_msg_id = int(msg_id)
+                        REPLY_PROCESS_CACHE.add(int(msg_id))
+                    except Exception:
+                        pass
+
+                speaker_label = labels.get(client_wrapper.session_name, "Участник")
+                history.append({"speaker": speaker_label, "text": reply_text.strip()})
+                last_speaker = speaker_label
+                last_sender_session = client_wrapper.session_name
+    except asyncio.CancelledError:
+        if session_id_int:
+            try:
+                _db_update_discussion_session(
+                    session_id_int,
+                    status="canceled",
+                    finished_at=float(time.time()),
+                    error="canceled",
+                )
+            except Exception:
+                pass
+        raise
+    except Exception as e:
+        logger.error(f"❌ [discussion] ошибка в чате {chat_bare_id}: {e}")
+        if session_id_int:
+            try:
+                _db_update_discussion_session(
+                    session_id_int,
+                    status="failed",
+                    finished_at=float(time.time()),
+                    error=str(e),
+                )
+            except Exception:
+                pass
+    finally:
+        if session_id_int:
+            try:
+                row = None
+                with _db_connect() as conn:
+                    row = conn.execute(
+                        "SELECT status FROM discussion_sessions WHERE id = ?",
+                        (int(session_id_int),),
+                    ).fetchone()
+                cur_status = ""
+                if row is not None:
+                    try:
+                        cur_status = str(row["status"] or "")
+                    except Exception:
+                        cur_status = ""
+                if cur_status == "running":
+                    _db_update_discussion_session(
+                        session_id_int,
+                        status="completed",
+                        finished_at=float(time.time()),
+                    )
+            except Exception:
+                pass
+        if current_task:
+            PENDING_TASKS.discard(current_task)
 
 
 async def mark_account_as_banned(session_name):
@@ -3025,15 +6121,17 @@ def post_process_text(text):
     if not text:
         return text
     global current_settings
-    h_set = current_settings.get('humanization', {})
+    h_set = current_settings.get('humanization', {}) or {}
 
     typo_chance = h_set.get('typo_chance', 0) / 100
     lower_chance = h_set.get('lowercase_chance', 0) / 100
     comma_chance = h_set.get('comma_skip_chance', 0) / 100
     try:
-        max_words = int(h_set.get('max_words', 0) or 0)
+        max_words = int(h_set.get('max_words', 40) or 40)
     except Exception:
-        max_words = 0
+        max_words = 40
+    if max_words <= 0:
+        max_words = 40
 
     text = text.strip()
 
@@ -3045,6 +6143,8 @@ def post_process_text(text):
 
     text = text.replace('—', '-').replace('–', '-')
     text = text.replace('"', '').replace("'", "")
+    text = text.replace("«", "").replace("»", "")
+    text = text.replace("“", "").replace("”", "").replace("„", "")
 
     while '!!!' in text:
         text = text.replace('!!!', '!!')
@@ -3067,21 +6167,115 @@ def post_process_text(text):
 
         processed_words.append(word)
 
-    if max_words > 0:
-        processed_words = processed_words[:max_words]
+    processed_words = processed_words[:max_words]
 
     res = " ".join(processed_words)
+    res = re.sub(r"\s{2,}", " ", res).strip()
+
+    # Hard guardrail against "essay mode": at most 4 short sentences.
+    sentence_parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+", res) if part.strip()]
+    if len(sentence_parts) > 4:
+        res = " ".join(sentence_parts[:4]).strip()
+
+    limited_words = res.split()
+    if len(limited_words) > max_words:
+        res = " ".join(limited_words[:max_words]).strip()
 
     if random.random() < lower_chance:
         res = res.lower()
-    elif words and random.random() < lower_chance:
-        words[0] = words[0].lower()
-        res = " ".join(words)
+    elif res and random.random() < lower_chance:
+        parts = res.split()
+        if parts:
+            parts[0] = parts[0].lower()
+            res = " ".join(parts)
 
     return res
 
 
-async def human_type_and_send(client, chat_id, text, reply_to_msg_id=None, skip_processing=False):
+def split_text_smart_ru_no_comma(text: str) -> list[str]:
+    s = (text or "").strip()
+    if not s:
+        return []
+
+    def _is_ok(left: str, right: str, *, min_words_left: int, min_words_right: int, min_chars_left: int, min_chars_right: int) -> bool:
+        if not left or not right:
+            return False
+        if len(left) < min_chars_left or len(right) < min_chars_right:
+            return False
+        if len(left.split()) < min_words_left or len(right.split()) < min_words_right:
+            return False
+        return True
+
+    def _best(parts: list[tuple[str, str]]) -> list[str] | None:
+        if not parts:
+            return None
+        best_left, best_right = min(parts, key=lambda p: abs(len(p[0]) - len(p[1])))
+        return [best_left, best_right]
+
+    # 1) Sentence boundaries (. ! ? …) + whitespace
+    sentence_candidates: list[tuple[str, str]] = []
+    for m in re.finditer(r"[.!?…]+(?:\s+|$)", s):
+        split_at = m.end()
+        left = s[:split_at].rstrip()
+        right = s[split_at:].lstrip()
+        if _is_ok(left, right, min_words_left=2, min_words_right=2, min_chars_left=8, min_chars_right=8):
+            sentence_candidates.append((left, right))
+    best_sentence = _best(sentence_candidates)
+    if best_sentence:
+        return best_sentence
+
+    # 2) Colon
+    colon_candidates: list[tuple[str, str]] = []
+    for m in re.finditer(r":\s+", s):
+        split_at = m.end()
+        left = s[:split_at].rstrip()
+        right = s[split_at:].lstrip()
+        if _is_ok(left, right, min_words_left=1, min_words_right=2, min_chars_left=6, min_chars_right=8):
+            colon_candidates.append((left, right))
+    best_colon = _best(colon_candidates)
+    if best_colon:
+        return best_colon
+
+    # 3) Semicolon
+    semicolon_candidates: list[tuple[str, str]] = []
+    for m in re.finditer(r";\s+", s):
+        split_at = m.end()
+        left = s[:split_at].rstrip()
+        right = s[split_at:].lstrip()
+        if _is_ok(left, right, min_words_left=1, min_words_right=2, min_chars_left=6, min_chars_right=8):
+            semicolon_candidates.append((left, right))
+    best_semicolon = _best(semicolon_candidates)
+    if best_semicolon:
+        return best_semicolon
+
+    # 4) " - " where the dash stays with the second part ("- ...")
+    dash_candidates: list[tuple[str, str]] = []
+    start = 0
+    while True:
+        idx = s.find(" - ", start)
+        if idx < 0:
+            break
+        left = s[:idx].rstrip()
+        right = s[idx + 1 :].lstrip()
+        if _is_ok(left, right, min_words_left=2, min_words_right=2, min_chars_left=8, min_chars_right=8):
+            dash_candidates.append((left, right))
+        start = idx + 3
+    best_dash = _best(dash_candidates)
+    if best_dash:
+        return best_dash
+
+    return [s]
+
+
+async def human_type_and_send(
+    client,
+    chat_id,
+    text,
+    reply_to_msg_id=None,
+    skip_processing=False,
+    thread_top_msg_id: int | None = None,
+    split_mode: Literal["legacy", "smart_ru_no_comma", "off"] = "legacy",
+):
     if not text:
         return
     global current_settings
@@ -3094,21 +6288,43 @@ async def human_type_and_send(client, chat_id, text, reply_to_msg_id=None, skip_
     split_chance = current_settings.get('humanization', {}).get('split_chance', 0) / 100
     message_parts = []
 
-    if not skip_processing and len(processed_text) > 50 and random.random() < split_chance:
-        delimiters = [', ', '. ', '! ', '? ']
-        split_done = False
-        for d in delimiters:
-            if d in processed_text:
-                parts = processed_text.split(d, 1)
-                message_parts = [parts[0], parts[1]]
-                split_done = True
-                break
-        if not split_done: message_parts = [processed_text]
+    if split_mode != "off" and not skip_processing and len(processed_text) > 50 and random.random() < split_chance:
+        if split_mode == "smart_ru_no_comma":
+            message_parts = split_text_smart_ru_no_comma(processed_text) or [processed_text]
+        else:
+            delimiters = [', ', '. ', '! ', '? ']
+            split_done = False
+            for d in delimiters:
+                if d in processed_text:
+                    parts = processed_text.split(d, 1)
+                    message_parts = [parts[0], parts[1]]
+                    split_done = True
+                    break
+            if not split_done:
+                message_parts = [processed_text]
     else:
         message_parts = [processed_text]
 
     last_msg = None
     original_reply_id = reply_to_msg_id
+
+    async def _send_to_thread_without_quote(part_text: str, top_id: int):
+        peer = await _run_with_soft_timeout(client.get_input_entity(chat_id), SEND_ATTEMPT_TIMEOUT_SECONDS)
+        req = functions.messages.SendMessageRequest(
+            peer=peer,
+            message=part_text,
+            reply_to=types.InputReplyToMessage(reply_to_msg_id=0, top_msg_id=int(top_id)),
+            random_id=helpers.generate_random_long(),
+        )
+        res = await _run_with_soft_timeout(client(req), SEND_ATTEMPT_TIMEOUT_SECONDS)
+        try:
+            for upd in (getattr(res, "updates", None) or []):
+                msg = getattr(upd, "message", None)
+                if msg is not None:
+                    return msg
+        except Exception:
+            pass
+        return None
 
     for part in message_parts:
         part = part.strip()
@@ -3118,16 +6334,38 @@ async def human_type_and_send(client, chat_id, text, reply_to_msg_id=None, skip_
 
         typing_time = min(len(part) * 0.06, 6)
 
-        try:
+        async def _typing_sleep():
             async with client.action(chat_id, 'typing'):
                 await asyncio.sleep(typing_time)
+
+        try:
+            await _run_with_soft_timeout(_typing_sleep(), SEND_ATTEMPT_TIMEOUT_SECONDS)
         except (ChatAdminRequiredError, RPCError, Exception):
             await asyncio.sleep(typing_time)
 
         try:
-            last_msg = await client.send_message(chat_id, part, reply_to=original_reply_id)
+            if original_reply_id is None and thread_top_msg_id:
+                try:
+                    last_msg = await _send_to_thread_without_quote(part, int(thread_top_msg_id))
+                except Exception:
+                    # Fallback to plain reply to the thread root (may show quote, but stays in thread).
+                    last_msg = await _run_with_soft_timeout(
+                        client.send_message(chat_id, part, reply_to=int(thread_top_msg_id)),
+                        SEND_ATTEMPT_TIMEOUT_SECONDS,
+                    )
+            else:
+                last_msg = await _run_with_soft_timeout(
+                    client.send_message(chat_id, part, reply_to=original_reply_id),
+                    SEND_ATTEMPT_TIMEOUT_SECONDS,
+                )
         except Exception as e:
             logger.error(f"❌ Ошибка при отправке сообщения: {e}")
+            try:
+                if getattr(client, "is_connected", None) and client.is_connected():
+                    await client.disconnect()
+            except Exception:
+                pass
+            break
 
     return last_msg
 
@@ -3203,7 +6441,7 @@ async def get_real_identities_from_channel(client, source_channel, limit=200):
     scan_depth = 4000
 
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT user_id FROM used_identities")
             rows = cursor.fetchall()
@@ -3434,11 +6672,17 @@ async def run_rebrand_logic(api_id, api_hash):
 
                     await asyncio.sleep(3)
 
-            success = await update_account_profile(client_wrapper, first_name, last_name, photo_path if got_photo else None)
+            await update_account_profile(
+                client_wrapper.client,
+                first_name=first_name,
+                last_name=last_name,
+                avatar_path=photo_path if got_photo else None,
+            )
+            success = True
 
             if success and current_identity_user_id:
                 try:
-                    with sqlite3.connect(DB_FILE) as conn:
+                    with _db_connect() as conn:
                         conn.execute("INSERT OR IGNORE INTO used_identities (user_id, date_used) VALUES (?, ?)",
                                      (current_identity_user_id, datetime.now(timezone.utc).isoformat()))
                         conn.commit()
@@ -3462,7 +6706,7 @@ async def run_rebrand_logic(api_id, api_hash):
 
 async def proxy_auto_checker(bot_token, owner_ids):
     while True:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT id, url FROM proxies")
             proxies = cursor.fetchall()
@@ -3501,7 +6745,7 @@ async def process_scenarios():
     tasks_to_process = []
 
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("""
@@ -3521,7 +6765,7 @@ async def process_scenarios():
         return
 
     accounts_data = load_project_accounts(current_settings)
-    ordered_accounts = [acc for acc in accounts_data if acc.get('status') != 'banned']
+    ordered_accounts = [acc for acc in accounts_data if _is_account_active(acc)]
 
     all_targets = (current_settings.get('targets', []) or []) if isinstance(current_settings, dict) else []
 
@@ -3548,8 +6792,9 @@ async def process_scenarios():
                     has_any_target = True
                     break
             if not has_any_target:
-                with sqlite3.connect(DB_FILE) as conn:
+                with _db_connect() as conn:
                     conn.execute("DELETE FROM post_scenarios WHERE id = ?", (row_id,))
+                _scenario_history_clear(chat_id_str, post_id)
             continue
 
         destination_id_str = target_settings.get('linked_chat_id', target_settings.get('chat_id'))
@@ -3557,12 +6802,13 @@ async def process_scenarios():
         lines = [l.strip() for l in content.split('\n') if l.strip()]
 
         if idx >= len(lines):
-            with sqlite3.connect(DB_FILE) as conn:
+            with _db_connect() as conn:
                 conn.execute("DELETE FROM post_scenarios WHERE id = ?", (row_id,))
 
             hist_key = f"{chat_id_str}_{post_id}"
             if hist_key in process_scenarios.msg_history:
                 del process_scenarios.msg_history[hist_key]
+            _scenario_history_clear(chat_id_str, post_id)
 
             logger.info(f"🏁 Сценарий для поста {post_id} завершен.")
             continue
@@ -3574,7 +6820,7 @@ async def process_scenarios():
 
         if not match:
             logger.warning(f"⚠️ [SKIP] Неверный формат строки {idx + 1}: '{line}'")
-            with sqlite3.connect(DB_FILE) as conn:
+            with _db_connect() as conn:
                 conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = ?", (row_id,))
             continue
 
@@ -3612,14 +6858,14 @@ async def process_scenarios():
                 logger.warning(f"⚠️ Аккаунт {acc_idx_raw} недоступен, подменил на {session_name}")
             else:
                 logger.error("❌ Нет активных клиентов для сценария.")
-                with sqlite3.connect(DB_FILE) as conn:
+                with _db_connect() as conn:
                     conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = ?", (row_id,))
                 continue
 
         try:
             hist_key = f"{chat_id_str}_{post_id}"
             if hist_key not in process_scenarios.msg_history:
-                process_scenarios.msg_history[hist_key] = {}
+                process_scenarios.msg_history[hist_key] = _scenario_history_load(chat_id_str, post_id)
 
             reply_to_id = post_id
             use_reply_mode = target_settings.get('scenario_reply_mode', False)
@@ -3649,7 +6895,7 @@ async def process_scenarios():
                 )
             except asyncio.TimeoutError:
                 logger.error(f"❌ [{session_name}] Тайм-аут поиска чата. Пропускаю шаг.")
-                with sqlite3.connect(DB_FILE) as conn:
+                with _db_connect() as conn:
                     conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = ?", (row_id,))
                 continue
             except Exception as e:
@@ -3657,7 +6903,7 @@ async def process_scenarios():
                     entity = await client_wrapper.client.get_entity(norm_dest_id)
                 except:
                     logger.error(f"❌ [{session_name}] Чат не найден: {e}")
-                    with sqlite3.connect(DB_FILE) as conn:
+                    with _db_connect() as conn:
                         conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = ?",
                                      (row_id,))
                     continue
@@ -3675,6 +6921,7 @@ async def process_scenarios():
                 logger.info(f"✅ [{session_name}] УСПЕШНО отправил: {text[:20]}...")
 
                 process_scenarios.msg_history[hist_key][acc_idx_raw] = sent_msg.id
+                _scenario_history_set(chat_id_str, post_id, acc_idx_raw, sent_msg.id)
 
                 me = await client_wrapper.client.get_me()
                 log_action_to_db({
@@ -3686,14 +6933,14 @@ async def process_scenarios():
                     'target': {'chat_name': 'Scenario', 'destination_chat_id': destination_id_str}
                 })
 
-            with sqlite3.connect(DB_FILE) as conn:
+            with _db_connect() as conn:
                 conn.execute(
                     "UPDATE post_scenarios SET current_index = current_index + 1, last_run_time = ? WHERE id = ?",
                     (time.time(), row_id))
 
         except Exception as e:
             logger.error(f"❌ Ошибка выполнения шага (Post {post_id}): {e}", exc_info=True)
-            with sqlite3.connect(DB_FILE) as conn:
+            with _db_connect() as conn:
                 conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = ?", (row_id,))
 
 
@@ -3703,7 +6950,7 @@ async def process_outbound_queue():
         project_sessions = {
             a.get("session_name") for a in load_project_accounts(current_settings) if a.get("session_name")
         }
-        with sqlite3.connect(DB_FILE) as conn:
+        with _db_connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM outbound_queue WHERE status = 'pending'")
@@ -3735,10 +6982,10 @@ async def process_outbound_queue():
                     temp_client = await _connect_temp_client(account_data, api_id, api_hash)
                     client = temp_client
                 except Exception as e:
-                    with sqlite3.connect(DB_FILE) as conn:
+                    with _db_connect() as conn:
                         conn.execute("UPDATE outbound_queue SET status = 'failed_no_client' WHERE id = ?", (t_id,))
                     kind = "quote" if reply_id else "dm"
-                    with sqlite3.connect(DB_FILE) as conn:
+                    with _db_connect() as conn:
                         cur = conn.cursor()
                         cur.execute(
                             """
@@ -3787,14 +7034,14 @@ async def process_outbound_queue():
                 sent_msg = await client.send_message(entity, text, reply_to=reply_id)
                 logger.info(f"✅ Ручной ответ отправлен от {session_name} в {dest_chat}")
 
-                with sqlite3.connect(DB_FILE) as conn:
+                with _db_connect() as conn:
                     conn.execute("UPDATE outbound_queue SET status = 'sent' WHERE id = ?", (t_id,))
 
                 # Mark the queued row (if any) as sent; otherwise insert a fresh row.
                 now = datetime.now(timezone.utc).isoformat()
                 kind = "quote" if reply_id else "dm"
                 msg_id = getattr(sent_msg, "id", None) if sent_msg else None
-                with sqlite3.connect(DB_FILE) as conn:
+                with _db_connect() as conn:
                     cur = conn.cursor()
                     cur.execute(
                         """
@@ -3826,10 +7073,10 @@ async def process_outbound_queue():
 
             except Exception as e:
                 logger.error(f"Ошибка отправки ручного ответа (ID {t_id}): {e}")
-                with sqlite3.connect(DB_FILE) as conn:
+                with _db_connect() as conn:
                     conn.execute("UPDATE outbound_queue SET status = 'error' WHERE id = ?", (t_id,))
                 kind = "quote" if reply_id else "dm"
-                with sqlite3.connect(DB_FILE) as conn:
+                with _db_connect() as conn:
                     cur = conn.cursor()
                     cur.execute(
                         """
@@ -3882,88 +7129,647 @@ async def process_outbound_queue():
         logger.error(f"Ошибка в outbound_queue: {e}")
 
 
+async def process_discussion_start_queue():
+    global current_settings, active_clients
+
+    queue = current_settings.get("discussion_start_queue")
+    if not isinstance(queue, list) or not queue:
+        return
+
+    tasks = get_project_discussion_start_queue(current_settings)
+    if not tasks:
+        return
+
+    now_ts = time.time()
+    tasks_to_remove: list[dict] = []
+    tasks_updated = False
+
+    def _should_try_other_discussion_chat(exc: Exception) -> bool:
+        name = (exc.__class__.__name__ or "").lower()
+        text = str(exc).lower()
+        tokens = [
+            "chatadminrequired",
+            "chat admin privileges",
+            "chat_admin_required",
+            "chatwriteforbidden",
+            "chat_write_forbidden",
+            "chat_send_plain_forbidden",
+            "chat_send",
+            "write forbidden",
+            "you can't write",
+            "cannot write",
+            "not enough rights",
+            "sendmessagerequest",
+            "channelprivate",
+            "channel private",
+            "channelinvalid",
+            "channel invalid",
+            "userbannedinchannel",
+            "user banned in channel",
+        ]
+        return any(t in name or t in text for t in tokens)
+
+    for task in tasks:
+        try:
+            try:
+                next_retry_at = float(task.get("next_retry_at") or 0.0)
+            except Exception:
+                next_retry_at = 0.0
+            if next_retry_at and now_ts < next_retry_at:
+                continue
+
+            target_id = str(task.get("discussion_target_id") or "").strip()
+            target_chat_id = str(task.get("discussion_target_chat_id") or "").strip()
+            seed_text = str(task.get("seed_text") or "").strip()
+            operator_session = str(task.get("operator_session_name") or "").strip()
+            force_restart = bool(task.get("force_restart", False))
+
+            if not ((target_id or target_chat_id) and seed_text and operator_session):
+                tasks_to_remove.append(task)
+                continue
+
+            all_targets = get_project_discussion_targets(current_settings)
+            target: dict | None = None
+            if target_id:
+                for t in all_targets:
+                    if str(t.get("id") or "").strip() == target_id:
+                        target = t
+                        break
+            else:
+                chat_matches = [
+                    t for t in all_targets if str(t.get("chat_id") or "").strip() == target_chat_id
+                ]
+                if len(chat_matches) == 1:
+                    target = chat_matches[0]
+                elif len(chat_matches) > 1:
+                    logger.warning(
+                        f"⚠️ [discussion_start] ambiguous target for chat_id={target_chat_id}: need discussion_target_id in queue task"
+                    )
+                    tasks_to_remove.append(task)
+                    continue
+
+            if not target or not bool(target.get("enabled", True)):
+                tasks_to_remove.append(task)
+                continue
+
+            if not target_id:
+                target_id = str(target.get("id") or "").strip()
+            if not target_chat_id:
+                target_chat_id = str(target.get("chat_id") or "").strip()
+
+            # Prefer the current operator setting from the target if present.
+            operator_from_target = str(target.get("operator_session_name") or "").strip()
+            if operator_from_target:
+                operator_session = operator_from_target
+
+            session_id_int: int | None
+            try:
+                session_id_int = int(task.get("session_id") or 0) or None
+            except Exception:
+                session_id_int = None
+
+            if session_id_int is None:
+                try:
+                    project_id = _active_project_id(current_settings)
+                except Exception:
+                    project_id = DEFAULT_PROJECT_ID
+
+                base_chat_id = (
+                    str(task.get("chat_id") or "").strip()
+                    or str(target.get("linked_chat_id") or "").strip()
+                    or str(target.get("chat_id") or "").strip()
+                )
+                session_id_int = _db_create_discussion_session(
+                    project_id=str(project_id),
+                    discussion_target_id=str(target_id) or None,
+                    discussion_target_chat_id=str(target_chat_id),
+                    chat_id=str(base_chat_id or target_chat_id),
+                    status="planned",
+                    operator_session_name=operator_session,
+                    seed_text=seed_text,
+                    settings={"target": target},
+                )
+                if session_id_int:
+                    task["session_id"] = int(session_id_int)
+                    tasks_updated = True
+
+            client_wrapper = active_clients.get(operator_session)
+            temp_client = None
+            client = None
+
+            if client_wrapper is not None and getattr(client_wrapper, "client", None) is not None:
+                if not await ensure_client_connected(client_wrapper, reason="discussion_start"):
+                    raise RuntimeError("connect_failed")
+                client = client_wrapper.client
+            else:
+                telethon_config = load_config("telethon_credentials")
+                api_id, api_hash = int(telethon_config["api_id"]), telethon_config["api_hash"]
+                accounts_data = load_project_accounts(current_settings)
+                account_data = next(
+                    (a for a in accounts_data if str(a.get("session_name") or "").strip() == operator_session),
+                    None,
+                )
+                if not account_data:
+                    raise KeyError("operator_account_not_found")
+                temp_client = await _connect_temp_client(account_data, api_id, api_hash)
+                client = temp_client
+
+            try:
+                # Ensure the operator can write in the discussion chat (best-effort).
+                try:
+                    if client_wrapper is not None and getattr(client_wrapper, "client", None) is not None:
+                        await ensure_account_joined(client_wrapper, target, force=True)
+                    else:
+                        pseudo = type("_Tmp", (), {"session_name": operator_session, "client": client})()
+                        await ensure_account_joined(pseudo, target, force=True)
+                except Exception:
+                    pass
+
+                candidate_raw = [
+                    str(task.get("chat_id") or "").strip(),
+                    str(target.get("linked_chat_id") or "").strip(),
+                    str(target.get("chat_id") or "").strip(),
+                ]
+                candidate_chat_ids: list[int] = []
+                seen: set[int] = set()
+                for raw in candidate_raw:
+                    if not raw:
+                        continue
+                    try:
+                        cid = int(raw)
+                    except Exception:
+                        continue
+                    if cid in seen:
+                        continue
+                    seen.add(cid)
+                    candidate_chat_ids.append(cid)
+
+                if not candidate_chat_ids:
+                    tasks_to_remove.append(task)
+                    continue
+
+                # Prevent double-start when the seed message we send triggers the outbound message handler.
+                suppressed_chat_bare_ids: list[int] = []
+                try:
+                    for cid in candidate_chat_ids:
+                        bare = _channel_bare_id(str(cid))
+                        if bare is None:
+                            continue
+                        b = int(bare)
+                        suppressed_chat_bare_ids.append(b)
+                        DISCUSSION_START_SUPPRESS_CHAT_IDS.add(b)
+                except Exception:
+                    suppressed_chat_bare_ids = []
+
+                sent_msg = None
+                sent_chat_id_int: int | None = None
+                last_send_exc: Exception | None = None
+                try:
+                    for idx, cid in enumerate(candidate_chat_ids):
+                        try:
+                            sent_msg = await asyncio.wait_for(
+                                client.send_message(int(cid), seed_text),
+                                timeout=35.0,
+                            )
+                            sent_chat_id_int = int(cid)
+                            break
+                        except Exception as exc:
+                            last_send_exc = exc
+                            if idx < (len(candidate_chat_ids) - 1) and _should_try_other_discussion_chat(exc):
+                                continue
+                            raise
+                finally:
+                    for b in suppressed_chat_bare_ids:
+                        try:
+                            DISCUSSION_START_SUPPRESS_CHAT_IDS.discard(int(b))
+                        except Exception:
+                            pass
+
+                if sent_msg is None or sent_chat_id_int is None:
+                    raise last_send_exc or RuntimeError("send_failed")
+
+                try:
+                    seed_msg_id = int(getattr(sent_msg, "id", None) or 0) or None
+                except Exception:
+                    seed_msg_id = None
+                if not seed_msg_id:
+                    raise RuntimeError("missing_msg_id")
+
+                start_prefix = str(target.get("start_prefix") or "")
+                seed_clean = (
+                    _extract_discussion_seed_optional_prefix(seed_text, start_prefix) or seed_text
+                ).strip()
+
+                chat_bare_id = _channel_bare_id(str(sent_chat_id_int))
+                if chat_bare_id is None:
+                    chat_bare_id = int(str(sent_chat_id_int).replace("-100", "").replace("-", ""))
+
+                if force_restart:
+                    existing = DISCUSSION_ACTIVE_TASKS.get(int(chat_bare_id))
+                    if existing is not None and not existing.done():
+                        try:
+                            prev_sid = getattr(existing, "discussion_session_id", None)
+                            if prev_sid:
+                                _db_update_discussion_session(
+                                    int(prev_sid),
+                                    status="canceled",
+                                    finished_at=float(time.time()),
+                                    error="force_restart",
+                                )
+                        except Exception:
+                            pass
+                        existing.cancel()
+                        try:
+                            await asyncio.wait_for(existing, timeout=2.0)
+                        except Exception:
+                            pass
+                        DISCUSSION_ACTIVE_TASKS.pop(int(chat_bare_id), None)
+
+                if session_id_int:
+                    try:
+                        _db_update_discussion_session(
+                            int(session_id_int),
+                            discussion_target_id=str(target_id) or None,
+                            status="running",
+                            started_at=float(time.time()),
+                            chat_id=str(sent_chat_id_int),
+                            operator_session_name=operator_session,
+                            seed_msg_id=int(seed_msg_id),
+                            seed_text=seed_clean,
+                            schedule_at=None,
+                            error=None,
+                        )
+                        _db_add_discussion_message(
+                            session_id=int(session_id_int),
+                            speaker_type="operator",
+                            speaker_session_name=operator_session,
+                            speaker_label="Оператор",
+                            msg_id=int(seed_msg_id),
+                            reply_to_msg_id=None,
+                            text=str(seed_text),
+                        )
+                    except Exception:
+                        pass
+
+                _schedule_discussion_run(
+                    chat_bare_id=int(chat_bare_id),
+                    chat_id=int(sent_chat_id_int),
+                    seed_msg_id=int(seed_msg_id),
+                    seed_text=seed_clean,
+                    target=target,
+                    session_id=int(session_id_int) if session_id_int else None,
+                )
+                logger.info(
+                    f"🗣 [discussion_start] operator {operator_session} sent msg_id={seed_msg_id} in {chat_bare_id}"
+                )
+                tasks_to_remove.append(task)
+            finally:
+                if temp_client is not None:
+                    try:
+                        if temp_client.is_connected():
+                            await temp_client.disconnect()
+                    except Exception:
+                        pass
+        except Exception as e:
+            tries = 0
+            try:
+                tries = int(task.get("tries", 0) or 0)
+            except Exception:
+                tries = 0
+            tries += 1
+            task["tries"] = tries
+            task["last_error"] = str(e)
+            backoff = min(60 * max(1, tries), 600)
+            next_retry_at = float(time.time() + backoff)
+            task["next_retry_at"] = next_retry_at
+            tasks_updated = True
+            logger.error(f"❌ [discussion_start] ошибка: {e} (retry in {backoff}s)")
+
+            max_tries = 10
+            sid_raw = task.get("session_id")
+            sid_int = None
+            try:
+                sid_int = int(sid_raw) if sid_raw else None
+            except Exception:
+                sid_int = None
+            if sid_int:
+                try:
+                    if tries >= max_tries:
+                        _db_update_discussion_session(
+                            int(sid_int),
+                            status="failed",
+                            finished_at=float(time.time()),
+                            error=str(e),
+                        )
+                    else:
+                        _db_update_discussion_session(
+                            int(sid_int),
+                            status="planned",
+                            schedule_at=float(next_retry_at),
+                            error=str(e),
+                        )
+                except Exception:
+                    pass
+            if tries >= max_tries:
+                tasks_to_remove.append(task)
+
+    if tasks_to_remove:
+        new_queue = [t for t in queue if t not in tasks_to_remove]
+        current_settings["discussion_start_queue"] = new_queue
+        tasks_updated = True
+
+    if tasks_updated:
+        save_data(SETTINGS_FILE, current_settings)
+
+
+async def process_discussion_queue():
+    global current_settings
+
+    queue = current_settings.get("discussion_queue")
+    if not isinstance(queue, list) or not queue:
+        return
+
+    tasks = get_project_discussion_queue(current_settings)
+    if not tasks:
+        return
+
+    tasks_to_remove: list[dict] = []
+
+    for task in tasks:
+        try:
+            target_id = str(task.get("discussion_target_id") or "").strip()
+            target_chat_id = str(task.get("discussion_target_chat_id") or "").strip()
+            chat_id_raw = str(task.get("chat_id") or "").strip()
+            seed_text = str(task.get("seed_text") or "").strip()
+            seed_msg_id_raw = task.get("seed_msg_id")
+
+            if not ((target_id or target_chat_id) and chat_id_raw and seed_text and seed_msg_id_raw):
+                tasks_to_remove.append(task)
+                continue
+
+            all_targets = get_project_discussion_targets(current_settings)
+            target: dict | None = None
+            if target_id:
+                for t in all_targets:
+                    if str(t.get("id") or "").strip() == target_id:
+                        target = t
+                        break
+            else:
+                chat_matches = [
+                    t for t in all_targets if str(t.get("chat_id") or "").strip() == target_chat_id
+                ]
+                if len(chat_matches) == 1:
+                    target = chat_matches[0]
+                elif len(chat_matches) > 1:
+                    logger.warning(
+                        f"⚠️ [discussion_queue] ambiguous target for chat_id={target_chat_id}: need discussion_target_id in queue task"
+                    )
+                    tasks_to_remove.append(task)
+                    continue
+
+            if not target:
+                tasks_to_remove.append(task)
+                continue
+
+            try:
+                chat_id_int = int(chat_id_raw)
+            except Exception:
+                tasks_to_remove.append(task)
+                continue
+
+            try:
+                seed_msg_id = int(seed_msg_id_raw)
+            except Exception:
+                tasks_to_remove.append(task)
+                continue
+
+            try:
+                chat_bare_id = int(str(chat_id_int).replace("-100", ""))
+            except Exception:
+                chat_bare_id = chat_id_int
+
+            _schedule_discussion_run(
+                chat_bare_id=chat_bare_id,
+                chat_id=chat_id_int,
+                seed_msg_id=seed_msg_id,
+                seed_text=seed_text,
+                target=target,
+            )
+            tasks_to_remove.append(task)
+        except Exception as e:
+            logger.error(f"Ошибка в discussion_queue: {e}")
+            tasks_to_remove.append(task)
+
+    if tasks_to_remove:
+        new_queue = [t for t in queue if t not in tasks_to_remove]
+        current_settings["discussion_queue"] = new_queue
+        save_data(SETTINGS_FILE, current_settings)
+
+
 async def process_manual_tasks():
     global current_settings, active_clients, POST_PROCESS_CACHE
 
-    if 'manual_queue' not in current_settings or not current_settings['manual_queue']:
+    tasks = _claim_project_manual_tasks(_active_project_id(current_settings), limit=100)
+    if not tasks:
         return
 
-    tasks = get_project_manual_queue(current_settings)
-    if not tasks: return
-
-    logger.info(f"🚀 [MANUAL] Найдено {len(tasks)} ручных задач на обработку...")
-
-    tasks_to_remove = []
+    now_ts = time.time()
+    last_log_at = getattr(process_manual_tasks, "_last_summary_log_at", 0.0)
+    last_count = getattr(process_manual_tasks, "_last_summary_count", None)
+    if last_count != len(tasks) or (now_ts - last_log_at) >= 60.0:
+        logger.info(f"🚀 [MANUAL] Найдено {len(tasks)} ручных задач на обработку...")
+        process_manual_tasks._last_summary_log_at = now_ts
+        process_manual_tasks._last_summary_count = len(tasks)
 
     for task in tasks:
-        chat_id_raw = task['chat_id']
-        post_id = task['post_id']
+        task_id = int(task.get("id") or 0)
+        if not isinstance(task, dict):
+            _set_manual_task_status(task_id, "failed", "manual_task_invalid_payload")
+            continue
+
+        target_chat_id_raw = str(task.get("chat_id") or "").strip()
+        message_chat_id_raw = str(task.get("message_chat_id") or "").strip() or target_chat_id_raw
+        post_id = task.get("post_id")
+        if not target_chat_id_raw or not post_id:
+            _set_manual_task_status(task_id, "failed", "manual_task_missing_chat_or_post")
+            continue
 
         target_chat = None
         for t in get_project_targets(current_settings):
-            if t['chat_id'] == chat_id_raw:
+            if str(t.get("chat_id") or "").strip() == target_chat_id_raw:
                 target_chat = t
                 break
+        if not target_chat:
+            # Backward compatibility: some tasks might store linked_chat_id in chat_id.
+            for t in get_project_targets(current_settings):
+                if str(t.get("linked_chat_id") or "").strip() == target_chat_id_raw:
+                    target_chat = t
+                    break
 
         if not target_chat:
-            tasks_to_remove.append(task)
+            _set_manual_task_status(task_id, "failed", f"target_not_found:{target_chat_id_raw}")
             continue
 
-        eligible_clients = [c for c in list(active_clients.values())
-                            if not target_chat.get('assigned_accounts', []) or c.session_name in target_chat.get(
-                'assigned_accounts', [])]
+        effective_target_chat = target_chat
+        overrides = task.get("overrides") if isinstance(task, dict) else None
+        if isinstance(overrides, dict) and overrides:
+            effective_target_chat = dict(target_chat)
+            for key in [
+                "vector_prompt",
+                "accounts_per_post_min",
+                "accounts_per_post_max",
+                "delay_between_accounts",
+                "daily_comment_limit",
+            ]:
+                if key in overrides and overrides.get(key) is not None:
+                    effective_target_chat[key] = overrides.get(key)
+            try:
+                logger.info(
+                    f"⚙️ [MANUAL] Overrides применены (keys={list(overrides.keys())}) для post_id={post_id} target={target_chat_id_raw}"
+                )
+            except Exception:
+                pass
+
+        eligible_clients = [
+            c
+            for c in list(active_clients.values())
+            if _is_account_assigned(effective_target_chat, c.session_name)
+            and getattr(c, "client", None) is not None
+            and c.client.is_connected()
+        ]
 
         if not eligible_clients:
-            logger.warning(f"⚠️ Нет активных клиентов для ручной задачи в {chat_id_raw}")
+            # Try to reconnect assigned accounts once (backoff applies).
+            assigned = [
+                c
+                for c in list(active_clients.values())
+                if _is_account_assigned(effective_target_chat, c.session_name)
+                and getattr(c, "client", None) is not None
+            ]
+            for c in assigned:
+                await ensure_client_connected(c, reason="manual")
+
+            eligible_clients = [
+                c
+                for c in assigned
+                if getattr(c, "client", None) is not None and c.client.is_connected()
+            ]
+
+        if not eligible_clients:
+            last_warn_map = getattr(process_manual_tasks, "_last_no_clients_warn", None)
+            if not isinstance(last_warn_map, dict):
+                last_warn_map = {}
+                process_manual_tasks._last_no_clients_warn = last_warn_map
+            last_warn_at = float(last_warn_map.get(str(target_chat_id_raw)) or 0.0)
+            if (now_ts - last_warn_at) >= 60.0:
+                logger.warning(f"⚠️ Нет подключенных клиентов для ручной задачи в {target_chat_id_raw}")
+                last_warn_map[str(target_chat_id_raw)] = now_ts
+            _set_manual_task_status(task_id, "pending", "no_connected_clients")
             continue
 
         client_wrapper = random.choice(eligible_clients)
 
         try:
-            entity_id = int(str(chat_id_raw).replace('-100', ''))
+            destination_chat_id = int(str(message_chat_id_raw))
             try:
-                entity = await client_wrapper.client.get_input_entity(entity_id)
-            except:
-                await ensure_account_joined(client_wrapper, target_chat)
-                entity = await client_wrapper.client.get_input_entity(entity_id)
+                entity = await client_wrapper.client.get_input_entity(destination_chat_id)
+            except Exception:
+                await ensure_account_joined(client_wrapper, effective_target_chat, force=True)
+                entity = await client_wrapper.client.get_input_entity(destination_chat_id)
 
             messages = await client_wrapper.client.get_messages(entity, ids=[post_id])
             if messages and messages[0]:
                 msg = messages[0]
 
-                final_chat_id = entity_id
+                final_chat_id = destination_chat_id
 
+                # If we fetched the message from the main channel but the target has a linked discussion chat,
+                # re-map to the linked chat message so comments go to the correct place.
                 try:
-                    discussion_res = await client_wrapper.client(
-                        GetDiscussionMessageRequest(peer=entity, msg_id=post_id))
-                    if discussion_res.messages:
-                        found_msg = discussion_res.messages[0]
-                        logger.info(f"🔄 [MANUAL] Переадресация: Пост Канала {post_id} -> Пост Группы {found_msg.id}")
-                        msg = found_msg
-                        final_chat_id = msg.chat_id
-                except Exception as e:
-                    logger.warning(f"⚠️ [MANUAL] Не удалось найти Linked-сообщение (возможно нет комментариев): {e}")
+                    should_map = False
+                    linked_chat_id_cfg = str(effective_target_chat.get("linked_chat_id") or "").strip()
+                    target_chat_id_cfg = str(effective_target_chat.get("chat_id") or "").strip()
+                    if (
+                        linked_chat_id_cfg
+                        and target_chat_id_cfg
+                        and str(destination_chat_id) == str(target_chat_id_cfg)
+                        and str(linked_chat_id_cfg) != str(target_chat_id_cfg)
+                    ):
+                        should_map = True
 
-                event_mock = collections.namedtuple('EventMock', ['message', 'chat_id'])
+                    if should_map:
+                        discussion_res = await client_wrapper.client(
+                            GetDiscussionMessageRequest(peer=entity, msg_id=post_id)
+                        )
+                        if discussion_res.messages:
+                            found_msg = None
+                            for m in discussion_res.messages:
+                                try:
+                                    if getattr(m, "chat_id", None) and int(getattr(m, "chat_id")) != int(
+                                        destination_chat_id
+                                    ):
+                                        found_msg = m
+                                        break
+                                except Exception:
+                                    continue
+                            if not found_msg:
+                                found_msg = discussion_res.messages[0]
+
+                            linked_chat_id = getattr(found_msg, "chat_id", None) or destination_chat_id
+                            linked_msg_id = getattr(found_msg, "id", None) or post_id
+
+                            # Re-fetch message to ensure it's bound to the client (text/media access is more reliable).
+                            refetched_msg = None
+                            try:
+                                linked_entity = await client_wrapper.client.get_input_entity(int(linked_chat_id))
+                                refetched = await client_wrapper.client.get_messages(
+                                    linked_entity, ids=[int(linked_msg_id)]
+                                )
+                                if refetched and refetched[0]:
+                                    refetched_msg = refetched[0]
+                            except Exception:
+                                try:
+                                    await ensure_account_joined(client_wrapper, effective_target_chat, force=True)
+                                    linked_entity = await client_wrapper.client.get_input_entity(int(linked_chat_id))
+                                    refetched = await client_wrapper.client.get_messages(
+                                        linked_entity, ids=[int(linked_msg_id)]
+                                    )
+                                    if refetched and refetched[0]:
+                                        refetched_msg = refetched[0]
+                                except Exception:
+                                    refetched_msg = None
+
+                            msg = refetched_msg or found_msg
+                            final_chat_id = getattr(msg, "chat_id", None) or linked_chat_id
+                            logger.info(
+                                f"🔄 [MANUAL] Переадресация: Пост Канала {post_id} -> Пост Группы {linked_msg_id}"
+                            )
+                except Exception as e:
+                    logger.warning(
+                        f"⚠️ [MANUAL] Не удалось найти Linked-сообщение (возможно нет комментариев): {e}"
+                    )
+
+                event_mock = collections.namedtuple("EventMock", ["message", "chat_id"])
                 mock_event = event_mock(message=msg, chat_id=final_chat_id)
 
                 logger.info(f"⚡ [MANUAL] Принудительный запуск обработки поста {msg.id} в {final_chat_id}")
 
-                asyncio.create_task(process_new_post(mock_event, target_chat, from_catch_up=False, is_manual=True))
-
-                tasks_to_remove.append(task)
+                asyncio.create_task(
+                    process_new_post(
+                        mock_event,
+                        effective_target_chat,
+                        from_catch_up=False,
+                        is_manual=True,
+                    )
+                )
+                _set_manual_task_status(task_id, "done")
             else:
-                logger.warning(f"❌ [MANUAL] Не удалось найти сообщение {post_id} в {chat_id_raw}")
-                tasks_to_remove.append(task)
+                logger.warning(f"❌ [MANUAL] Не удалось найти сообщение {post_id} в {message_chat_id_raw}")
+                _set_manual_task_status(task_id, "failed", f"message_not_found:{post_id}@{message_chat_id_raw}")
 
         except Exception as e:
             logger.error(f"Ошибка ручной обработки поста: {e}")
-
-    if tasks_to_remove:
-        new_queue = [t for t in current_settings['manual_queue'] if t not in tasks_to_remove]
-        current_settings['manual_queue'] = new_queue
-        save_data(SETTINGS_FILE, current_settings)
-
+            _set_manual_task_status(task_id, "pending", f"processing_error:{type(e).__name__}:{e}")
 
 def _parse_proxy_url(url: str | None):
     if not url:
@@ -3979,8 +7785,20 @@ def _parse_proxy_url(url: str | None):
 
 
 async def _connect_temp_client(account_data: dict, api_id: int, api_hash: str):
-    proxy = _parse_proxy_url(account_data.get("proxy_url"))
-    client = TelegramClient(StringSession(account_data["session_string"]), api_id, api_hash, proxy=proxy)
+    api_id, api_hash = _resolve_account_credentials(account_data, api_id, api_hash)
+    if not api_id or not api_hash:
+        raise RuntimeError("missing_api_credentials")
+    proxy = _resolve_account_proxy(account_data)
+    session = _resolve_account_session(account_data)
+    if not session:
+        raise RuntimeError("missing_session")
+    client = TelegramClient(
+        session,
+        api_id,
+        api_hash,
+        proxy=proxy,
+        **device_kwargs(account_data),
+    )
     await client.connect()
     if not await client.is_user_authorized():
         try:
@@ -4012,6 +7830,8 @@ async def update_account_profile(
     *,
     first_name: str | None = None,
     last_name: str | None = None,
+    username: str | None = None,
+    username_clear: bool = False,
     bio: str | None = None,
     avatar_path: str | None = None,
     avatar_clear: bool = False,
@@ -4026,6 +7846,12 @@ async def update_account_profile(
         last_name = str(last_name).strip()
     if bio is not None:
         bio = str(bio).strip()
+    if username is not None:
+        username = str(username).strip()
+        username = username.replace("https://t.me/", "").replace("http://t.me/", "").replace("t.me/", "")
+        username = username.lstrip("@").strip().lower()
+        if not username:
+            username_clear = True
 
     if first_name is not None or last_name is not None or bio is not None:
         await client(
@@ -4035,6 +7861,11 @@ async def update_account_profile(
                 about=bio,
             )
         )
+
+    if username_clear:
+        await client(UpdateUsernameRequest(username=""))
+    elif username is not None:
+        await client(UpdateUsernameRequest(username=username))
 
     if avatar_clear:
         await _clear_profile_photo(client)
@@ -4099,6 +7930,8 @@ async def process_profile_tasks(api_id: int, api_hash: str) -> None:
             bio = task.get("bio")
             first_name = task.get("first_name")
             last_name = task.get("last_name")
+            username = task.get("username")
+            username_clear = bool(task.get("username_clear"))
             personal_channel = task.get("personal_channel")
             avatar_clear = bool(task.get("avatar_clear"))
             personal_channel_clear = bool(task.get("personal_channel_clear"))
@@ -4107,6 +7940,8 @@ async def process_profile_tasks(api_id: int, api_hash: str) -> None:
                 client,
                 first_name=first_name,
                 last_name=last_name,
+                username=username,
+                username_clear=username_clear,
                 bio=bio,
                 avatar_path=avatar_path,
                 avatar_clear=avatar_clear,
@@ -4114,18 +7949,30 @@ async def process_profile_tasks(api_id: int, api_hash: str) -> None:
                 personal_channel_clear=personal_channel_clear,
             )
 
+            me_username = None
             try:
                 me = await client.get_me()
                 if me:
                     account_data["user_id"] = getattr(me, "id", account_data.get("user_id"))
                     account_data["first_name"] = getattr(me, "first_name", account_data.get("first_name"))
                     account_data["last_name"] = getattr(me, "last_name", "") or ""
-                    account_data["username"] = getattr(me, "username", "") or ""
+                    me_username = getattr(me, "username", None)
+                    account_data["username"] = me_username or ""
             except Exception:
                 pass
 
             if bio is not None:
                 account_data["profile_bio"] = str(bio)
+            if username is not None or username_clear:
+                if username_clear:
+                    account_data["profile_username"] = ""
+                elif me_username is not None:
+                    account_data["profile_username"] = me_username or ""
+                else:
+                    u = str(username or "").strip()
+                    u = u.replace("https://t.me/", "").replace("http://t.me/", "").replace("t.me/", "")
+                    u = u.lstrip("@").strip().lower()
+                    account_data["profile_username"] = u
             if personal_channel_clear:
                 account_data.pop("profile_personal_channel", None)
             elif personal_channel:
@@ -4180,11 +8027,22 @@ async def main():
     while True:
         try:
             new_settings = load_json_data(SETTINGS_FILE)
-            current_settings = new_settings
+            current_settings = new_settings if isinstance(new_settings, dict) else {}
+            ensure_role_schema(current_settings)
+            if ensure_discussion_targets_schema(current_settings):
+                try:
+                    save_json(SETTINGS_FILE, current_settings)
+                except Exception:
+                    pass
+            migrated_manual = _migrate_legacy_manual_queue_to_db()
+            if migrated_manual:
+                logger.info(f"✅ migrated {migrated_manual} legacy manual_queue tasks to manual_tasks")
             status = current_settings.get('status')
             if status == 'running':
                 await manage_clients(api_id, api_hash)
 
+                await process_discussion_start_queue()
+                await process_discussion_queue()
                 await process_profile_tasks(api_id, api_hash)
                 await process_scenarios()
                 await process_outbound_queue()

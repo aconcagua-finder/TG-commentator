@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Обсуждения · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="app-page-head mb-3">
+    <h1 class="h3 mb-0">Обсуждения</h1>
+    <a class="btn btn-primary" href="/discussions/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+  </div>
+  {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
+  <p class="text-muted">Модуль для чатов: оператор пишет сообщение с префиксом — выбранные аккаунты разыгрывают диалог по общему вектору и лимитам.</p>
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle app-table">
+          <caption class="visually-hidden">Цели обсуждений</caption>
+          <thead>
+            <tr>
+              <th>Цель</th>
+              <th>Оператор</th>
+              <th>Статус</th>
+              <th>Триггер</th>
+              <th>Реплики</th>
+              <th>Аккаунты</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in targets %}
+              <tr>
+                <td>
+                  {% set title = (t.get('title') or '').strip() %}
+                  <div class="d-flex align-items-center gap-2">
+                    <div class="app-clamp-1 fw-semibold" title="{{ title or 'Без названия' }}">{{ title or 'Без названия' }}</div>
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-secondary app-icon-btn"
+                      data-target-id="{{ t.get('id') }}"
+                      data-current-title="{{ title }}"
+                      onclick="window.__discussionRenameFromButton(this)"
+                      data-bs-toggle="tooltip"
+                      data-bs-title="Переименовать"
+                      aria-label="Переименовать"
+                      title="Переименовать"
+                    >
+                      <i class="bi bi-pencil-square" aria-hidden="true"></i>
+                    </button>
+                  </div>
+                  <form id="renameForm-{{ t.get('id') }}" method="post" action="/discussions/targets/{{ t.get('id') }}/rename" class="d-none">
+                    <input type="hidden" name="title" value="" />
+                    <input type="hidden" name="next" value="/discussions" />
+                  </form>
+                  {% set chat_name = t.get('chat_name') or '—' %}
+                  <div class="app-clamp-1 text-muted small" title="{{ chat_name }}">{{ chat_name }}</div>
+                  {% set chat_id = (t.get('chat_id') or '') %}
+                  {% set linked_id = (t.get('linked_chat_id') or '') %}
+                  {% set has_linked = linked_id and linked_id != chat_id %}
+                  {% if has_linked %}
+                    {% set linked_name = (t.get('linked_chat_name') or '') %}
+                    <div class="app-clamp-1 text-muted small" title="{{ linked_name or linked_id }}">Обсуждение: {{ linked_name or linked_id }}</div>
+                  {% endif %}
+                  {% if t.get('chat_username') %}
+                    <div class="text-muted small">@{{ t.get('chat_username') }}</div>
+                  {% endif %}
+                  <div class="text-muted small mono">
+                    {{ chat_id }}{% if has_linked %} · linked={{ linked_id }}{% endif %}
+                  </div>
+                </td>
+                <td class="mono small">
+                  {{ t.get('operator_session_name') or '—' }}
+                  {% if t.get('enabled', True) %}
+                    <div><span class="badge text-bg-success">вкл</span></div>
+                  {% else %}
+                    <div><span class="badge text-bg-secondary">выкл</span></div>
+                  {% endif %}
+                </td>
+                <td class="small">
+                  {% set ls = t.get('last_session') %}
+                  {% if ls %}
+                    {% set st = (ls.get('status') or '') %}
+                    {% set label = {'running':'в процессе','completed':'завершено','planned':'запланировано','failed':'ошибка','canceled':'отменено'}.get(st, st or '—') %}
+                    {% set color = 'secondary' %}
+                    {% if st == 'running' %}
+                      {% set color = 'primary' %}
+                    {% elif st == 'completed' %}
+                      {% set color = 'success' %}
+                    {% elif st == 'failed' %}
+                      {% set color = 'danger' %}
+                    {% elif st == 'planned' %}
+                      {% set color = 'warning' %}
+                    {% endif %}
+                    <span class="badge text-bg-{{ color }}" title="{{ st }}">{{ label }}</span>
+                    {% if st == 'planned' and ls.get('schedule_at') %}
+                      <div class="text-muted small mono">next: {{ ls.get('schedule_at')|human_dt }}</div>
+                    {% elif st == 'running' and ls.get('started_at') %}
+                      <div class="text-muted small mono">start: {{ ls.get('started_at')|human_dt }}</div>
+                    {% elif ls.get('finished_at') %}
+                      <div class="text-muted small mono">end: {{ ls.get('finished_at')|human_dt }}</div>
+                    {% endif %}
+                    {% if ls.get('error') %}
+                      <div class="text-danger small app-clamp-1" title="{{ ls.get('error') }}">{{ ls.get('error') }}</div>
+                    {% endif %}
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+                <td class="mono small">{{ t.get('start_prefix') or '∅' }}</td>
+                <td class="small">
+                  <span class="badge text-bg-light border">{{ t.get('turns_min', 0) }}–{{ t.get('turns_max', 0) }}</span>
+                  <div class="text-muted small">задержка: {{ t.get('initial_delay_min', 0) }}–{{ t.get('initial_delay_max', 0) }}с</div>
+                  <div class="text-muted small">пауза: {{ t.get('delay_between_min', 0) }}–{{ t.get('delay_between_max', 0) }}с</div>
+                </td>
+                <td class="small">
+                  {% set aa = t.get('assigned_accounts', []) %}
+                  {% if aa and aa|length > 0 %}
+                    <span class="badge text-bg-light border">{{ aa|length }}</span>
+                  {% else %}
+                    <span class="text-muted">не выбрано</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a
+                    class="btn btn-sm btn-outline-primary app-icon-btn"
+                    href="/discussions/targets/{{ t.get('id') }}"
+                    data-bs-toggle="tooltip"
+                    data-bs-title="Открыть"
+                    aria-label="Открыть"
+                    title="Открыть"
+                  >
+                    <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                  </a>
+                </td>
+              </tr>
+            {% endfor %}
+            {% if targets|length == 0 %}
+              <tr><td colspan="7" class="text-center text-muted py-4">Пока пусто.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script>
+    (() => {
+      window.__discussionRenameFromButton = (btn) => {
+        try {
+          const id = btn?.getAttribute("data-target-id");
+          if (!id) return;
+          const current = btn.getAttribute("data-current-title") || "";
+          const nextTitle = window.prompt("Название цели", current);
+          if (nextTitle === null) return;
+          const form = document.getElementById(`renameForm-${id}`);
+          if (!form) return;
+          const input = form.querySelector("input[name='title']");
+          if (!input) return;
+          input.value = String(nextTitle).trim();
+          form.submit();
+        } catch (e) {
+          // noop
+        }
+      };
+    })();
+  </script>
+{% endblock %}

@@ -1,0 +1,846 @@
+{% extends "base.html" %}
+{% block title %}{{ target.chat_name }} · Обсуждения{% endblock %}
+{% block content %}
+  {% import "macros.html" as ui %}
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      {% set title = (target.get('title','') or '').strip() %}
+      {% set chat_name = (target.get('chat_name') or '—') %}
+      {% set chat_username = (target.get('chat_username') or '') %}
+      {% set chat_id = (target.get('chat_id') or '') %}
+      {% set linked_chat_id = (target.get('linked_chat_id') or '') %}
+      {% set linked_chat_name = (target.get('linked_chat_name') or '') %}
+      {% set linked_chat_username = (target.get('linked_chat_username') or '') %}
+      {% set has_linked = linked_chat_id and linked_chat_id != chat_id %}
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <h1 class="h3 mb-1">{{ title or 'Без названия' }}</h1>
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-secondary app-icon-btn"
+          onclick="window.__toggleDiscussionTitleEdit(true)"
+          data-bs-toggle="tooltip"
+          data-bs-title="Переименовать"
+          aria-label="Переименовать"
+          title="Переименовать"
+        >
+          <i class="bi bi-pencil-square" aria-hidden="true"></i>
+        </button>
+      </div>
+      <form
+        method="post"
+        action="/discussions/targets/{{ target.id }}/rename"
+        class="mt-2 d-none"
+        id="discussionTitleEdit"
+      >
+        <input type="hidden" name="next" value="/discussions/targets/{{ target.id }}" />
+        <div class="input-group input-group-sm" style="max-width: 560px;">
+          <input
+            class="form-control"
+            name="title"
+            value="{{ title }}"
+            placeholder="Название цели…"
+            autocomplete="off"
+          />
+          <button class="btn btn-primary" type="submit">Сохранить</button>
+          <button class="btn btn-outline-secondary" type="button" onclick="window.__toggleDiscussionTitleEdit(false)">Отмена</button>
+        </div>
+      </form>
+
+      {% if has_linked %}
+        <div class="text-muted small">
+          Канал: {{ chat_name }}{% if chat_username %} <span class="mono">@{{ chat_username }}</span>{% endif %}
+        </div>
+        <div class="text-muted small">
+          Обсуждение: {{ linked_chat_name or linked_chat_id }}{% if linked_chat_username %} <span class="mono">@{{ linked_chat_username }}</span>{% endif %}
+        </div>
+        <div class="text-muted small mono">{{ chat_id }} · linked={{ linked_chat_id }}</div>
+      {% else %}
+        <div class="text-muted small">
+          Чат: {{ chat_name }}{% if chat_username %} <span class="mono">@{{ chat_username }}</span>{% endif %}
+        </div>
+        <div class="text-muted small mono">{{ chat_id }}</div>
+      {% endif %}
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <form method="post" action="/discussions/targets/{{ target.id }}/refresh">
+        <input type="hidden" name="auto_pause" value="1" />
+        <button class="btn btn-outline-secondary" type="submit">
+          <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Обновить чат
+        </button>
+      </form>
+      <form method="post" action="/discussions/targets/{{ target.id }}/delete" onsubmit="return confirm('Удалить цель обсуждений?');">
+        <button class="btn btn-outline-danger" type="submit">Удалить</button>
+      </form>
+    </div>
+  </div>
+
+		  <div class="card mb-3">
+		    <div class="card-body">
+	      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+	        <div>
+	          <div class="d-flex align-items-center gap-2 flex-wrap">
+	            <span class="badge text-bg-primary">Сцена 1</span>
+	            <h2 class="h5 mb-0">Старт обсуждения</h2>
+	          </div>
+	          <div class="text-muted small mt-1">
+	            Сообщение будет отправлено в чат обсуждений (linked) от аккаунта оператора:
+	            <span class="mono">{{ target.get('operator_session_name','') or '—' }}</span>.
+	            Сцены 2+ настраиваются ниже.
+	          </div>
+	        </div>
+	      </div>
+
+		      <form method="post" action="/discussions/targets/{{ target.id }}/start" class="row g-3 mt-1">
+		        <div class="col-12">
+		          <label class="form-label app-label" for="discussion_seed_text">
+		            <span class="app-label-text">Фраза оператора (сцена 1)</span>
+		            {{ ui.tip("Это сообщение уйдёт в чат и станет «мыслью» для обсуждения (сцена 1). Боты начнут отвечать по настройкам цели. Если обсуждение уже идёт — текущее будет остановлено и начнётся новое.") }}
+		          </label>
+		          <textarea class="form-control" id="discussion_seed_text" name="seed_text" rows="3" required placeholder="Напишите мысль/тезис…">{{ target.get('scene1_operator_text','') }}</textarea>
+		        </div>
+
+        <div class="col-12">
+          <button class="btn btn-primary" type="submit">
+            <i class="bi bi-chat-dots me-1"></i>Отправить и запустить
+          </button>
+        </div>
+      </form>
+		    </div>
+		  </div>
+
+		  <div class="card mb-3">
+		    <div class="card-body">
+		      <form method="post" action="/discussions/targets/{{ target.id }}">
+		        {% set assigned = target.get('assigned_accounts', []) %}
+		        {% set all_selected = assigned and accounts and (assigned|length == accounts|length) %}
+		        <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-2">
+		          <div>
+		            <h2 class="h5 mb-1">Настройки цели</h2>
+		            <div class="text-muted small">Сцены, участники и лимиты. Сохраняется одной кнопкой.</div>
+		          </div>
+		          <div class="d-flex gap-2 flex-wrap">
+		            <button class="btn btn-primary" type="submit">
+		              <i class="bi bi-save me-1" aria-hidden="true"></i>Сохранить настройки
+		            </button>
+		            <a class="btn btn-outline-secondary" href="/discussions">Назад</a>
+		          </div>
+		        </div>
+		        <hr class="my-2" />
+		        <div class="row g-3">
+		          <div class="col-12">
+		            <label class="form-label app-label">
+		              <span class="app-label-text">Название цели</span>
+		              {{ ui.tip("Используется только в админке, чтобы различать несколько целей в одном чате.") }}
+	            </label>
+	            <input class="form-control" name="title" value="{{ target.get('title','') }}" placeholder="Например: Похвалить сервис" />
+	          </div>
+	          <div class="col-12 col-md-4">
+	            <label class="form-label app-label">
+	              <span class="app-label-text">Оператор</span>
+	              {{ ui.tip("Аккаунт, с которого человек отправляет фразу‑старт. Только его сообщения могут запускать обсуждение.") }}
+            </label>
+            <select class="form-select" name="operator_session_name" required>
+              <option value="" disabled {% if not target.get('operator_session_name') %}selected{% endif %}>Выберите аккаунт…</option>
+              {% for a in accounts %}
+                <option value="{{ a.session_name }}" {% if a.session_name == target.get('operator_session_name') %}selected{% endif %}>{{ a.session_name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-12 col-md-4">
+            <label class="form-label app-label">
+              <span class="app-label-text">AI провайдер</span>
+              {{ ui.tip("default = провайдер из общих настроек AI.") }}
+            </label>
+            {% set provider = (target.get('ai_provider','default') or 'default')|lower %}
+            <select class="form-select" name="ai_provider">
+              <option value="default" {% if provider=='default' %}selected{% endif %}>DEFAULT</option>
+              <option value="openai" {% if provider=='openai' %}selected{% endif %}>OPENAI</option>
+              <option value="openrouter" {% if provider=='openrouter' %}selected{% endif %}>OPENROUTER</option>
+              <option value="deepseek" {% if provider=='deepseek' %}selected{% endif %}>DEEPSEEK</option>
+              <option value="gemini" {% if provider=='gemini' %}selected{% endif %}>GEMINI</option>
+            </select>
+          </div>
+
+          <div class="col-12 col-md-4 d-flex align-items-end">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="enabled" id="discussion_enabled" {% if target.get('enabled', True) %}checked{% endif %} />
+              <label class="form-check-label" for="discussion_enabled">Включено</label>
+            </div>
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label app-label">
+              <span class="app-label-text">Префикс старта</span>
+              {{ ui.tip("Если «Старт без префикса» выключен — обсуждение запускается только если оператор отправит сообщение, начинающееся с префикса. Если «Старт без префикса» включён — префикс не обязателен и будет вырезан, если указан.") }}
+            </label>
+            <input class="form-control mono" name="start_prefix" value="{{ target.get('start_prefix','') }}" />
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label app-label">
+              <span class="app-label-text">Старт без префикса</span>
+              {{ ui.tip("Если включено — обсуждение запускается по любому новому сообщению оператора (не ответ). Чтобы запускать из reply — используйте префикс.") }}
+            </label>
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" name="start_on_operator_message" id="start_on_operator_message" {% if target.get('start_on_operator_message', False) %}checked{% endif %} />
+              <label class="form-check-label" for="start_on_operator_message">Включено</label>
+            </div>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label app-label">
+              <span class="app-label-text">Общий вектор (необязательно)</span>
+              {{ ui.tip("Направление обсуждения: стиль, тональность, позиция, рамки. Добавляется в промпт всем участникам.") }}
+            </label>
+            <textarea class="form-control" name="vector_prompt" rows="4" placeholder="Направление обсуждения…">{{ target.get('vector_prompt','') }}</textarea>
+          </div>
+
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Мин. реплик</span>
+              {{ ui.tip("Сколько сообщений ботов будет отправлено в диалоге (минимум).") }}
+            </label>
+            <input class="form-control" type="number" min="1" max="200" step="1" inputmode="numeric" name="turns_min" value="{{ target.get('turns_min',6) }}" />
+          </div>
+	          <div class="col-12 col-md-3">
+	            <label class="form-label app-label">
+	              <span class="app-label-text">Макс. реплик</span>
+	              {{ ui.tip("Сколько сообщений ботов будет отправлено в диалоге (максимум).") }}
+	            </label>
+	            <input class="form-control" type="number" min="1" max="200" step="1" inputmode="numeric" name="turns_max" value="{{ target.get('turns_max',10) }}" />
+	          </div>
+
+		          <div class="col-12 col-md-3">
+		            <label class="form-label app-label">
+		              <span class="app-label-text">Память (реплик)</span>
+		              {{ ui.tip("Сколько последних реплик диалога добавлять в промпт. Помогает помнить контекст и не повторяться. 0 = без памяти.") }}
+		            </label>
+		            <input class="form-control" type="number" min="0" max="200" step="1" inputmode="numeric" name="memory_turns" value="{{ target.get('memory_turns',20) }}" />
+		          </div>
+
+              <div class="col-12 col-md-3">
+                <label class="form-label app-label">
+                  <span class="app-label-text">Медленное вступление (мин)</span>
+                  {{ ui.tip("Если > 0 — аккаунты будут вступать в этот чат/канал постепенно: максимум 1 аккаунт раз в N минут. 0 = сразу.") }}
+                </label>
+                <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="slow_join_interval_mins" value="{{ target.get('slow_join_interval_mins',0) }}" />
+              </div>
+
+		          <div class="col-12 col-md-3">
+		            <label class="form-label app-label">
+		              <span class="app-label-text">Старт (мин, сек)</span>
+		              {{ ui.tip("Задержка перед первой репликой после сообщения оператора.") }}
+		            </label>
+            <input class="form-control" type="number" min="0" max="86400" step="1" inputmode="numeric" name="initial_delay_min" value="{{ target.get('initial_delay_min',10) }}" />
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Старт (макс, сек)</span>
+              {{ ui.tip("Задержка перед первой репликой после сообщения оператора (верхняя граница).") }}
+            </label>
+            <input class="form-control" type="number" min="0" max="86400" step="1" inputmode="numeric" name="initial_delay_max" value="{{ target.get('initial_delay_max',40) }}" />
+          </div>
+
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Пауза (мин, сек)</span>
+              {{ ui.tip("Пауза между репликами ботов.") }}
+            </label>
+            <input class="form-control" type="number" min="0" max="86400" step="1" inputmode="numeric" name="delay_between_min" value="{{ target.get('delay_between_min',20) }}" />
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Пауза (макс, сек)</span>
+              {{ ui.tip("Пауза между репликами ботов (верхняя граница).") }}
+            </label>
+	            <input class="form-control" type="number" min="0" max="86400" step="1" inputmode="numeric" name="delay_between_max" value="{{ target.get('delay_between_max',80) }}" />
+	          </div>
+
+			          <div class="col-12">
+			            <hr class="my-2" />
+			            <div class="accordion" id="discussionGoalAccordion">
+			              <div class="accordion-item">
+			                <h2 class="accordion-header" id="discussionParticipantsHeading">
+			                  <button
+			                    class="accordion-button collapsed"
+			                    type="button"
+			                    data-bs-toggle="collapse"
+			                    data-bs-target="#discussionParticipantsCollapse"
+			                    aria-expanded="false"
+			                    aria-controls="discussionParticipantsCollapse"
+			                  >
+			                    Участники (сцена 1)
+			                  </button>
+			                </h2>
+			                <div id="discussionParticipantsCollapse" class="accordion-collapse collapse" aria-labelledby="discussionParticipantsHeading">
+			                  <div class="accordion-body">
+			                    <div class="d-flex align-items-center gap-3 flex-wrap mb-2">
+			                      <div class="form-check">
+			                        <input class="form-check-input" type="checkbox" name="select_all" value="1" id="select_all_accounts" {% if all_selected %}checked{% endif %} />
+			                        <label class="form-check-label" for="select_all_accounts">Выбрать все</label>
+			                      </div>
+			                      <button class="btn btn-sm btn-outline-primary" type="submit" formaction="/discussions/targets/{{ target.id }}/join" formmethod="post">Повторить вступление</button>
+			                      <div class="text-muted small d-flex align-items-center gap-2">
+			                        <span>Если ничего не выбрано — обсуждение не запустится.</span>
+			                        {{ ui.tip("Эти аккаунты будут участниками диалога, который запускается сообщением оператора (сцена 1).") }}
+			                      </div>
+			                    </div>
+			                    <div class="text-muted small mb-2">При повторном вступлении комментатор будет временно остановлен и запущен снова (если он сейчас работает).</div>
+			                    <div class="row g-2">
+			                      {% for a in accounts %}
+			                        <div class="col-12 col-md-4">
+			                          <div class="form-check">
+			                            <input class="form-check-input js-account-checkbox" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
+			                            <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
+			                          </div>
+			                          {% set full_name = (a.get('first_name','') ~ ' ' ~ a.get('last_name','')).strip() %}
+			                          {% if full_name or a.get('username') %}
+			                            <div class="text-muted small">
+			                              {% if full_name %}{{ full_name }}{% endif %}
+			                              {% if a.get('username') %}{% if full_name %} · {% endif %}@{{ a.get('username') }}{% endif %}
+			                            </div>
+			                          {% endif %}
+			                          {% set st_main = join_status.get(a.session_name, {}).get(target.get('chat_id')|string) %}
+			                          {% set st_linked = join_status.get(a.session_name, {}).get(target.get('linked_chat_id')|string) %}
+			                          {% if st_main or st_linked %}
+			                            <div class="small mt-1">
+			                              {% if st_main %}
+			                                {% set sm = st_main.get('status','') %}
+			                                <span class="badge text-bg-{{ 'success' if sm=='joined' else 'warning' }}">{{ 'main: ' ~ sm }}</span>
+			                              {% endif %}
+			                              {% if st_linked %}
+			                                {% set sl = st_linked.get('status','') %}
+			                                <span class="badge text-bg-{{ 'success' if sl=='joined' else 'warning' }}">{{ 'linked: ' ~ sl }}</span>
+			                              {% endif %}
+			                            </div>
+			                          {% endif %}
+			                          {% if st_main and st_main.get('status') != 'joined' and st_main.get('last_error') %}
+			                            <div class="text-danger small">{{ st_main.get('last_error') }}</div>
+			                          {% endif %}
+			                          {% if st_linked and st_linked.get('status') != 'joined' and st_linked.get('last_error') %}
+			                            <div class="text-danger small">{{ st_linked.get('last_error') }}</div>
+			                          {% endif %}
+			                          <button class="btn btn-sm btn-outline-secondary mt-1" type="submit" name="session_name" value="{{ a.session_name }}" formaction="/discussions/targets/{{ target.id }}/join" formmethod="post">Повторить</button>
+			                        </div>
+			                      {% endfor %}
+			                    </div>
+			                  </div>
+			                </div>
+			              </div>
+			              <div class="accordion-item">
+			                <h2 class="accordion-header" id="discussionScenesHeading">
+			                  <button
+			                    class="accordion-button"
+		                    type="button"
+		                    data-bs-toggle="collapse"
+		                    data-bs-target="#discussionScenesCollapse"
+		                    aria-expanded="true"
+		                    aria-controls="discussionScenesCollapse"
+		                  >
+		                    Сцены 2+ (продолжение беседы)
+		                  </button>
+		                </h2>
+		                <div id="discussionScenesCollapse" class="accordion-collapse collapse show" aria-labelledby="discussionScenesHeading">
+		                  <div class="accordion-body">
+		                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+		                      <div class="text-muted small">
+		                        Сцена 1 — стартовая фраза (карточка выше). Здесь можно добавить сцены 2+:
+		                        система отправит фразу оператора и продолжит обсуждение с новыми настройками.
+		                        Пустые поля = использовать настройки цели.
+		                      </div>
+			                      <button class="btn btn-sm btn-outline-primary js-add-scene-btn" type="button" data-add-scene-btn="1">
+			                        <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Добавить сцену
+			                      </button>
+			                    </div>
+
+		                    {% set scenes = target.get('scenes', []) %}
+		                    <div id="scenes_container" class="d-flex flex-column gap-2 mt-3">
+		                      {% if scenes and scenes|length > 0 %}
+		                        {% for sc in scenes %}
+		                          <div class="border rounded-3 p-3" data-scene-row>
+		                            <input type="hidden" name="scene_id" value="{{ sc.get('id','') }}" />
+		                            <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+		                              <div class="d-flex align-items-center gap-2 flex-wrap">
+		                                <span class="badge text-bg-light border">Сцена <span class="js-scene-num">{{ loop.index + 1 }}</span></span>
+		                                <input class="form-control form-control-sm" name="scene_title" value="{{ sc.get('title','') }}" placeholder="Название (необязательно)" style="max-width: 320px;" />
+		                              </div>
+		                              <button class="btn btn-sm btn-outline-danger" type="button" onclick="window.__removeSceneRow(this)">Удалить</button>
+		                            </div>
+
+		                            <div class="row g-2 mt-1">
+		                              <div class="col-12">
+		                                <label class="form-label app-label mb-1">
+		                                  <span class="app-label-text">Фраза оператора (сцена {{ loop.index + 1 }})</span>
+		                                  {{ ui.tip("Эта фраза будет отправлена в чат от аккаунта оператора после завершения предыдущей сцены и станет новой «мыслью» для обсуждения.") }}
+		                                </label>
+		                                <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…">{{ sc.get('operator_text','') }}</textarea>
+		                              </div>
+
+		                              <div class="col-12">
+		                                <label class="form-label app-label mb-1">
+		                                  <span class="app-label-text">Вектор сцены (опционально)</span>
+		                                  {{ ui.tip("Если пусто — будет использован общий вектор цели. Можно менять тональность/позицию между сценами.") }}
+		                                </label>
+		                                <textarea class="form-control" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…">{{ sc.get('vector_prompt','') }}</textarea>
+		                              </div>
+
+		                              <div class="col-12 col-md-3">
+		                                <label class="form-label app-label mb-1">
+		                                  <span class="app-label-text">Мин. реплик</span>
+		                                </label>
+		                                <input class="form-control form-control-sm" type="number" min="1" max="200" step="1" inputmode="numeric" name="scene_turns_min" value="{{ sc.get('turns_min','') }}" placeholder="(как в цели)" />
+		                              </div>
+		                              <div class="col-12 col-md-3">
+		                                <label class="form-label app-label mb-1">
+		                                  <span class="app-label-text">Макс. реплик</span>
+		                                </label>
+		                                <input class="form-control form-control-sm" type="number" min="1" max="200" step="1" inputmode="numeric" name="scene_turns_max" value="{{ sc.get('turns_max','') }}" placeholder="(как в цели)" />
+		                              </div>
+
+		                              <div class="col-12 col-md-3">
+		                                <label class="form-label app-label mb-1">
+		                                  <span class="app-label-text">Старт (мин, сек)</span>
+		                                </label>
+		                                <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_initial_delay_min" value="{{ sc.get('initial_delay_min','') }}" placeholder="(как в цели)" />
+		                              </div>
+		                              <div class="col-12 col-md-3">
+		                                <label class="form-label app-label mb-1">
+		                                  <span class="app-label-text">Старт (макс, сек)</span>
+		                                </label>
+		                                <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_initial_delay_max" value="{{ sc.get('initial_delay_max','') }}" placeholder="(как в цели)" />
+		                              </div>
+
+		                              <div class="col-12 col-md-3">
+		                                <label class="form-label app-label mb-1">
+		                                  <span class="app-label-text">Пауза (мин, сек)</span>
+		                                </label>
+		                                <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_delay_between_min" value="{{ sc.get('delay_between_min','') }}" placeholder="(как в цели)" />
+		                              </div>
+		                              <div class="col-12 col-md-3">
+		                                <label class="form-label app-label mb-1">
+		                                  <span class="app-label-text">Пауза (макс, сек)</span>
+		                                </label>
+		                                <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_delay_between_max" value="{{ sc.get('delay_between_max','') }}" placeholder="(как в цели)" />
+		                              </div>
+
+		                              <div class="col-12">
+		                                <label class="form-label app-label mb-1">
+		                                  <span class="app-label-text">Аккаунты‑участники сцены</span>
+		                                  {{ ui.tip("По умолчанию выбраны как в цели. Можно переопределить состав участников только для этой сцены.") }}
+		                                </label>
+
+		                                {% set saccts = sc.get('assigned_accounts') %}
+		                                {% set scene_selected = saccts if saccts else assigned %}
+		                                <div class="d-flex align-items-center gap-3 flex-wrap mb-1">
+		                                  <div class="form-check">
+		                                    <input class="form-check-input js-scene-select-all" type="checkbox" id="scene_select_all_{{ sc.get('id','') }}" data-scene-id="{{ sc.get('id','') }}" />
+		                                    <label class="form-check-label" for="scene_select_all_{{ sc.get('id','') }}">Выбрать все</label>
+		                                  </div>
+		                                  <button class="btn btn-sm btn-outline-secondary" type="button" data-scene-copy-from-target="{{ sc.get('id','') }}">Как в цели</button>
+		                                  <div class="text-muted small">
+		                                    <span data-scene-count="{{ sc.get('id','') }}"></span>
+		                                  </div>
+		                                </div>
+		                                <div class="row g-2">
+		                                  {% for a in accounts %}
+		                                    <div class="col-12 col-md-4">
+		                                      <div class="form-check">
+		                                        <input
+		                                          class="form-check-input js-scene-account-checkbox"
+		                                          type="checkbox"
+		                                          data-scene-id="{{ sc.get('id','') }}"
+		                                          name="scene_assigned_accounts_{{ sc.get('id','') }}"
+		                                          value="{{ a.session_name }}"
+		                                          id="scene_{{ sc.get('id','') }}_acc_{{ a.session_name }}"
+		                                          {% if a.session_name in scene_selected %}checked{% endif %}
+		                                        />
+		                                        <label class="form-check-label mono" for="scene_{{ sc.get('id','') }}_acc_{{ a.session_name }}">{{ a.session_name }}</label>
+		                                      </div>
+		                                    </div>
+		                                  {% endfor %}
+		                                </div>
+		                              </div>
+		                            </div>
+		                          </div>
+		                        {% endfor %}
+		                      {% else %}
+		                        <div class="text-muted small" id="no_scenes_hint">Сцен нет — обсуждение будет одним этапом.</div>
+		                      {% endif %}
+		                    </div>
+
+		                    <div class="d-flex justify-content-end mt-3">
+		                      <button class="btn btn-sm btn-outline-primary js-add-scene-btn" type="button" data-add-scene-btn="1">
+		                        <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Добавить сцену
+		                      </button>
+		                    </div>
+
+		                    <template id="scene_row_tpl">
+		                      <div class="border rounded-3 p-3" data-scene-row>
+		                        <input type="hidden" name="scene_id" value="" />
+		                        <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+		                          <div class="d-flex align-items-center gap-2 flex-wrap">
+		                            <span class="badge text-bg-light border">Сцена <span class="js-scene-num">2</span></span>
+		                            <input class="form-control form-control-sm" name="scene_title" value="" placeholder="Название (необязательно)" style="max-width: 320px;" />
+		                          </div>
+		                          <button class="btn btn-sm btn-outline-danger" type="button" onclick="window.__removeSceneRow(this)">Удалить</button>
+		                        </div>
+		                        <div class="row g-2 mt-1">
+		                          <div class="col-12">
+		                            <label class="form-label app-label mb-1">
+		                              <span class="app-label-text">Фраза оператора</span>
+		                            </label>
+		                            <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…"></textarea>
+		                          </div>
+		                          <div class="col-12">
+		                            <label class="form-label app-label mb-1">
+		                              <span class="app-label-text">Вектор сцены (опционально)</span>
+		                            </label>
+		                            <textarea class="form-control" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…"></textarea>
+		                          </div>
+		                          <div class="col-12 col-md-3">
+		                            <label class="form-label app-label mb-1"><span class="app-label-text">Мин. реплик</span></label>
+		                            <input class="form-control form-control-sm" type="number" min="1" max="200" step="1" inputmode="numeric" name="scene_turns_min" placeholder="(как в цели)" />
+		                          </div>
+		                          <div class="col-12 col-md-3">
+		                            <label class="form-label app-label mb-1"><span class="app-label-text">Макс. реплик</span></label>
+		                            <input class="form-control form-control-sm" type="number" min="1" max="200" step="1" inputmode="numeric" name="scene_turns_max" placeholder="(как в цели)" />
+		                          </div>
+		                          <div class="col-12 col-md-3">
+		                            <label class="form-label app-label mb-1"><span class="app-label-text">Старт (мин, сек)</span></label>
+		                            <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_initial_delay_min" placeholder="(как в цели)" />
+		                          </div>
+		                          <div class="col-12 col-md-3">
+		                            <label class="form-label app-label mb-1"><span class="app-label-text">Старт (макс, сек)</span></label>
+		                            <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_initial_delay_max" placeholder="(как в цели)" />
+		                          </div>
+		                          <div class="col-12 col-md-3">
+		                            <label class="form-label app-label mb-1"><span class="app-label-text">Пауза (мин, сек)</span></label>
+		                            <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_delay_between_min" placeholder="(как в цели)" />
+		                          </div>
+		                          <div class="col-12 col-md-3">
+		                            <label class="form-label app-label mb-1"><span class="app-label-text">Пауза (макс, сек)</span></label>
+		                            <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_delay_between_max" placeholder="(как в цели)" />
+		                          </div>
+		                          <div class="col-12">
+		                            <label class="form-label app-label mb-1">
+		                              <span class="app-label-text">Аккаунты‑участники сцены</span>
+		                            </label>
+		                            <div class="d-flex align-items-center gap-3 flex-wrap mb-1">
+		                              <div class="form-check">
+		                                <input class="form-check-input js-scene-select-all" type="checkbox" id="scene_select_all___SCENE_ID__" data-scene-id="__SCENE_ID__" data-scene-select-all-template="1" />
+		                                <label class="form-check-label" for="scene_select_all___SCENE_ID__" data-scene-select-all-label-template="1">Выбрать все</label>
+		                              </div>
+		                              <button class="btn btn-sm btn-outline-secondary" type="button" data-scene-copy-from-target="__SCENE_ID__" data-scene-copy-from-target-template="1">Как в цели</button>
+		                              <div class="text-muted small">
+		                                <span data-scene-count="__SCENE_ID__" data-scene-count-template="1"></span>
+		                              </div>
+		                            </div>
+		                            <div class="row g-2">
+		                              {% for a in accounts %}
+		                                <div class="col-12 col-md-4">
+		                                  <div class="form-check">
+		                                    <input
+		                                      class="form-check-input js-scene-account-checkbox"
+		                                      type="checkbox"
+		                                      data-scene-id="__SCENE_ID__"
+		                                      data-scene-acc-template="1"
+		                                      name="scene_assigned_accounts___SCENE_ID__"
+		                                      value="{{ a.session_name }}"
+		                                      id="scene___SCENE_ID___acc_{{ a.session_name }}"
+		                                    />
+		                                    <label class="form-check-label mono" for="scene___SCENE_ID___acc_{{ a.session_name }}" data-scene-acc-label-template="1">{{ a.session_name }}</label>
+		                                  </div>
+		                                </div>
+		                              {% endfor %}
+		                            </div>
+		                          </div>
+		                        </div>
+		                      </div>
+			                    </template>
+			                  </div>
+			                </div>
+			              </div>
+			            </div>
+			          </div>
+
+		          <div class="col-12">
+		            <button class="btn btn-primary" type="submit">Сохранить</button>
+		            <a class="btn btn-outline-secondary" href="/discussions">Назад</a>
+	          </div>
+        </div>
+      </form>
+	    </div>
+	  </div>
+
+	 	  <div class="card mb-3">
+		    <div class="card-body">
+		      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+		        <div>
+		          <h2 class="h5 mb-1">История обсуждений</h2>
+		          <div class="text-muted small">Каждый запуск сохраняется отдельной сессией (со снапшотом настроек и репликами).</div>
+		        </div>
+		        <a class="btn btn-sm btn-outline-secondary" href="/discussions/targets/{{ target.id }}">
+		          <i class="bi bi-arrow-repeat me-1"></i>Обновить
+		        </a>
+		      </div>
+
+		      {% if sessions and sessions|length > 0 %}
+		        <div class="table-responsive mt-3">
+		          <table class="table table-sm align-middle">
+		            <thead>
+		              <tr>
+		                <th class="mono">ID</th>
+		                <th>Статус</th>
+		                <th class="mono">Создано</th>
+		                <th class="mono">Старт</th>
+		                <th class="mono">Финиш</th>
+		                <th>Тема</th>
+		                <th></th>
+		              </tr>
+		            </thead>
+		            <tbody>
+		              {% for s in sessions %}
+		                {% set st = (s.status or '') %}
+		                {% set color = 'secondary' %}
+		                {% if st == 'running' %}
+		                  {% set color = 'primary' %}
+		                {% elif st == 'completed' %}
+		                  {% set color = 'success' %}
+		                {% elif st == 'failed' %}
+		                  {% set color = 'danger' %}
+		                {% elif st == 'planned' %}
+		                  {% set color = 'warning' %}
+		                {% endif %}
+		                <tr>
+		                  <td class="mono">#{{ s.id }}</td>
+		                  <td>
+		                    <span class="badge text-bg-{{ color }}">{{ st or '—' }}</span>
+		                    {% if st == 'planned' and s.schedule_at %}
+		                      <div class="text-muted small">next: <span class="mono">{{ s.schedule_at|human_dt }}</span></div>
+		                    {% endif %}
+		                    {% if s.error and st in ['failed'] %}
+		                      <div class="text-danger small">{{ s.error }}</div>
+		                    {% endif %}
+		                  </td>
+		                  <td class="mono">{{ s.created_at|human_dt }}</td>
+		                  <td class="mono">{{ s.started_at|human_dt }}</td>
+		                  <td class="mono">{{ s.finished_at|human_dt }}</td>
+		                  <td>
+		                    <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px;">
+		                      {{ (s.seed_text or '—') }}
+		                    </div>
+		                    <div class="text-muted small d-flex gap-2 flex-wrap">
+		                      {% if s.operator_session_name %}<span class="mono">op={{ s.operator_session_name }}</span>{% endif %}
+		                      {% if s.messages_count is not none %}<span>msgs={{ s.messages_count }}</span>{% endif %}
+		                      {% if s.chat_id %}<span class="mono">chat={{ s.chat_id }}</span>{% endif %}
+		                    </div>
+		                  </td>
+		                  <td class="text-end">
+		                    <a class="btn btn-sm btn-outline-secondary" href="/discussions/sessions/{{ s.id }}">Открыть</a>
+		                  </td>
+		                </tr>
+		              {% endfor %}
+		            </tbody>
+		          </table>
+		        </div>
+		      {% else %}
+		        <div class="text-muted small mt-3">Пока нет запусков для этой цели.</div>
+		      {% endif %}
+		    </div>
+		  </div>
+
+		  <script>
+		    (() => {
+		      window.__toggleDiscussionTitleEdit = (show) => {
+		        const box = document.getElementById("discussionTitleEdit");
+	        if (!box) return;
+        const wantShow = (show === undefined) ? box.classList.contains("d-none") : Boolean(show);
+        box.classList.toggle("d-none", !wantShow);
+        if (wantShow) {
+          const input = box.querySelector("input[name='title']");
+          if (input) {
+            input.focus();
+            input.select();
+          }
+	        }
+	      };
+
+		      const scenesContainer = document.getElementById("scenes_container");
+		      const scenesTpl = document.getElementById("scene_row_tpl");
+		      const addSceneBtns = Array.from(document.querySelectorAll(".js-add-scene-btn"));
+		      const noScenesHint = document.getElementById("no_scenes_hint");
+
+	      const genSceneId = () => {
+	        try {
+	          if (window.crypto && typeof window.crypto.randomUUID === "function") {
+	            return window.crypto.randomUUID().replaceAll("-", "");
+	          }
+	        } catch (e) {}
+	        return `${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
+	      };
+
+	      const getTargetCheckedSessions = () => {
+	        return new Set(
+	          Array.from(document.querySelectorAll(".js-account-checkbox"))
+	            .filter((b) => b.checked)
+	            .map((b) => String(b.value || "").trim())
+	            .filter(Boolean)
+	        );
+	      };
+
+	      const updateSceneParticipantsUi = (row) => {
+	        if (!row) return;
+	        const boxes = Array.from(row.querySelectorAll(".js-scene-account-checkbox"));
+	        const selectAll = row.querySelector(".js-scene-select-all");
+	        const checked = boxes.filter((b) => b.checked).length;
+
+	        if (selectAll) {
+	          if (!boxes.length) {
+	            selectAll.checked = false;
+	            selectAll.indeterminate = false;
+	          } else if (checked === 0) {
+	            selectAll.checked = false;
+	            selectAll.indeterminate = false;
+	          } else if (checked === boxes.length) {
+	            selectAll.checked = true;
+	            selectAll.indeterminate = false;
+	          } else {
+	            selectAll.checked = false;
+	            selectAll.indeterminate = true;
+	          }
+	        }
+
+	        const countEl = row.querySelector("[data-scene-count]");
+	        if (countEl) countEl.textContent = boxes.length ? `${checked} выбрано` : "";
+	      };
+
+	      const applyTargetSelectionToSceneRow = (row) => {
+	        if (!row) return;
+	        const targetSet = getTargetCheckedSessions();
+	        Array.from(row.querySelectorAll(".js-scene-account-checkbox")).forEach((b) => {
+	          b.checked = targetSet.has(String(b.value || "").trim());
+	        });
+	        updateSceneParticipantsUi(row);
+	      };
+
+	      const initSceneParticipants = (row) => {
+	        if (!row || row.dataset.sceneParticipantsInit === "1") return;
+	        row.dataset.sceneParticipantsInit = "1";
+
+	        const selectAll = row.querySelector(".js-scene-select-all");
+	        const boxes = Array.from(row.querySelectorAll(".js-scene-account-checkbox"));
+	        const copyBtn = row.querySelector("[data-scene-copy-from-target]");
+
+	        if (selectAll) {
+	          selectAll.addEventListener("change", () => {
+	            boxes.forEach((b) => {
+	              b.checked = selectAll.checked;
+	            });
+	            selectAll.indeterminate = false;
+	            updateSceneParticipantsUi(row);
+	          });
+	        }
+
+	        boxes.forEach((b) => b.addEventListener("change", () => updateSceneParticipantsUi(row)));
+
+	        if (copyBtn) {
+	          copyBtn.addEventListener("click", () => applyTargetSelectionToSceneRow(row));
+	        }
+
+	        updateSceneParticipantsUi(row);
+	      };
+
+	      const applySceneIdToTemplateRow = (row, sceneId) => {
+	        if (!row || !sceneId) return;
+	        row.dataset.sceneId = sceneId;
+	        const idInput = row.querySelector("input[name='scene_id']");
+	        if (idInput) idInput.value = sceneId;
+
+	        const replaceAttr = (el, attr) => {
+	          const v = el.getAttribute(attr);
+	          if (!v || !v.includes("__SCENE_ID__")) return;
+	          el.setAttribute(attr, v.replaceAll("__SCENE_ID__", sceneId));
+	        };
+	        Array.from(row.querySelectorAll("*")).forEach((el) => {
+	          replaceAttr(el, "id");
+	          replaceAttr(el, "name");
+	          replaceAttr(el, "for");
+	          replaceAttr(el, "data-scene-id");
+	          replaceAttr(el, "data-scene-copy-from-target");
+	          replaceAttr(el, "data-scene-count");
+	        });
+	      };
+
+	      const updateSceneNumbers = () => {
+	        if (!scenesContainer) return;
+	        const rows = Array.from(scenesContainer.querySelectorAll("[data-scene-row]"));
+	        rows.forEach((row, idx) => {
+	          const el = row.querySelector(".js-scene-num");
+	          if (el) el.textContent = String(idx + 2);
+	        });
+	        if (noScenesHint) noScenesHint.classList.toggle("d-none", rows.length > 0);
+	      };
+
+	      window.__removeSceneRow = (btn) => {
+	        const row = btn?.closest?.("[data-scene-row]");
+	        if (row) row.remove();
+	        updateSceneNumbers();
+	      };
+
+		      const addScene = () => {
+		        if (!scenesContainer || !scenesTpl) return;
+		        const frag = scenesTpl.content.cloneNode(true);
+		        const row = frag.querySelector("[data-scene-row]");
+		        if (row) {
+		          const sid = genSceneId();
+		          applySceneIdToTemplateRow(row, sid);
+		          applyTargetSelectionToSceneRow(row);
+		          initSceneParticipants(row);
+		        }
+		        scenesContainer.appendChild(frag);
+		        updateSceneNumbers();
+		        const last = scenesContainer.querySelector("[data-scene-row]:last-child textarea[name='scene_operator_text']");
+		        if (last) last.focus();
+		      };
+		      if (addSceneBtns.length && scenesContainer && scenesTpl) {
+		        addSceneBtns.forEach((btn) => btn.addEventListener("click", addScene));
+		      }
+	      updateSceneNumbers();
+	      if (scenesContainer) {
+	        Array.from(scenesContainer.querySelectorAll("[data-scene-row]")).forEach((row) => initSceneParticipants(row));
+	      }
+
+	      const selectAll = document.getElementById("select_all_accounts");
+	      if (selectAll) {
+	        const boxes = Array.from(document.querySelectorAll(".js-account-checkbox"));
+	        const update = () => {
+	          if (!boxes.length) {
+	            selectAll.checked = false;
+	            selectAll.indeterminate = false;
+	            return;
+	          }
+	          const checked = boxes.filter((b) => b.checked).length;
+	          if (checked === 0) {
+	            selectAll.checked = false;
+	            selectAll.indeterminate = false;
+	          } else if (checked === boxes.length) {
+	            selectAll.checked = true;
+	            selectAll.indeterminate = false;
+	          } else {
+	            selectAll.checked = false;
+	            selectAll.indeterminate = true;
+	          }
+	        };
+	        selectAll.addEventListener("change", () => {
+	          boxes.forEach((b) => {
+	            b.checked = selectAll.checked;
+	          });
+	          selectAll.indeterminate = false;
+	        });
+	        boxes.forEach((b) => b.addEventListener("change", update));
+	        update();
+	      }
+	    })();
+	  </script>
+{% endblock %}

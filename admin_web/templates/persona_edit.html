@@ -1,37 +1,107 @@
 {% extends "base.html" %}
-{% block title %}Роль · {{ persona.name }}{% endblock %}
+{% block title %}Роль · {{ role.name }}{% endblock %}
 {% block content %}
   <div class="d-flex justify-content-between align-items-start mb-3">
     <div>
-      <h1 class="h3 mb-1">{{ persona.name }}</h1>
-      <div class="text-muted small mono">{{ persona_id }}</div>
+      <h1 class="h3 mb-1">{{ role.name }}</h1>
+      <div class="text-muted small mono">{{ role_id }}</div>
+      <div class="text-muted small">Пол: {{ role.get('gender','neutral') }} · Эмодзи: {{ role.get('emoji_level','minimal') }}</div>
     </div>
-    <form method="post" action="/personas/{{ persona_id }}/delete" onsubmit="return confirm('Удалить роль?');">
-      <button class="btn btn-outline-danger" type="submit">Удалить</button>
-    </form>
+    <div class="d-flex gap-2">
+      {% if role_id != default_role_id %}
+        <form method="post" action="/personas/{{ role_id }}/default">
+          <button class="btn btn-outline-success" type="submit">Сделать по умолчанию</button>
+        </form>
+      {% else %}
+        <span class="badge text-bg-success align-self-center">роль по умолчанию</span>
+      {% endif %}
+      <form method="post" action="/personas/{{ role_id }}/duplicate">
+        <button class="btn btn-outline-secondary" type="submit">Дублировать</button>
+      </form>
+      <form method="post" action="/personas/{{ role_id }}/delete" onsubmit="return confirm('Удалить роль?');">
+        <button class="btn btn-outline-danger" type="submit" {% if role_id == default_role_id %}disabled{% endif %}>Удалить</button>
+      </form>
+    </div>
   </div>
 
   <div class="card mb-3">
     <div class="card-body">
-      <h2 class="h5">Редактировать</h2>
-      <form method="post" action="/personas/{{ persona_id }}/update">
+      <h2 class="h5">Конструктор роли</h2>
+      <form method="post" action="/personas/{{ role_id }}/update" id="roleEditForm">
         <div class="mb-2">
           <label class="form-label">Название</label>
-          <input class="form-control" name="name" value="{{ persona.name }}" required />
+          <input class="form-control" name="name" value="{{ role.name }}" required />
         </div>
-        <div class="mb-2">
-          <label class="form-label">Системный промпт</label>
-          <textarea class="form-control" name="prompt" rows="10" required>{{ persona.prompt }}</textarea>
-          <div class="form-text">Изменения вступают в силу сразу для аккаунтов, у которых выбрана эта роль.</div>
+
+        <div class="row g-2">
+          <div class="col-12 col-md-6">
+            <label class="form-label">1) Характер</label>
+            <select class="form-select js-random-select" name="character_preset_id" required>
+              {% for pid, preset in role_presets.get('character', []) %}
+                <option value="{{ pid }}" {% if role.get('character_preset_id') == pid %}selected{% endif %}>{{ preset.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">2) Поведение</label>
+            <select class="form-select js-random-select" name="behavior_preset_id" required>
+              {% for pid, preset in role_presets.get('behavior', []) %}
+                <option value="{{ pid }}" {% if role.get('behavior_preset_id') == pid %}selected{% endif %}>{{ preset.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">4) Очеловечивание</label>
+            <select class="form-select js-random-select" name="humanization_preset_id" required>
+              {% for pid, preset in role_presets.get('humanization', []) %}
+                <option value="{{ pid }}" {% if role.get('humanization_preset_id') == pid %}selected{% endif %}>{{ preset.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label">Эмодзи</label>
+            <select class="form-select js-random-select" name="emoji_level" required>
+              {% for key, item in emoji_levels.items() %}
+                <option value="{{ key }}" {% if role.get('emoji_level', 'minimal') == key %}selected{% endif %}>{{ item.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label">5) Пол</label>
+            <select class="form-select js-random-select" name="gender" required>
+              {% for key, item in gender_options.items() %}
+                <option value="{{ key }}" {% if role.get('gender', 'neutral') == key %}selected{% endif %}>{{ item.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
         </div>
-        <div class="form-check mb-3">
-          <input class="form-check-input" type="checkbox" name="apply_to_targets" value="1" id="apply_to_targets" />
-          <label class="form-check-label" for="apply_to_targets">
-            Перезаписать промпты целей для аккаунтов с этой ролью
-          </label>
-          <div class="form-text">Опционально. Полезно для консистентности, но перезапишет индивидуальные промпты в целях.</div>
+
+        <div class="mt-3">
+          <label class="form-label">3) Настроения (выбирается одно случайное на ответ)</label>
+          {% set active_moods = role.get('mood_preset_ids', []) %}
+          <div class="row g-2">
+            {% for pid, preset in role_presets.get('mood', []) %}
+              <div class="col-12 col-md-6">
+                <div class="form-check">
+                  <input class="form-check-input js-random-mood" type="checkbox" name="mood_preset_ids" value="{{ pid }}" id="mood_edit_{{ pid }}" {% if pid in active_moods %}checked{% endif %} />
+                  <label class="form-check-label" for="mood_edit_{{ pid }}">{{ preset.name }}</label>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
         </div>
-        <button class="btn btn-primary" type="submit">Сохранить</button>
+
+        <div class="mt-3">
+          <label class="form-label">Дополнительные правила (опционально)</label>
+          <textarea class="form-control" name="custom_prompt" rows="4">{{ role.get('custom_prompt','') }}</textarea>
+        </div>
+
+        <div class="d-flex gap-2 mt-3">
+          <button class="btn btn-primary" type="submit">Сохранить</button>
+          <button class="btn btn-outline-secondary" type="button" id="roleEditRandomizeBtn">
+            <i class="bi bi-dice-5 me-1"></i>Случайно
+          </button>
+        </div>
       </form>
     </div>
   </div>
@@ -39,20 +109,49 @@
   <div class="card">
     <div class="card-body">
       <h2 class="h5">Назначить аккаунтам</h2>
-      <form method="post" action="/personas/{{ persona_id }}/assign">
+      <form method="post" action="/personas/{{ role_id }}/assign">
         <div class="row g-2">
           {% for a in accounts %}
             <div class="col-12 col-md-4">
               <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="sessions" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.get('persona_id') == persona_id %}checked{% endif %}/>
+                <input class="form-check-input" type="checkbox" name="sessions" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.get('role_id') == role_id %}checked{% endif %} />
                 <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
               </div>
             </div>
           {% endfor %}
         </div>
-        <button class="btn btn-primary mt-3" type="submit">Сохранить и применить</button>
+        <button class="btn btn-primary mt-3" type="submit">Сохранить назначения</button>
       </form>
-      <p class="text-muted small mt-2 mb-0">При применении промпт роли запишется в промпты чатов для выбранных аккаунтов.</p>
+      <p class="text-muted small mt-2 mb-0">Если аккаунт снять с этой роли, ему автоматически вернётся роль по умолчанию.</p>
     </div>
   </div>
+
+  <script>
+    (() => {
+      const form = document.getElementById("roleEditForm");
+      const btn = document.getElementById("roleEditRandomizeBtn");
+      if (!form || !btn) return;
+
+      const randomize = () => {
+        const selects = Array.from(form.querySelectorAll(".js-random-select"));
+        for (const select of selects) {
+          const options = Array.from(select.options || []);
+          if (!options.length) continue;
+          const idx = Math.floor(Math.random() * options.length);
+          select.value = options[idx].value;
+        }
+
+        const moods = Array.from(form.querySelectorAll(".js-random-mood"));
+        if (!moods.length) return;
+        moods.forEach((m) => { m.checked = false; });
+        const shuffled = moods.slice().sort(() => Math.random() - 0.5);
+        const count = Math.max(1, Math.min(shuffled.length, Math.floor(Math.random() * 3) + 1));
+        for (let i = 0; i < count; i += 1) {
+          shuffled[i].checked = true;
+        }
+      };
+
+      btn.addEventListener("click", randomize);
+    })();
+  </script>
 {% endblock %}

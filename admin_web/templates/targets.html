@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Комментирование · TG-комментатор{% endblock %}
 {% block content %}
-  <div class="d-flex align-items-center justify-content-between mb-2">
+  <div class="app-page-head mb-2">
     <h1 class="h3 mb-0">Комментирование</h1>
-    <div class="d-flex gap-2">
+    <div class="app-actions">
+      <a class="btn btn-outline-secondary" href="/targets/search"><i class="bi bi-search me-1"></i>Поиск каналов</a>
       <a class="btn btn-primary" href="/targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить цель</a>
     </div>
   </div>
@@ -32,8 +33,11 @@
             {% for t in targets %}
               <tr>
                 <td>
-                  <div>{{ t.get('chat_name') }}</div>
-                  <div class="text-muted small">@{{ t.get('chat_username','') }}</div>
+                  {% set chat_name = t.get('chat_name') or '—' %}
+                  <div class="app-clamp-1" title="{{ chat_name }}">{{ chat_name }}</div>
+                  {% if t.get('chat_username') %}
+                    <div class="text-muted small">@{{ t.get('chat_username') }}</div>
+                  {% endif %}
                 </td>
                 <td class="mono small">{{ t.get('chat_id') }}<div class="text-muted">{{ t.get('linked_chat_id') }}</div></td>
                 <td>
@@ -47,13 +51,22 @@
                 <td class="small">
                   {% set aa = t.get('assigned_accounts', []) %}
                   {% if aa and aa|length > 0 %}
-                    {{ aa|length }}
+                    <span class="badge text-bg-light border">{{ aa|length }}</span>
                   {% else %}
-                    <span class="text-muted">все</span>
+                    <span class="text-muted">не выбрано</span>
                   {% endif %}
                 </td>
                 <td class="text-end">
-                  <a class="btn btn-sm btn-outline-primary" href="/targets/{{ t.get('chat_id') }}">Открыть</a>
+                  <a
+                    class="btn btn-sm btn-outline-primary app-icon-btn"
+                    href="/targets/{{ t.get('chat_id') }}"
+                    data-bs-toggle="tooltip"
+                    data-bs-title="Открыть"
+                    aria-label="Открыть"
+                    title="Открыть"
+                  >
+                    <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                  </a>
                 </td>
               </tr>
             {% endfor %}

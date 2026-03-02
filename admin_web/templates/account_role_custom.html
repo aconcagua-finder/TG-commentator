@@ -1,0 +1,274 @@
+{% extends "base.html" %}
+{% block title %}Кастомная роль · {{ account.session_name }}{% endblock %}
+{% block content %}
+  {% import "macros.html" as ui %}
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h1 class="h3 mb-1">Кастомная роль</h1>
+      <div class="text-muted small">Аккаунт: <span class="mono">{{ account.session_name }}</span></div>
+      <div class="text-muted small">Эта роль хранится внутри аккаунта и не отображается в общем списке ролей.</div>
+      {% if role_is_active %}
+        <div class="mt-2"><span class="badge text-bg-success">сейчас активна</span></div>
+      {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="/accounts/{{ account.session_name }}">К аккаунту</a>
+      {% if has_custom_role %}
+        <form method="post" action="/accounts/{{ account.session_name }}/role/custom/delete" onsubmit="return confirm('Удалить кастомную роль у аккаунта?');">
+          <button class="btn btn-outline-danger" type="submit">Удалить кастомную</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <h2 class="h5">Конструктор роли</h2>
+      <form method="post" action="/accounts/{{ account.session_name }}/role/custom" id="roleEditForm">
+        <div class="row g-2">
+          <div class="col-12 col-md-6">
+            <label class="form-label">1) Характер</label>
+            <select class="form-select js-random-select" name="character_preset_id" required>
+              {% for pid, preset in role_presets.get('character', []) %}
+                <option value="{{ pid }}" {% if role.get('character_preset_id') == pid %}selected{% endif %}>{{ preset.name }}</option>
+              {% endfor %}
+            </select>
+            <div class="d-flex align-items-center justify-content-between mt-1">
+              <div class="text-muted small">
+                Описание пресета
+                <span class="badge text-bg-light border ms-1 d-none" id="characterOverrideHint">используется свой текст</span>
+              </div>
+              <button class="btn btn-sm btn-link p-0 small js-toggle-clamp" type="button" data-target="#characterPresetPrompt">полностью</button>
+            </div>
+            <div class="text-muted small app-clamp-2" id="characterPresetPrompt" style="white-space: pre-wrap;"></div>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">2) Поведение</label>
+            <select class="form-select js-random-select" name="behavior_preset_id" required>
+              {% for pid, preset in role_presets.get('behavior', []) %}
+                <option value="{{ pid }}" {% if role.get('behavior_preset_id') == pid %}selected{% endif %}>{{ preset.name }}</option>
+              {% endfor %}
+            </select>
+            <div class="d-flex align-items-center justify-content-between mt-1">
+              <div class="text-muted small">
+                Описание пресета
+                <span class="badge text-bg-light border ms-1 d-none" id="behaviorOverrideHint">используется свой текст</span>
+              </div>
+              <button class="btn btn-sm btn-link p-0 small js-toggle-clamp" type="button" data-target="#behaviorPresetPrompt">полностью</button>
+            </div>
+            <div class="text-muted small app-clamp-2" id="behaviorPresetPrompt" style="white-space: pre-wrap;"></div>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">4) Очеловечивание</label>
+            <select class="form-select js-random-select" name="humanization_preset_id" required>
+              {% for pid, preset in role_presets.get('humanization', []) %}
+                <option value="{{ pid }}" {% if role.get('humanization_preset_id') == pid %}selected{% endif %}>{{ preset.name }}</option>
+              {% endfor %}
+            </select>
+            <div class="d-flex align-items-center justify-content-between mt-1">
+              <div class="text-muted small">
+                Описание пресета
+                <span class="badge text-bg-light border ms-1 d-none" id="humanizationOverrideHint">используется свой текст</span>
+              </div>
+              <button class="btn btn-sm btn-link p-0 small js-toggle-clamp" type="button" data-target="#humanizationPresetPrompt">полностью</button>
+            </div>
+            <div class="text-muted small app-clamp-2" id="humanizationPresetPrompt" style="white-space: pre-wrap;"></div>
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Эмодзи</span>
+              {{ ui.tip("Влияет на лимит/частоту эмодзи в сообщениях аккаунта.") }}
+            </label>
+            <select class="form-select js-random-select" name="emoji_level" required>
+              {% for key, item in emoji_levels.items() %}
+                <option value="{{ key }}" {% if role.get('emoji_level', 'minimal') == key %}selected{% endif %}>{{ item.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label">5) Пол</label>
+            <select class="form-select js-random-select" name="gender" required>
+              {% for key, item in gender_options.items() %}
+                <option value="{{ key }}" {% if role.get('gender', 'neutral') == key %}selected{% endif %}>{{ item.label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <label class="form-label">3) Настроения (выбирается одно случайное на ответ)</label>
+          {% set active_moods = role.get('mood_preset_ids', []) %}
+          <div class="row g-2">
+            {% for pid, preset in role_presets.get('mood', []) %}
+              <div class="col-12 col-md-6">
+                <div class="form-check">
+                  <input class="form-check-input js-random-mood" type="checkbox" name="mood_preset_ids" value="{{ pid }}" id="mood_edit_{{ pid }}" {% if pid in active_moods %}checked{% endif %} />
+                  <label class="form-check-label" for="mood_edit_{{ pid }}">{{ preset.name }}</label>
+                  {{ ui.tip(preset.prompt, placement="right") }}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <h3 class="h6 mb-2">Правка текста (только для этого аккаунта)</h3>
+          <div class="text-muted small mb-2">Если поле пустое — используется текст выбранного пресета.</div>
+          <div class="row g-2">
+            <div class="col-12">
+              <label class="form-label app-label">
+                <span class="app-label-text">Характер — свой текст</span>
+                {{ ui.tip("Переопределяет блок «Характер» в промпте роли. Не влияет на общий список пресетов/ролей.") }}
+              </label>
+              <textarea class="form-control" name="character_prompt_override" rows="3" placeholder="например: Пиши простым живым языком, без пафоса, иногда чуть иронично.">{{ role.get('character_prompt_override','') }}</textarea>
+            </div>
+            <div class="col-12">
+              <label class="form-label app-label">
+                <span class="app-label-text">Поведение — свой текст</span>
+                {{ ui.tip("Переопределяет блок «Поведение» в промпте роли. Опционально.") }}
+              </label>
+              <textarea class="form-control" name="behavior_prompt_override" rows="3">{{ role.get('behavior_prompt_override','') }}</textarea>
+            </div>
+            <div class="col-12">
+              <label class="form-label app-label">
+                <span class="app-label-text">Очеловечивание — свой текст</span>
+                {{ ui.tip("Переопределяет блок «Очеловечивание» в промпте роли. Опционально.") }}
+              </label>
+              <textarea class="form-control" name="humanization_prompt_override" rows="3">{{ role.get('humanization_prompt_override','') }}</textarea>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-3">
+          <label class="form-label">Дополнительные правила (опционально)</label>
+          <textarea class="form-control" name="custom_prompt" rows="4">{{ role.get('custom_prompt','') }}</textarea>
+        </div>
+
+        <div class="d-flex gap-2 mt-3">
+          <button class="btn btn-primary" type="submit">Сохранить</button>
+          <button class="btn btn-outline-secondary" type="button" id="roleEditRandomizeBtn">
+            <i class="bi bi-dice-5 me-1"></i>Случайно
+          </button>
+        </div>
+        <p class="text-muted small mt-2 mb-0">Сохранение автоматически назначит эту роль аккаунту как активную.</p>
+      </form>
+    </div>
+  </div>
+
+  <div class="d-none" aria-hidden="true">
+    {% for pid, preset in role_presets.get('character', []) %}
+      <template id="preset_prompt_character_{{ pid }}">{{ preset.prompt }}</template>
+    {% endfor %}
+    {% for pid, preset in role_presets.get('behavior', []) %}
+      <template id="preset_prompt_behavior_{{ pid }}">{{ preset.prompt }}</template>
+    {% endfor %}
+    {% for pid, preset in role_presets.get('humanization', []) %}
+      <template id="preset_prompt_humanization_{{ pid }}">{{ preset.prompt }}</template>
+    {% endfor %}
+  </div>
+
+  <script>
+    (() => {
+      const form = document.getElementById("roleEditForm");
+      if (!form) return;
+      const btn = document.getElementById("roleEditRandomizeBtn");
+
+      const bindOverrideHint = (textareaName, hintId) => {
+        const textarea = form.querySelector(`textarea[name="${textareaName}"]`);
+        const hint = document.getElementById(hintId);
+        if (!textarea || !hint) return () => {};
+        const update = () => {
+          const has = (textarea.value || "").trim().length > 0;
+          hint.classList.toggle("d-none", !has);
+        };
+        textarea.addEventListener("input", update);
+        update();
+        return update;
+      };
+
+      const bindPresetPrompt = (selectName, outId, tplPrefix) => {
+        const select = form.querySelector(`select[name="${selectName}"]`);
+        const out = document.getElementById(outId);
+        if (!select || !out) return () => {};
+        const update = () => {
+          const pid = select.value || "";
+          const tpl = document.getElementById(`${tplPrefix}${pid}`);
+          let text = "";
+          if (tpl) {
+            const content = tpl.content;
+            if (content && typeof content.textContent === "string") text = content.textContent || "";
+            else text = tpl.textContent || "";
+          }
+          text = (text || "").trim();
+          out.textContent = text || "—";
+        };
+        select.addEventListener("change", update);
+        update();
+        return update;
+      };
+
+      const bindClampToggle = (buttonEl) => {
+        if (!buttonEl) return;
+        const targetSel = buttonEl.getAttribute("data-target") || "";
+        if (!targetSel) return;
+        const target = document.querySelector(targetSel);
+        if (!target) return;
+        const syncLabel = () => {
+          buttonEl.textContent = target.classList.contains("app-clamp-2") ? "полностью" : "свернуть";
+        };
+        buttonEl.addEventListener("click", () => {
+          target.classList.toggle("app-clamp-2");
+          syncLabel();
+        });
+        syncLabel();
+      };
+
+      const updateCharacterPrompt = bindPresetPrompt(
+        "character_preset_id",
+        "characterPresetPrompt",
+        "preset_prompt_character_"
+      );
+      const updateBehaviorPrompt = bindPresetPrompt(
+        "behavior_preset_id",
+        "behaviorPresetPrompt",
+        "preset_prompt_behavior_"
+      );
+      const updateHumanizationPrompt = bindPresetPrompt(
+        "humanization_preset_id",
+        "humanizationPresetPrompt",
+        "preset_prompt_humanization_"
+      );
+
+      bindOverrideHint("character_prompt_override", "characterOverrideHint");
+      bindOverrideHint("behavior_prompt_override", "behaviorOverrideHint");
+      bindOverrideHint("humanization_prompt_override", "humanizationOverrideHint");
+
+      document.querySelectorAll(".js-toggle-clamp").forEach(bindClampToggle);
+
+      const randomize = () => {
+        const selects = Array.from(form.querySelectorAll(".js-random-select"));
+        for (const select of selects) {
+          const options = Array.from(select.options || []);
+          if (!options.length) continue;
+          const idx = Math.floor(Math.random() * options.length);
+          select.value = options[idx].value;
+        }
+
+        const moods = Array.from(form.querySelectorAll(".js-random-mood"));
+        if (!moods.length) return;
+        moods.forEach((m) => { m.checked = false; });
+        const shuffled = moods.slice().sort(() => Math.random() - 0.5);
+        const count = Math.max(1, Math.min(shuffled.length, Math.floor(Math.random() * 3) + 1));
+        for (let i = 0; i < count; i += 1) {
+          shuffled[i].checked = true;
+        }
+
+        updateCharacterPrompt();
+        updateBehaviorPrompt();
+        updateHumanizationPrompt();
+      };
+
+      if (btn) btn.addEventListener("click", randomize);
+    })();
+  </script>
+{% endblock %}

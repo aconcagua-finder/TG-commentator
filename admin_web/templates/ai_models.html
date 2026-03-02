@@ -59,7 +59,18 @@
                   <td>
                     <div class="d-flex align-items-center gap-2">
                       <code class="mono">{{ m.id }}</code>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-copy="{{ m.id }}">Копировать</button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary app-icon-btn"
+                        type="button"
+                        data-copy="{{ m.id }}"
+                        data-copy-feedback="icon"
+                        data-bs-toggle="tooltip"
+                        data-bs-title="Скопировать"
+                        aria-label="Скопировать"
+                        title="Скопировать"
+                      >
+                        <i class="bi bi-copy" aria-hidden="true"></i>
+                      </button>
                     </div>
                   </td>
                   <td class="text-muted small">

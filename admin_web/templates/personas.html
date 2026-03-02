@@ -1,44 +1,196 @@
 {% extends "base.html" %}
 {% block title %}Роли · TG-комментатор{% endblock %}
 {% block content %}
-  <h1 class="h3 mb-3">Роли</h1>
+  <div class="app-page-head mb-3">
+    <h1 class="h3 mb-0">Роли</h1>
+    <span class="badge text-bg-light border">Всего: {{ roles|length }}</span>
+  </div>
   {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
+  {% set category_labels = {'character':'Характер','behavior':'Поведение','mood':'Настроение','humanization':'Очеловечивание'} %}
 
   <div class="row g-3">
-    <div class="col-12 col-lg-5">
-      <div class="card">
+    <div class="col-12 col-xl-6">
+      <div class="card mb-3">
         <div class="card-body">
-          <h2 class="h5">Создать</h2>
-          <form method="post" action="/personas/new">
+          <h2 class="h5">Создать роль</h2>
+          <form method="post" action="/personas/new" id="roleCreateForm">
             <div class="mb-2">
               <label class="form-label">Название</label>
-              <input class="form-control" name="name" required />
+              <input class="form-control" name="name" placeholder="Например: Скептичный аналитик (можно оставить пустым)" />
             </div>
-            <div class="mb-2">
-              <label class="form-label">Системный промпт</label>
-              <textarea class="form-control" name="prompt" rows="6" required></textarea>
+
+            <div class="row g-2">
+              <div class="col-12 col-md-6">
+                <label class="form-label">1) Характер</label>
+                <select class="form-select js-random-select" name="character_preset_id" required>
+                  {% for pid, preset in role_presets.get('character', []) %}
+                    <option value="{{ pid }}">{{ preset.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label">2) Поведение</label>
+                <select class="form-select js-random-select" name="behavior_preset_id" required>
+                  {% for pid, preset in role_presets.get('behavior', []) %}
+                    <option value="{{ pid }}">{{ preset.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label">4) Очеловечивание</label>
+                <select class="form-select js-random-select" name="humanization_preset_id" required>
+                  {% for pid, preset in role_presets.get('humanization', []) %}
+                    <option value="{{ pid }}">{{ preset.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label">Эмодзи</label>
+                <select class="form-select js-random-select" name="emoji_level" required>
+                  {% for key, item in emoji_levels.items() %}
+                    <option value="{{ key }}" {% if key == 'minimal' %}selected{% endif %}>{{ item.label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label">5) Пол</label>
+                <select class="form-select js-random-select" name="gender" required>
+                  {% for key, item in gender_options.items() %}
+                    <option value="{{ key }}" {% if key == 'neutral' %}selected{% endif %}>{{ item.label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
             </div>
-            <button class="btn btn-primary" type="submit">Создать</button>
+
+            <div class="mt-3">
+              <label class="form-label">3) Настроения (может выпадать одно из выбранных)</label>
+              <div class="row g-2">
+                {% for pid, preset in role_presets.get('mood', []) %}
+                  <div class="col-12 col-md-6">
+                    <div class="form-check">
+                      <input class="form-check-input js-random-mood" type="checkbox" name="mood_preset_ids" value="{{ pid }}" id="mood_new_{{ pid }}" {% if pid == 'mood_neutral' %}checked{% endif %} />
+                      <label class="form-check-label" for="mood_new_{{ pid }}">{{ preset.name }}</label>
+                    </div>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div class="mt-3">
+              <label class="form-label">Дополнительные правила (опционально)</label>
+              <textarea class="form-control" name="custom_prompt" rows="3" placeholder="Короткие доп. инструкции для этой роли"></textarea>
+            </div>
+
+            <div class="d-flex gap-2 mt-3">
+              <button class="btn btn-primary" type="submit">Создать</button>
+              <button class="btn btn-outline-secondary" type="button" id="roleRandomizeBtn">
+                <i class="bi bi-dice-5 me-1"></i>Случайно
+              </button>
+            </div>
           </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <h2 class="h5">Кастомные пресеты</h2>
+          <div class="text-muted small mb-2">Можно добавить свои пресеты для характера, поведения, настроения и очеловечивания.</div>
+
+          <div class="accordion" id="presetAccordion">
+            {% for category in ['character','behavior','mood','humanization'] %}
+              <div class="accordion-item">
+                <h2 class="accordion-header" id="presetHeading_{{ category }}">
+                  <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#presetBody_{{ category }}" aria-expanded="false" aria-controls="presetBody_{{ category }}">
+                    {{ category_labels.get(category, category) }}
+                  </button>
+                </h2>
+                <div id="presetBody_{{ category }}" class="accordion-collapse collapse" aria-labelledby="presetHeading_{{ category }}" data-bs-parent="#presetAccordion">
+                  <div class="accordion-body">
+                    <form method="post" action="/personas/presets/{{ category }}/new" class="mb-3">
+                      <div class="mb-2">
+                        <label class="form-label">Название</label>
+                        <input class="form-control" name="name" required />
+                      </div>
+                      <div class="mb-2">
+                        <label class="form-label">Промпт пресета</label>
+                        <textarea class="form-control" name="prompt" rows="2" required></textarea>
+                      </div>
+                      <button class="btn btn-sm btn-primary" type="submit">Добавить пресет</button>
+                    </form>
+
+                    <div class="list-group">
+                      {% for pid, preset in role_presets.get(category, []) %}
+                        <div class="list-group-item">
+                          <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div>
+                              <div class="fw-semibold">{{ preset.name }}</div>
+                              <div class="text-muted small">{{ preset.prompt }}</div>
+                            </div>
+                            {% if not preset.get('builtin') %}
+                              <form method="post" action="/personas/presets/{{ category }}/{{ pid }}/delete" onsubmit="return confirm('Удалить пресет?');">
+                                <button
+                                  class="btn btn-sm btn-outline-danger app-icon-btn"
+                                  type="submit"
+                                  data-bs-toggle="tooltip"
+                                  data-bs-title="Удалить"
+                                  aria-label="Удалить"
+                                  title="Удалить"
+                                >
+                                  <i class="bi bi-trash" aria-hidden="true"></i>
+                                </button>
+                              </form>
+                            {% else %}
+                              <span class="badge text-bg-light border">системный</span>
+                            {% endif %}
+                          </div>
+                        </div>
+                      {% endfor %}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="col-12 col-lg-7">
+    <div class="col-12 col-xl-6">
       <div class="card">
         <div class="card-body">
-          <h2 class="h5">Список ({{ personas|length }})</h2>
-          {% if personas|length == 0 %}
-            <div class="text-muted">Пока нет ни одной роли.</div>
+          <h2 class="h5">Список ролей</h2>
+          {% if roles|length == 0 %}
+            <div class="text-muted">Пока нет ролей.</div>
           {% else %}
             <div class="list-group">
-              {% for pid, pdata in personas.items() %}
-                <a class="list-group-item list-group-item-action" href="/personas/{{ pid }}">
-                  <div class="d-flex justify-content-between">
-                    <div>{{ pdata.name }}</div>
-                    <span class="text-muted mono">{{ pid }}</span>
+              {% for rid, role in roles %}
+                <div class="list-group-item">
+                  <div class="d-flex justify-content-between align-items-start gap-2">
+                    <div>
+                      <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <span class="fw-semibold">{{ role.name }}</span>
+                        {% if rid == default_role_id %}
+                          <span class="badge text-bg-success">по умолчанию</span>
+                        {% endif %}
+                        {% if role.get('builtin') %}
+                          <span class="badge text-bg-light border">системная</span>
+                        {% endif %}
+                      </div>
+                      <div class="text-muted small mono">{{ rid }}</div>
+                      <div class="text-muted small">пол: {{ role.get('gender','neutral') }} · эмодзи: {{ role.get('emoji_level','minimal') }}</div>
+                    </div>
+                    <a
+                      class="btn btn-sm btn-outline-primary app-icon-btn"
+                      href="/personas/{{ rid }}"
+                      data-bs-toggle="tooltip"
+                      data-bs-title="Открыть"
+                      aria-label="Открыть"
+                      title="Открыть"
+                    >
+                      <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                    </a>
                   </div>
-                </a>
+                </div>
               {% endfor %}
             </div>
           {% endif %}
@@ -46,4 +198,38 @@
       </div>
     </div>
   </div>
+
+  <script>
+    (() => {
+      const form = document.getElementById("roleCreateForm");
+      const btn = document.getElementById("roleRandomizeBtn");
+      if (!form || !btn) return;
+
+      const randomize = () => {
+        const selects = Array.from(form.querySelectorAll(".js-random-select"));
+        for (const select of selects) {
+          const options = Array.from(select.options || []);
+          if (!options.length) continue;
+          const idx = Math.floor(Math.random() * options.length);
+          select.value = options[idx].value;
+        }
+
+        const moods = Array.from(form.querySelectorAll(".js-random-mood"));
+        if (!moods.length) return;
+        moods.forEach((m) => { m.checked = false; });
+        const shuffled = moods.slice().sort(() => Math.random() - 0.5);
+        const count = Math.max(1, Math.min(shuffled.length, Math.floor(Math.random() * 3) + 1));
+        for (let i = 0; i < count; i += 1) {
+          shuffled[i].checked = true;
+        }
+
+        const nameInput = form.querySelector('input[name="name"]');
+        if (nameInput && !nameInput.value.trim()) {
+          nameInput.value = `Роль ${new Date().toLocaleTimeString()}`;
+        }
+      };
+
+      btn.addEventListener("click", randomize);
+    })();
+  </script>
 {% endblock %}

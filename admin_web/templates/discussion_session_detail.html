@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Сессия #{{ session.id }} · Обсуждения{% endblock %}
+{% block content %}
+	  <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+	    <div>
+	      <div class="d-flex align-items-center gap-2 flex-wrap">
+	        <a class="btn btn-sm btn-outline-secondary" href="{{ back_url or '/discussions' }}"><i class="bi bi-arrow-left me-1"></i>К цели</a>
+	        <span class="badge text-bg-light border mono">#{{ session.id }}</span>
+	        {% if session.status %}
+	          <span class="badge text-bg-light border">{{ session.status }}</span>
+	        {% endif %}
+	      </div>
+	      <h1 class="h4 mb-0 mt-2">Обсуждение</h1>
+	      <div class="text-muted small d-flex flex-wrap gap-2">
+	        <span>создано: <span class="mono">{{ session.created_at|human_dt }}</span></span>
+	        <span>старт: <span class="mono">{{ session.started_at|human_dt }}</span></span>
+	        <span>финиш: <span class="mono">{{ session.finished_at|human_dt }}</span></span>
+	      </div>
+	      <div class="text-muted small mono">
+	        target={{ session.discussion_target_chat_id }} · chat={{ session.chat_id }} · seed={{ session.seed_msg_id }}
+	      </div>
+	    </div>
+	  </div>
+
+	  <div class="card mb-3">
+	    <div class="card-body">
+	      {% set ns = namespace(has_seed=false) %}
+	      {% for m in messages %}
+	        {% if m.speaker_type == 'operator' and session.seed_msg_id and m.msg_id == session.seed_msg_id %}
+	          {% set ns.has_seed = true %}
+	        {% endif %}
+	      {% endfor %}
+	      {% set extra_seed = 1 if (session.seed_text and not ns.has_seed) else 0 %}
+	      <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-2">
+	        <h2 class="h6 mb-0">Цепочка диалога ({{ messages|length + extra_seed }})</h2>
+	      </div>
+	      {% if messages|length == 0 and not session.seed_text %}
+	        <div class="text-muted">Сообщений пока нет.</div>
+	      {% else %}
+	        <div class="d-flex flex-column gap-2">
+	          {% if session.seed_text and not ns.has_seed %}
+	            <div class="d-flex justify-content-start">
+	              <div class="p-2 rounded-3 border" style="max-width: 920px;">
+	                <div class="text-muted small d-flex flex-wrap gap-2">
+	                  <span>Оператор</span>
+	                  {% if session.operator_session_name %}
+	                    <span class="badge text-bg-light border mono">{{ session.operator_session_name }}</span>
+	                  {% endif %}
+	                  <span class="mono">{{ (session.started_at or session.created_at)|human_dt }}</span>
+	                  <span class="badge text-bg-light border">старт</span>
+	                </div>
+	                <div class="mt-1" style="white-space: pre-wrap;">{{ session.seed_text }}</div>
+	                {% if session.seed_msg_id %}
+	                  <div class="mt-2 small text-muted mono">msg_id={{ session.seed_msg_id }}</div>
+	                {% endif %}
+	              </div>
+	            </div>
+	          {% endif %}
+	          {% for m in messages %}
+	            {% set is_operator = (m.speaker_type == 'operator') %}
+	            <div class="d-flex {% if is_operator %}justify-content-start{% else %}justify-content-end{% endif %}">
+	              <div class="p-2 rounded-3 border {% if not is_operator %}bg-body-tertiary{% endif %}" style="max-width: 920px;">
+	                <div class="text-muted small d-flex flex-wrap gap-2">
+	                  <span>{{ m.speaker_label or ('Оператор' if is_operator else 'Участник') }}</span>
+	                  {% if m.speaker_session_name %}
+	                    <span class="badge text-bg-light border mono">{{ m.speaker_session_name }}</span>
+	                  {% endif %}
+	                  <span class="mono">{{ m.created_at|human_dt }}</span>
+	                  {% if m.prompt_info %}
+	                    <span class="badge text-bg-light border">{{ m.prompt_info }}</span>
+	                  {% endif %}
+	                </div>
+	                {% if m.text %}
+	                  <div class="mt-1" style="white-space: pre-wrap;">{{ m.text }}</div>
+	                {% endif %}
+	                {% if m.error %}
+	                  <div class="mt-2 small text-danger">Ошибка: {{ m.error }}</div>
+	                {% endif %}
+	                {% if m.msg_id or m.reply_to_msg_id %}
+	                  <div class="mt-2 small text-muted mono">
+	                    {% if m.msg_id %}msg_id={{ m.msg_id }}{% endif %}
+	                    {% if m.reply_to_msg_id %}{% if m.msg_id %} · {% endif %}reply_to={{ m.reply_to_msg_id }}{% endif %}
+	                  </div>
+	                {% endif %}
+	              </div>
+	            </div>
+	          {% endfor %}
+	        </div>
+	      {% endif %}
+	    </div>
+	  </div>
+
+	  {% if session.error %}
+	    <div class="alert alert-danger small mb-3">
+	      Ошибка: {{ session.error }}
+	    </div>
+	  {% endif %}
+
+	  <div class="row g-3">
+	    <div class="col-12 col-lg-6">
+	      <div class="card h-100">
+	        <div class="card-body">
+	          <h2 class="h6 mb-2">Снапшот настроек</h2>
+	          {% if settings_pretty %}
+	            <pre class="small mono mb-0" style="white-space: pre-wrap;">{{ settings_pretty }}</pre>
+	          {% else %}
+	            <div class="text-muted small">—</div>
+	          {% endif %}
+	        </div>
+	      </div>
+	    </div>
+	    <div class="col-12 col-lg-6">
+	      <div class="card h-100">
+	        <div class="card-body">
+	          <h2 class="h6 mb-2">Участники и промпты</h2>
+	          {% if participants_pretty %}
+	            <pre class="small mono mb-0" style="white-space: pre-wrap;">{{ participants_pretty }}</pre>
+	          {% else %}
+	            <div class="text-muted small">—</div>
+	          {% endif %}
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	{% endblock %}

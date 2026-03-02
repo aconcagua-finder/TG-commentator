@@ -25,15 +25,17 @@
       {"id": "start", "title": "Основное", "items": [
         {"href": "/guide", "label": "Быстрый старт", "icon": "bi-rocket-takeoff", "active_prefix": "/guide"},
         {"href": "/", "label": "Дашборд", "icon": "bi-speedometer2", "active_exact": true},
+        {"href": "/tasks", "label": "Задачи", "icon": "bi-list-task", "active_prefix": "/tasks"},
         {"href": "/stats", "label": "Статистика", "icon": "bi-graph-up", "active_prefix": "/stats"},
+        {"href": "/warnings", "label": "Предупреждения", "icon": "bi-exclamation-triangle", "active_prefix": "/warnings", "badge": warnings_count},
         {"href": "/manual", "label": "Ручной запуск", "icon": "bi-lightning-charge", "active_prefix": "/manual"}
       ]},
-      {"id": "ai", "title": "AI и контент", "items": [
-        {"href": "/settings/ai", "label": "AI и ключи", "icon": "bi-cpu", "active_prefix": "/settings/ai"},
-        {"href": "/settings/humanization", "label": "Очеловечивание", "icon": "bi-person-badge", "active_prefix": "/settings/humanization"},
-        {"href": "/personas", "label": "Роли", "icon": "bi-people", "active_prefix": "/personas"},
-        {"href": "/settings/blacklist", "label": "Чёрный список", "icon": "bi-slash-circle", "active_prefix": "/settings/blacklist"}
-      ]},
+	      {"id": "ai", "title": "AI и контент", "items": [
+	        {"href": "/settings/ai", "label": "AI и ключи", "icon": "bi-cpu", "active_prefix": "/settings/ai"},
+	        {"href": "/settings/humanization", "label": "Общие параметры", "icon": "bi-person-badge", "active_prefix": "/settings/humanization"},
+	        {"href": "/personas", "label": "Роли", "icon": "bi-people", "active_prefix": "/personas"},
+	        {"href": "/settings/blacklist", "label": "Чёрный список", "icon": "bi-slash-circle", "active_prefix": "/settings/blacklist"}
+	      ]},
       {"id": "telegram", "title": "Телеграм", "items": [
         {"href": "/accounts", "label": "Аккаунты", "icon": "bi-people", "active_prefix": "/accounts"},
         {"href": "/proxies", "label": "Прокси", "icon": "bi-globe2", "active_prefix": "/proxies"},
@@ -41,6 +43,7 @@
       ]},
       {"id": "automation", "title": "Автоматизация", "items": [
         {"href": "/targets", "label": "Комментирование", "icon": "bi-chat-left-text", "active_prefix": "/targets"},
+        {"href": "/discussions", "label": "Обсуждения", "icon": "bi-chat-square-text", "active_prefix": "/discussions"},
         {"href": "/reaction-targets", "label": "Реакции", "icon": "bi-hand-thumbs-up", "active_prefix": "/reaction-targets"},
         {"href": "/monitor-targets", "label": "Мониторинг", "icon": "bi-broadcast", "active_prefix": "/monitor-targets"}
       ]},
@@ -95,7 +98,13 @@
                     {% if is_active %}aria-current="page"{% endif %}
                     {% if dismiss %}data-bs-dismiss="offcanvas"{% endif %}
                   >
-                    <i class="bi {{ item.icon }} me-2" aria-hidden="true"></i>{{ item.label }}
+                    <span class="app-nav-item-main">
+                      <span class="app-nav-item-icon" aria-hidden="true"><i class="bi {{ item.icon }}"></i></span>
+                      <span class="app-nav-item-label">{{ item.label }}</span>
+                    </span>
+                    {% if item.badge and item.badge > 0 %}
+                      <span class="badge text-bg-danger app-nav-item-badge">{{ item.badge }}</span>
+                    {% endif %}
                   </a>
                 {% endfor %}
               </div>
@@ -125,7 +134,7 @@
           <span class="app-brand-icon" aria-hidden="true"><i class="bi bi-stars"></i></span>
           <span>TG-комментатор</span>
         </a>
-        <div class="d-flex gap-2 align-items-center">
+        <div class="d-flex gap-2 align-items-center flex-wrap justify-content-end">
           {% if user %}
             <a class="btn btn-sm btn-outline-secondary position-relative" href="/dialogs" title="Диалоги">
               <i class="bi bi-chat-dots" aria-hidden="true"></i>
@@ -140,6 +149,13 @@
                 <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">{{ inbox_counts.get('quotes') }}</span>
               {% endif %}
               <span class="visually-hidden">Цитирование</span>
+            </a>
+            <a class="btn btn-sm btn-outline-secondary position-relative" href="/warnings" title="Предупреждения">
+              <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
+              {% if warnings_count and warnings_count > 0 %}
+                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">{{ warnings_count }}</span>
+              {% endif %}
+              <span class="visually-hidden">Предупреждения</span>
             </a>
             <a class="btn btn-sm btn-outline-secondary" href="/stats" title="Статистика">
               <i class="bi bi-graph-up" aria-hidden="true"></i>
@@ -185,7 +201,7 @@
             </div>
           {% endif %}
           {% if user %}
-            <span class="text-body-secondary small">Пользователь: {{ user.username }}</span>
+            <span class="text-body-secondary small d-none d-lg-inline">Пользователь: {{ user.username }}</span>
           {% endif %}
           <button class="btn btn-sm btn-outline-secondary" type="button" id="themeToggle">
             <i class="bi bi-moon-stars" aria-hidden="true"></i>
@@ -201,7 +217,7 @@
     </nav>
 
     {% if flashes %}
-      <div class="toast-container position-fixed top-0 end-0 p-3 app-toasts {% if has_nav %}app-toasts--offset{% endif %}">
+      <div class="toast-container position-fixed end-0 p-3 app-toasts {% if has_nav %}app-toasts--offset{% endif %}">
         {% for f in flashes %}
           {% set is_error = f.category in ['danger', 'error'] %}
           {% set is_dark = f.category in ['success', 'danger', 'primary', 'secondary', 'dark'] %}
@@ -243,19 +259,47 @@
     <div class="container-fluid">
       <div class="row">
         {% if has_nav %}
-          <aside class="col-md-2 d-none d-md-block sidebar p-0" aria-label="Навигация">
+          <aside class="col-md-3 col-xl-2 d-none d-md-block sidebar p-0" aria-label="Навигация">
             {{ nav_list(false, "sidebar") }}
           </aside>
         {% endif %}
 
-        <main class="{{ 'col-12 col-md-10' if has_nav else 'col-12' }} p-4 app-main" id="main-content" tabindex="-1">
+        <main class="{{ 'col-12 col-md-9 col-xl-10' if has_nav else 'col-12' }} p-3 p-md-4 app-main" id="main-content" tabindex="-1">
           {% block content %}{% endblock %}
         </main>
       </div>
     </div>
 
+    <div class="app-busy-overlay d-none" id="appBusyOverlay" role="dialog" aria-modal="true" aria-label="Обработка запроса">
+      <div class="app-busy-card" role="status" aria-live="polite">
+        <div class="spinner-border text-primary" role="presentation" aria-hidden="true"></div>
+        <div>
+          <div class="fw-semibold">Обрабатываю запрос…</div>
+          <div class="text-muted small">Это может занять до 30 секунд. Пожалуйста, подождите.</div>
+        </div>
+      </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+      // Keep CSS nav height in sync for sticky layout (sidebar/toasts offsets)
+      (() => {
+        const nav = document.querySelector(".app-navbar");
+        if (!nav) return;
+        let timer = null;
+        const update = () => {
+          const height = nav.getBoundingClientRect().height || 0;
+          if (height > 0) {
+            document.documentElement.style.setProperty("--app-nav-height", `${Math.round(height)}px`);
+          }
+        };
+        update();
+        window.addEventListener("resize", () => {
+          if (timer) window.clearTimeout(timer);
+          timer = window.setTimeout(update, 120);
+        });
+      })();
+
       const tooltipTriggerList = [...document.querySelectorAll('[data-bs-toggle="tooltip"]')];
       tooltipTriggerList.map((el) => new bootstrap.Tooltip(el));
 
@@ -330,10 +374,26 @@
       document.querySelectorAll("[data-copy]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           const text = btn.getAttribute("data-copy") || "";
-          const original = btn.textContent;
           const ok = await copyText(text);
+          const feedbackMode = btn.getAttribute("data-copy-feedback") || "text";
+
+          if (feedbackMode === "icon") {
+            const icon = btn.querySelector("i");
+            if (icon) {
+              const wasCopy = icon.className;
+              icon.className = ok ? "bi bi-check2" : "bi bi-x-lg";
+              setTimeout(() => {
+                icon.className = wasCopy;
+              }, 1200);
+              return;
+            }
+          }
+
+          const original = btn.textContent;
           btn.textContent = ok ? "Скопировано" : "Не вышло";
-          setTimeout(() => (btn.textContent = original), 1200);
+          setTimeout(() => {
+            btn.textContent = original;
+          }, 1200);
         });
       });
 
@@ -374,6 +434,50 @@
           });
         });
       });
+
+      // Auto-pause toggles (sync checkbox -> hidden input value)
+      document.querySelectorAll("[data-auto-pause-group].js-auto-pause-toggle").forEach((toggle) => {
+        const group = toggle.getAttribute("data-auto-pause-group") || "";
+        const update = () => {
+          const value = toggle.checked ? "1" : "0";
+          document
+            .querySelectorAll(`input.js-auto-pause-value[data-auto-pause-group="${group}"]`)
+            .forEach((input) => {
+              input.value = value;
+            });
+        };
+        update();
+        toggle.addEventListener("change", update);
+      });
+
+      // Busy overlay: block UI while the server processes a request (prevents double-clicks).
+      (() => {
+        const overlay = document.getElementById("appBusyOverlay");
+        if (!overlay) return;
+
+        const show = () => {
+          overlay.classList.remove("d-none");
+          try {
+            document.documentElement.classList.add("app-busy-on");
+          } catch (_) {}
+        };
+
+        document.addEventListener("submit", (ev) => {
+          const form = ev.target;
+          if (!(form instanceof HTMLFormElement)) return;
+          if ((form.getAttribute("data-busy-overlay") || "") === "off") return;
+
+          window.setTimeout(() => {
+            if (ev.defaultPrevented) return;
+            if ((form.dataset.busySubmitting || "") === "1") return;
+            form.dataset.busySubmitting = "1";
+            form.querySelectorAll('button[type="submit"], input[type="submit"]').forEach((btn) => {
+              btn.disabled = true;
+            });
+            show();
+          }, 0);
+        });
+      })();
 
       function applyTheme(theme) {
         document.documentElement.setAttribute("data-bs-theme", theme);

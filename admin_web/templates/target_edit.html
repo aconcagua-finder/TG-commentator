@@ -83,6 +83,18 @@
                   </div>
                   <div class="col-12 col-md-3">
                     <label class="form-label app-label">
+                      <span class="app-label-text">Цитировать пост (%)</span>
+                      {{ ui.tip("С этим шансом комментарий будет отправлен прямым реплаем к посту (с цитированием). Иначе — отправится в ветку комментариев к посту без цитаты (как в интерфейсе Telegram).") }}
+                    </label>
+                    <input class="form-control" id="tag_comment_chance" type="number" min="0" max="100" step="1" inputmode="numeric" name="tag_comment_chance" value="{{ target.get('tag_comment_chance',50) }}" />
+                    <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрые пресеты вероятности цитирования">
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#tag_comment_chance" data-set-value="100">100%</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#tag_comment_chance" data-set-value="50">50%</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#tag_comment_chance" data-set-value="0">0%</button>
+                    </div>
+                  </div>
+                  <div class="col-12 col-md-3">
+                    <label class="form-label app-label">
                       <span class="app-label-text">Аккаунтов на пост (диапазон)</span>
                       {{ ui.tip("Случайное число аккаунтов на каждый пост. Укажите мин/макс. 0–0 = все. Для фиксированного числа укажите одинаковые значения (например 2–2).") }}
                     </label>
@@ -91,7 +103,7 @@
                       <span class="input-group-text">–</span>
                       <input class="form-control" id="accounts_per_post_max" type="number" min="0" step="1" inputmode="numeric" name="accounts_per_post_max" value="{{ target.get('accounts_per_post_max',50) }}" aria-label="Максимум" />
                     </div>
-                    <div class="form-text">Аккаунты выбираются по ротации: сначала те, кто ещё не комментировал в цикле, затем цикл обновляется.</div>
+                    <div class="form-text">Аккаунты выбираются случайно на каждый пост (и «план» сохраняется). Если бот перезапустился, он не начнёт снова с первого аккаунта и не будет повторять аккаунты, которые уже прокомментировали этот пост.</div>
                     <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрые пресеты диапазона аккаунтов">
                       <button class="btn btn-sm btn-outline-secondary" type="button" data-set-multi='{"#accounts_per_post_min":"1","#accounts_per_post_max":"3"}'>1–3</button>
                       <button class="btn btn-sm btn-outline-secondary" type="button" data-set-multi='{"#accounts_per_post_min":"2","#accounts_per_post_max":"4"}'>2–4</button>
@@ -185,7 +197,7 @@
                   <button
                     class="btn btn-sm btn-outline-secondary"
                     type="button"
-                    data-set-multi='{"#comment_chance":"100","#accounts_per_post_min":"1","#accounts_per_post_max":"50","input[name=\\"daily_comment_limit\\"]":"50","input[name=\\"initial_comment_delay\\"]":"180","input[name=\\"delay_between_accounts\\"]":"240","input[name=\\"min_word_count\\"]":"0","input[name=\\"min_post_interval_mins\\"]":"0","#min_meaningful_words":"6","#media_min_meaningful_words":"12","#skip_promotional_posts":"true","#skip_short_media_posts":"true"}'
+                    data-set-multi='{"#comment_chance":"100","#tag_comment_chance":"50","#accounts_per_post_min":"1","#accounts_per_post_max":"50","input[name=\\"daily_comment_limit\\"]":"50","input[name=\\"initial_comment_delay\\"]":"180","input[name=\\"delay_between_accounts\\"]":"240","input[name=\\"min_word_count\\"]":"0","input[name=\\"min_post_interval_mins\\"]":"0","#min_meaningful_words":"6","#media_min_meaningful_words":"12","#skip_promotional_posts":"true","#skip_short_media_posts":"true"}'
                   >
                     Вернуть по умолчанию
                   </button>
@@ -234,6 +246,13 @@
                   </div>
                   <div class="col-12 col-md-3">
                     <label class="form-label app-label">
+                      <span class="app-label-text">Лимит ответов ИИ</span>
+                      {{ ui.tip("Максимум ответов наших аккаунтов в одной цепочке реплаев. 0 = без лимита. По умолчанию 2.") }}
+                    </label>
+                    <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="max_dialogue_ai_replies" value="{{ target.get('max_dialogue_ai_replies',2) }}" />
+                  </div>
+                  <div class="col-12 col-md-3">
+                    <label class="form-label app-label">
                       <span class="app-label-text">Мин. задержка (сек)</span>
                       {{ ui.tip("Минимальная пауза перед ответом в обсуждении (делает поведение «человечнее»).") }}
                     </label>
@@ -259,18 +278,87 @@
             </h2>
             <div id="targetEditAccounts" class="accordion-collapse collapse" aria-labelledby="targetEditHeadingAccounts">
               <div class="accordion-body">
-                <div class="text-muted small d-flex align-items-center gap-2 mb-2">
-                  <span>Если ничего не выбрано — используются все активные аккаунты.</span>
-                  {{ ui.tip("Эти аккаунты будут комментировать и/или отвечать в обсуждении для данного чата (в зависимости от настроек).") }}
+                {% set assigned = target.get('assigned_accounts', []) %}
+                {% set all_selected = assigned and accounts and (assigned|length == accounts|length) %}
+                <div class="row g-3 mb-2">
+                  <div class="col-12 col-md-4">
+                    <label class="form-label app-label">
+                      <span class="app-label-text">Медленное вступление (мин)</span>
+                      {{ ui.tip("Если > 0 — аккаунты будут вступать в чат/канал постепенно: максимум 1 аккаунт раз в N минут. Уменьшает подозрительность. 0 = сразу.") }}
+                    </label>
+                    <input
+                      class="form-control"
+                      type="number"
+                      min="0"
+                      step="1"
+                      inputmode="numeric"
+                      name="slow_join_interval_mins"
+                      value="{{ target.get('slow_join_interval_mins',0) }}"
+                    />
+                    <div class="text-muted small">Рекомендуется 5–60 минут, если аккаунтов много.</div>
+                  </div>
                 </div>
+                <div class="d-flex align-items-center gap-3 flex-wrap mb-2">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="select_all" value="1" id="select_all_accounts" {% if all_selected %}checked{% endif %} />
+                    <label class="form-check-label" for="select_all_accounts">Выбрать все</label>
+                  </div>
+                  <button class="btn btn-sm btn-outline-primary" type="submit" formaction="/targets/{{ target.get('chat_id') }}/join" formmethod="post">Повторить вступление</button>
+                  <div class="text-muted small d-flex align-items-center gap-2">
+                    <span>Если ничего не выбрано — ничего не используется.</span>
+                    {{ ui.tip("Эти аккаунты будут комментировать и/или отвечать в обсуждении для данного чата (в зависимости от настроек).") }}
+                  </div>
+                </div>
+                <div class="text-muted small mb-2">При повторном вступлении комментатор будет временно остановлен и запущен снова (если он сейчас работает).</div>
                 <div class="row g-2">
-                  {% set assigned = target.get('assigned_accounts', []) %}
                   {% for a in accounts %}
                     <div class="col-12 col-md-4">
                       <div class="form-check">
-                        <input class="form-check-input" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
+                        <input class="form-check-input js-account-checkbox" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
                         <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
                       </div>
+                      {% set full_name = (a.get('first_name','') ~ ' ' ~ a.get('last_name','')).strip() %}
+                      {% if full_name or a.get('username') %}
+                        <div class="text-muted small">
+                          {% if full_name %}{{ full_name }}{% endif %}
+                          {% if a.get('username') %}{% if full_name %} · {% endif %}@{{ a.get('username') }}{% endif %}
+                        </div>
+                      {% endif %}
+                      <div class="small mt-1">
+                        {% set acc_status = a.get('status','') %}
+                        {% if acc_status %}
+                          {% set acc_lower = acc_status|string|lower %}
+                          {% set acc_badge = 'success' if acc_lower=='active' else ('danger' if acc_lower=='banned' else ('warning' if acc_lower in ['limited','frozen','human_check'] else 'secondary')) %}
+                          <span class="badge text-bg-{{ acc_badge }}">{{ acc_status }}</span>
+                        {% endif %}
+                      </div>
+                      {% set st_main = join_status.get(a.session_name, {}).get(target.get('chat_id')|string) %}
+                      {% set st_linked = join_status.get(a.session_name, {}).get(target.get('linked_chat_id')|string) %}
+                      {% if st_main or st_linked %}
+                        <div class="small mt-1">
+                          {% if st_main %}
+                            {% set sm = st_main.get('status','') %}
+                            <span class="badge text-bg-{{ 'success' if sm=='joined' else 'warning' }}">{{ 'main: ' ~ sm }}</span>
+                          {% endif %}
+                          {% if st_linked %}
+                            {% set sl = st_linked.get('status','') %}
+                            <span class="badge text-bg-{{ 'success' if sl=='joined' else 'warning' }}">{{ 'linked: ' ~ sl }}</span>
+                          {% endif %}
+                        </div>
+                        {% if st_main and st_main.get('status') == 'scheduled' and st_main.get('next_retry_at') %}
+                          <div class="text-muted small mono">main join: {{ st_main.get('next_retry_at')|human_dt }}</div>
+                        {% endif %}
+                        {% if st_linked and st_linked.get('status') == 'scheduled' and st_linked.get('next_retry_at') %}
+                          <div class="text-muted small mono">linked join: {{ st_linked.get('next_retry_at')|human_dt }}</div>
+                        {% endif %}
+                      {% endif %}
+                      {% if st_main and st_main.get('status') != 'joined' and st_main.get('last_error') %}
+                        <div class="text-danger small">{{ st_main.get('last_error') }}</div>
+                      {% endif %}
+                      {% if st_linked and st_linked.get('status') != 'joined' and st_linked.get('last_error') %}
+                        <div class="text-danger small">{{ st_linked.get('last_error') }}</div>
+                      {% endif %}
+                      <button class="btn btn-sm btn-outline-secondary mt-1" type="submit" name="session_name" value="{{ a.session_name }}" formaction="/targets/{{ target.get('chat_id') }}/join" formmethod="post">Повторить</button>
                     </div>
                   {% endfor %}
                 </div>
@@ -286,4 +374,37 @@
       </form>
     </div>
   </div>
+  <script>
+    (() => {
+      const selectAll = document.getElementById("select_all_accounts");
+      if (!selectAll) return;
+      const boxes = Array.from(document.querySelectorAll(".js-account-checkbox"));
+      const update = () => {
+        if (!boxes.length) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+          return;
+        }
+        const checked = boxes.filter((b) => b.checked).length;
+        if (checked === 0) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+        } else if (checked === boxes.length) {
+          selectAll.checked = true;
+          selectAll.indeterminate = false;
+        } else {
+          selectAll.checked = false;
+          selectAll.indeterminate = true;
+        }
+      };
+      selectAll.addEventListener("change", () => {
+        boxes.forEach((b) => {
+          b.checked = selectAll.checked;
+        });
+        selectAll.indeterminate = false;
+      });
+      boxes.forEach((b) => b.addEventListener("change", update));
+      update();
+    })();
+  </script>
 {% endblock %}

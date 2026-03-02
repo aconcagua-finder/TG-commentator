@@ -1,0 +1,529 @@
+{% extends "base.html" %}
+{% block title %}Добавить обсуждения · TG-комментатор{% endblock %}
+{% block content %}
+  {% import "macros.html" as ui %}
+  <h1 class="h3 mb-3">Добавить цель обсуждений</h1>
+  <div class="card">
+    <div class="card-body">
+      <form method="post" action="/discussions/new" class="row g-3">
+        {% if chat_options and chat_options|length > 0 %}
+          <div class="col-12">
+            <label class="form-label app-label" for="discussion_chat_select">
+              <span class="app-label-text">Выбрать существующий чат (необязательно)</span>
+              {{ ui.tip("Подставит значение в поле ниже. Можно выбрать чат из уже добавленных целей/мониторинга/реакций/обсуждений в текущем проекте.") }}
+            </label>
+            <select class="form-select" id="discussion_chat_select" autocomplete="off">
+              <option value="" {% if not chat_input_prefill %}selected{% endif %}>— выбрать чат…</option>
+              {% for opt in chat_options %}
+                <option value="{{ opt.value }}" {% if (chat_input_prefill or '')|trim == (opt.value or '')|trim %}selected{% endif %}>{{ opt.label }}</option>
+              {% endfor %}
+            </select>
+            <div class="text-muted small mt-1">Выбор заполнит поле «ID / @username / ссылка‑приглашение».</div>
+          </div>
+        {% endif %}
+        <div class="col-12">
+          <label class="form-label app-label">
+            <span class="app-label-text">ID / @username / ссылка‑приглашение</span>
+            {{ ui.tip("Можно указать -100..., @username или ссылку t.me. Для каналов будет использована связанная группа обсуждений (linked_chat_id).") }}
+          </label>
+          <input class="form-control" id="discussion_chat_input" name="chat_input" autocomplete="off" required value="{{ chat_input_prefill or '' }}" />
+        </div>
+
+        <div class="col-12">
+          <label class="form-label app-label">
+            <span class="app-label-text">Название цели</span>
+            {{ ui.tip("Помогает отличать несколько целей в одном и том же чате (например: «похвала сервиса», «скепсис», «обсуждение цены»).") }}
+          </label>
+          <input class="form-control" name="title" autocomplete="off" placeholder="Например: Похвалить сервис" />
+        </div>
+
+        <div class="col-12 col-md-4">
+          <label class="form-label app-label">
+            <span class="app-label-text">Оператор</span>
+            {{ ui.tip("Аккаунт, с которого человек отправляет фразу‑старт. Только его сообщения могут запускать обсуждение.") }}
+          </label>
+          <select class="form-select" name="operator_session_name" required>
+            <option value="" selected disabled>Выберите аккаунт…</option>
+            {% for a in accounts %}
+              <option value="{{ a.session_name }}">{{ a.session_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-12 col-md-4">
+          <label class="form-label app-label">
+            <span class="app-label-text">AI провайдер</span>
+            {{ ui.tip("default = провайдер из общих настроек AI.") }}
+          </label>
+          <select class="form-select" name="ai_provider">
+            <option value="default" selected>DEFAULT</option>
+            <option value="openai">OPENAI</option>
+            <option value="openrouter">OPENROUTER</option>
+            <option value="deepseek">DEEPSEEK</option>
+            <option value="gemini">GEMINI</option>
+          </select>
+        </div>
+
+        <div class="col-12 col-md-4 d-flex align-items-end">
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" name="enabled" id="discussion_enabled" checked />
+            <label class="form-check-label" for="discussion_enabled">Включено</label>
+          </div>
+        </div>
+
+        <div class="col-12 col-md-4">
+          <label class="form-label app-label">
+            <span class="app-label-text">Медленное вступление (мин)</span>
+            {{ ui.tip("Если > 0 — аккаунты, назначенные на цель, будут вступать в чат постепенно: максимум 1 аккаунт раз в N минут. 0 = сразу.") }}
+          </label>
+          <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="slow_join_interval_mins" value="0" />
+        </div>
+
+        <div class="col-12">
+          <label class="form-label app-label" for="discussion_seed_text">
+            <span class="app-label-text">Запустить обсуждение (необязательно)</span>
+            {{ ui.tip("Если нажать «Добавить и запустить» — эта фраза будет отправлена от аккаунта оператора в чат обсуждений, и боты начнут диалог по этим настройкам. При наличии фразы «Старт без префикса» включится автоматически.") }}
+          </label>
+          <textarea class="form-control" id="discussion_seed_text" name="seed_text" rows="3" placeholder="Мысль/тезис…"></textarea>
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label class="form-label app-label">
+            <span class="app-label-text">Префикс старта</span>
+            {{ ui.tip("Если «Старт без префикса» выключен — обсуждение запускается только если оператор отправит сообщение, начинающееся с префикса (пример: >> мысль). Если «Старт без префикса» включён — префикс не обязателен и будет вырезан, если указан.") }}
+          </label>
+          <input class="form-control mono" name="start_prefix" value=">>" />
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label class="form-label app-label">
+            <span class="app-label-text">Старт без префикса</span>
+            {{ ui.tip("Если включено — обсуждение запускается по любому новому сообщению оператора (не ответ). Чтобы запускать из reply — используйте префикс.") }}
+          </label>
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" name="start_on_operator_message" id="start_on_operator_message" />
+            <label class="form-check-label" for="start_on_operator_message">Включено</label>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <label class="form-label app-label">
+            <span class="app-label-text">Общий вектор (необязательно)</span>
+            {{ ui.tip("Например: спорьте мягко, приводите аргументы 'за/против', держите нейтральный тон, избегайте токсичности и т.д.") }}
+          </label>
+          <textarea class="form-control" name="vector_prompt" rows="4" placeholder="Направление обсуждения…"></textarea>
+        </div>
+
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Мин. реплик</span>
+            {{ ui.tip("Сколько сообщений ботов будет отправлено в диалоге (минимум).") }}
+          </label>
+          <input class="form-control" type="number" min="1" max="200" step="1" inputmode="numeric" name="turns_min" value="6" />
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Макс. реплик</span>
+            {{ ui.tip("Сколько сообщений ботов будет отправлено в диалоге (максимум).") }}
+          </label>
+          <input class="form-control" type="number" min="1" max="200" step="1" inputmode="numeric" name="turns_max" value="10" />
+        </div>
+
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Память (реплик)</span>
+            {{ ui.tip("Сколько последних реплик диалога добавлять в промпт. Помогает помнить контекст и не повторяться. 0 = без памяти.") }}
+          </label>
+          <input class="form-control" type="number" min="0" max="200" step="1" inputmode="numeric" name="memory_turns" value="20" />
+        </div>
+
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Старт (мин, сек)</span>
+            {{ ui.tip("Задержка перед первой репликой после сообщения оператора.") }}
+          </label>
+          <input class="form-control" type="number" min="0" max="86400" step="1" inputmode="numeric" name="initial_delay_min" value="10" />
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Старт (макс, сек)</span>
+            {{ ui.tip("Задержка перед первой репликой после сообщения оператора (верхняя граница).") }}
+          </label>
+          <input class="form-control" type="number" min="0" max="86400" step="1" inputmode="numeric" name="initial_delay_max" value="40" />
+        </div>
+
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Пауза (мин, сек)</span>
+            {{ ui.tip("Пауза между репликами ботов.") }}
+          </label>
+          <input class="form-control" type="number" min="0" max="86400" step="1" inputmode="numeric" name="delay_between_min" value="20" />
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
+            <span class="app-label-text">Пауза (макс, сек)</span>
+            {{ ui.tip("Пауза между репликами ботов (верхняя граница).") }}
+          </label>
+          <input class="form-control" type="number" min="0" max="86400" step="1" inputmode="numeric" name="delay_between_max" value="80" />
+        </div>
+
+        <div class="col-12">
+          <h2 class="h6 mt-2 mb-2">Аккаунты‑участники</h2>
+          {% set assigned = [] %}
+          {% set all_selected = false %}
+          <div class="d-flex align-items-center gap-3 flex-wrap mb-2">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="select_all" value="1" id="select_all_accounts" />
+              <label class="form-check-label" for="select_all_accounts">Выбрать все</label>
+            </div>
+            <div class="text-muted small">Если ничего не выбрано — обсуждение не запустится.</div>
+          </div>
+          <div class="row g-2">
+            {% for a in accounts %}
+              <div class="col-12 col-md-4">
+                <div class="form-check">
+                  <input class="form-check-input js-account-checkbox" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" />
+                  <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
+                </div>
+              </div>
+            {% endfor %}
+            {% if accounts|length == 0 %}
+              <div class="text-muted small">Аккаунтов нет — сначала добавьте аккаунты.</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="col-12">
+          <hr class="my-2" />
+          <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+            <div>
+              <h2 class="h6 mb-1">Сцены 2+ (продолжение беседы)</h2>
+              <div class="text-muted small">
+                Сцена 1 — это стартовая фраза оператора (поле «Запустить обсуждение»). Здесь можно заранее добавить сцены 2+:
+                система отправит фразу оператора и продолжит обсуждение с новыми настройками.
+                Пустые поля = использовать настройки цели.
+              </div>
+            </div>
+            <button class="btn btn-sm btn-outline-primary js-add-scene-btn" type="button" data-add-scene-btn="1">
+              <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Добавить сцену
+            </button>
+          </div>
+
+          <div id="scenes_container" class="d-flex flex-column gap-2 mt-3"></div>
+          <div class="text-muted small" id="no_scenes_hint">Сцен нет — обсуждение будет одним этапом.</div>
+
+          <div class="d-flex justify-content-end mt-3">
+            <button class="btn btn-sm btn-outline-primary js-add-scene-btn" type="button" data-add-scene-btn="1">
+              <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Добавить сцену
+            </button>
+          </div>
+
+          <template id="scene_row_tpl">
+            <div class="border rounded-3 p-3" data-scene-row>
+              <input type="hidden" name="scene_id" value="" />
+              <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                  <span class="badge text-bg-light border">Сцена <span class="js-scene-num">2</span></span>
+                  <input class="form-control form-control-sm" name="scene_title" value="" placeholder="Название (необязательно)" style="max-width: 320px;" />
+                </div>
+                <button class="btn btn-sm btn-outline-danger" type="button" onclick="window.__removeSceneRow(this)">Удалить</button>
+              </div>
+              <div class="row g-2 mt-1">
+                <div class="col-12">
+                  <label class="form-label app-label mb-1">
+                    <span class="app-label-text">Фраза оператора</span>
+                  </label>
+                  <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…"></textarea>
+                </div>
+                <div class="col-12">
+                  <label class="form-label app-label mb-1">
+                    <span class="app-label-text">Вектор сцены (опционально)</span>
+                  </label>
+                  <textarea class="form-control" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…"></textarea>
+                </div>
+                <div class="col-12 col-md-3">
+                  <label class="form-label app-label mb-1"><span class="app-label-text">Мин. реплик</span></label>
+                  <input class="form-control form-control-sm" type="number" min="1" max="200" step="1" inputmode="numeric" name="scene_turns_min" placeholder="(как в цели)" />
+                </div>
+                <div class="col-12 col-md-3">
+                  <label class="form-label app-label mb-1"><span class="app-label-text">Макс. реплик</span></label>
+                  <input class="form-control form-control-sm" type="number" min="1" max="200" step="1" inputmode="numeric" name="scene_turns_max" placeholder="(как в цели)" />
+                </div>
+                <div class="col-12 col-md-3">
+                  <label class="form-label app-label mb-1"><span class="app-label-text">Старт (мин, сек)</span></label>
+                  <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_initial_delay_min" placeholder="(как в цели)" />
+                </div>
+                <div class="col-12 col-md-3">
+                  <label class="form-label app-label mb-1"><span class="app-label-text">Старт (макс, сек)</span></label>
+                  <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_initial_delay_max" placeholder="(как в цели)" />
+                </div>
+                <div class="col-12 col-md-3">
+                  <label class="form-label app-label mb-1"><span class="app-label-text">Пауза (мин, сек)</span></label>
+                  <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_delay_between_min" placeholder="(как в цели)" />
+                </div>
+                <div class="col-12 col-md-3">
+                  <label class="form-label app-label mb-1"><span class="app-label-text">Пауза (макс, сек)</span></label>
+                  <input class="form-control form-control-sm" type="number" min="0" max="86400" step="1" inputmode="numeric" name="scene_delay_between_max" placeholder="(как в цели)" />
+                </div>
+                <div class="col-12">
+                  <label class="form-label app-label mb-1">
+                    <span class="app-label-text">Аккаунты‑участники сцены</span>
+                    {{ ui.tip("По умолчанию выбраны как в цели. Можно переопределить состав участников только для этой сцены.") }}
+                  </label>
+                  <div class="d-flex align-items-center gap-3 flex-wrap mb-1">
+                    <div class="form-check">
+                      <input class="form-check-input js-scene-select-all" type="checkbox" id="scene_select_all___SCENE_ID__" data-scene-id="__SCENE_ID__" data-scene-select-all-template="1" />
+                      <label class="form-check-label" for="scene_select_all___SCENE_ID__" data-scene-select-all-label-template="1">Выбрать все</label>
+                    </div>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" data-scene-copy-from-target="__SCENE_ID__" data-scene-copy-from-target-template="1">Как в цели</button>
+                    <div class="text-muted small">
+                      <span data-scene-count="__SCENE_ID__" data-scene-count-template="1"></span>
+                    </div>
+                  </div>
+                  <div class="row g-2">
+                    {% for a in accounts %}
+                      <div class="col-12 col-md-4">
+                        <div class="form-check">
+                          <input
+                            class="form-check-input js-scene-account-checkbox"
+                            type="checkbox"
+                            data-scene-id="__SCENE_ID__"
+                            data-scene-acc-template="1"
+                            name="scene_assigned_accounts___SCENE_ID__"
+                            value="{{ a.session_name }}"
+                            id="scene___SCENE_ID___acc_{{ a.session_name }}"
+                          />
+                          <label class="form-check-label mono" for="scene___SCENE_ID___acc_{{ a.session_name }}" data-scene-acc-label-template="1">{{ a.session_name }}</label>
+                        </div>
+                      </div>
+                    {% endfor %}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div class="col-12">
+          <button class="btn btn-primary" type="submit" name="action" value="create">Добавить</button>
+          <button class="btn btn-outline-primary" type="submit" name="action" value="create_and_start">Добавить и запустить</button>
+          <a class="btn btn-outline-secondary" href="/discussions">Отмена</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const select = document.getElementById("discussion_chat_select");
+      const input = document.getElementById("discussion_chat_input");
+      if (!select || !input) return;
+
+      select.addEventListener("change", () => {
+        const value = String(select.value || "").trim();
+        if (!value) return;
+        input.value = value;
+        input.focus();
+      });
+
+      input.addEventListener("input", () => {
+        if (!select.value) return;
+        const cur = String(input.value || "").trim();
+        const sel = String(select.value || "").trim();
+        if (cur !== sel) select.value = "";
+      });
+    })();
+
+    (() => {
+      const selectAll = document.getElementById("select_all_accounts");
+      if (!selectAll) return;
+      const boxes = Array.from(document.querySelectorAll(".js-account-checkbox"));
+      const update = () => {
+        if (!boxes.length) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+          return;
+        }
+        const checked = boxes.filter((b) => b.checked).length;
+        if (checked === 0) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+        } else if (checked === boxes.length) {
+          selectAll.checked = true;
+          selectAll.indeterminate = false;
+        } else {
+          selectAll.checked = false;
+          selectAll.indeterminate = true;
+        }
+      };
+      selectAll.addEventListener("change", () => {
+        boxes.forEach((b) => {
+          b.checked = selectAll.checked;
+        });
+        selectAll.indeterminate = false;
+      });
+      boxes.forEach((b) => b.addEventListener("change", update));
+      update();
+    })();
+
+    (() => {
+      const seed = document.getElementById("discussion_seed_text");
+      const toggle = document.getElementById("start_on_operator_message");
+      if (!seed || !toggle) return;
+      const maybeEnable = () => {
+        if ((seed.value || "").trim() && !toggle.checked) {
+          toggle.checked = true;
+          toggle.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      };
+      seed.addEventListener("input", maybeEnable);
+      maybeEnable();
+    })();
+
+    (() => {
+      const scenesContainer = document.getElementById("scenes_container");
+      const scenesTpl = document.getElementById("scene_row_tpl");
+      const addSceneBtns = Array.from(document.querySelectorAll(".js-add-scene-btn"));
+      const noScenesHint = document.getElementById("no_scenes_hint");
+
+      const genSceneId = () => {
+        try {
+          if (window.crypto && typeof window.crypto.randomUUID === "function") {
+            return window.crypto.randomUUID().replaceAll("-", "");
+          }
+        } catch (e) {}
+        return `${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
+      };
+
+      const getTargetCheckedSessions = () => {
+        return new Set(
+          Array.from(document.querySelectorAll(".js-account-checkbox"))
+            .filter((b) => b.checked)
+            .map((b) => String(b.value || "").trim())
+            .filter(Boolean)
+        );
+      };
+
+      const updateSceneParticipantsUi = (row) => {
+        if (!row) return;
+        const boxes = Array.from(row.querySelectorAll(".js-scene-account-checkbox"));
+        const selectAll = row.querySelector(".js-scene-select-all");
+        const checked = boxes.filter((b) => b.checked).length;
+
+        if (selectAll) {
+          if (!boxes.length) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+          } else if (checked === 0) {
+            selectAll.checked = false;
+            selectAll.indeterminate = false;
+          } else if (checked === boxes.length) {
+            selectAll.checked = true;
+            selectAll.indeterminate = false;
+          } else {
+            selectAll.checked = false;
+            selectAll.indeterminate = true;
+          }
+        }
+
+        const countEl = row.querySelector("[data-scene-count]");
+        if (countEl) countEl.textContent = boxes.length ? `${checked} выбрано` : "";
+      };
+
+      const applyTargetSelectionToSceneRow = (row) => {
+        if (!row) return;
+        const targetSet = getTargetCheckedSessions();
+        Array.from(row.querySelectorAll(".js-scene-account-checkbox")).forEach((b) => {
+          b.checked = targetSet.has(String(b.value || "").trim());
+        });
+        updateSceneParticipantsUi(row);
+      };
+
+      const initSceneParticipants = (row) => {
+        if (!row || row.dataset.sceneParticipantsInit === "1") return;
+        row.dataset.sceneParticipantsInit = "1";
+
+        const selectAll = row.querySelector(".js-scene-select-all");
+        const boxes = Array.from(row.querySelectorAll(".js-scene-account-checkbox"));
+        const copyBtn = row.querySelector("[data-scene-copy-from-target]");
+
+        if (selectAll) {
+          selectAll.addEventListener("change", () => {
+            boxes.forEach((b) => {
+              b.checked = selectAll.checked;
+            });
+            selectAll.indeterminate = false;
+            updateSceneParticipantsUi(row);
+          });
+        }
+
+        boxes.forEach((b) => b.addEventListener("change", () => updateSceneParticipantsUi(row)));
+
+        if (copyBtn) {
+          copyBtn.addEventListener("click", () => applyTargetSelectionToSceneRow(row));
+        }
+
+        updateSceneParticipantsUi(row);
+      };
+
+      const applySceneIdToTemplateRow = (row, sceneId) => {
+        if (!row || !sceneId) return;
+        row.dataset.sceneId = sceneId;
+        const idInput = row.querySelector("input[name='scene_id']");
+        if (idInput) idInput.value = sceneId;
+
+        const replaceAttr = (el, attr) => {
+          const v = el.getAttribute(attr);
+          if (!v || !v.includes("__SCENE_ID__")) return;
+          el.setAttribute(attr, v.replaceAll("__SCENE_ID__", sceneId));
+        };
+        Array.from(row.querySelectorAll("*")).forEach((el) => {
+          replaceAttr(el, "id");
+          replaceAttr(el, "name");
+          replaceAttr(el, "for");
+          replaceAttr(el, "data-scene-id");
+          replaceAttr(el, "data-scene-copy-from-target");
+          replaceAttr(el, "data-scene-count");
+        });
+      };
+
+      const updateSceneNumbers = () => {
+        if (!scenesContainer) return;
+        const rows = Array.from(scenesContainer.querySelectorAll("[data-scene-row]"));
+        rows.forEach((row, idx) => {
+          const el = row.querySelector(".js-scene-num");
+          if (el) el.textContent = String(idx + 2);
+        });
+        if (noScenesHint) noScenesHint.classList.toggle("d-none", rows.length > 0);
+      };
+
+      window.__removeSceneRow = (btn) => {
+        const row = btn?.closest?.("[data-scene-row]");
+        if (row) row.remove();
+        updateSceneNumbers();
+      };
+
+      const addScene = () => {
+        if (!scenesContainer || !scenesTpl) return;
+        const frag = scenesTpl.content.cloneNode(true);
+        const row = frag.querySelector("[data-scene-row]");
+        if (row) {
+          const sid = genSceneId();
+          applySceneIdToTemplateRow(row, sid);
+          applyTargetSelectionToSceneRow(row);
+          initSceneParticipants(row);
+        }
+        scenesContainer.appendChild(frag);
+        updateSceneNumbers();
+        const last = scenesContainer.querySelector("[data-scene-row]:last-child textarea[name='scene_operator_text']");
+        if (last) last.focus();
+      };
+
+      if (addSceneBtns.length && scenesContainer && scenesTpl) {
+        addSceneBtns.forEach((btn) => btn.addEventListener("click", addScene));
+      }
+
+      updateSceneNumbers();
+    })();
+  </script>
+{% endblock %}

@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}Задачи · TG-комментатор{% endblock %}
+{% block content %}
+  <div class="app-page-head mb-3">
+    <h1 class="h3 mb-0">Задачи</h1>
+    <div class="text-muted small">Общий список активных и завершённых задач по текущему проекту.</div>
+  </div>
+
+  {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <div class="row g-3 align-items-end">
+        <div class="col-12 col-md-3">
+          <label class="form-label" for="tasksFilterType">Направление</label>
+          <select class="form-select" id="tasksFilterType">
+            <option value="all">Все</option>
+            <option value="commenting">Комментирование</option>
+            <option value="discussions">Обсуждения</option>
+            <option value="inbox">Инбокс</option>
+            <option value="join">Вступления</option>
+            <option value="system">Система</option>
+          </select>
+        </div>
+
+        <div class="col-12 col-md-3">
+          <label class="form-label">Статус</label>
+          <div class="d-flex gap-3 flex-wrap">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="tasksShowActive" checked />
+              <label class="form-check-label" for="tasksShowActive">В работе</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="tasksShowFinished" checked />
+              <label class="form-check-label" for="tasksShowFinished">Завершённые</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="tasksSearch">Поиск</label>
+          <input class="form-control" id="tasksSearch" placeholder="Чат, аккаунт, текст…" autocomplete="off" />
+        </div>
+      </div>
+
+      <div class="text-muted small mt-2">
+        Показано: <span class="mono" id="tasksVisibleCount">0</span> из <span class="mono">{{ tasks|length }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle app-table">
+          <caption class="visually-hidden">Список задач</caption>
+          <thead>
+            <tr>
+              <th style="min-width: 160px;">Когда</th>
+              <th style="min-width: 160px;">Направление</th>
+              <th>Задача</th>
+              <th style="min-width: 160px;">Статус</th>
+              <th style="width: 1%;"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in tasks %}
+              <tr
+                data-task-row
+                data-group="{{ t.get('group','') }}"
+                data-active="{{ '1' if t.get('is_active') else '0' }}"
+                data-search="{{ (t.get('search_text','') or '')|lower }}"
+              >
+                <td class="small mono">{{ t.get('when_ts')|human_dt }}</td>
+                <td class="small">
+                  <span class="badge text-bg-light border">{{ t.get('group_label','') }}</span>
+                  {% if t.get('kind_label') %}
+                    <div class="text-muted small">{{ t.get('kind_label') }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  <div class="fw-semibold app-clamp-1" title="{{ t.get('title','') }}">{{ t.get('title','') }}</div>
+                  {% if t.get('subtitle') %}
+                    <div class="text-muted small app-clamp-1" title="{{ t.get('subtitle','') }}">{{ t.get('subtitle','') }}</div>
+                  {% endif %}
+                </td>
+                <td class="small">
+                  <span class="badge text-bg-{{ t.get('status_color','secondary') }}" title="{{ t.get('status','') }}">{{ t.get('status_label','—') }}</span>
+                  {% if t.get('meta') %}
+                    <div class="text-muted small app-clamp-1" title="{{ t.get('meta','') }}">{{ t.get('meta','') }}</div>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  {% if t.get('href') %}
+                    <a
+                      class="btn btn-sm btn-outline-primary app-icon-btn"
+                      href="{{ t.get('href') }}"
+                      data-bs-toggle="tooltip"
+                      data-bs-title="Открыть"
+                      aria-label="Открыть"
+                      title="Открыть"
+                    >
+                      <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                    </a>
+                  {% else %}
+                    <span class="text-muted small">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            {% if tasks|length == 0 %}
+              <tr><td colspan="5" class="text-center text-muted py-4">Пока нет задач.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="alert alert-info mt-3 d-none" id="tasksNoneAlert">Ничего не найдено по текущим фильтрам.</div>
+
+  <script>
+    (() => {
+      const KEY = "ai_center_tasks_filters";
+      const elType = document.getElementById("tasksFilterType");
+      const elActive = document.getElementById("tasksShowActive");
+      const elFinished = document.getElementById("tasksShowFinished");
+      const elSearch = document.getElementById("tasksSearch");
+      const elCount = document.getElementById("tasksVisibleCount");
+      const elNone = document.getElementById("tasksNoneAlert");
+      const rows = Array.from(document.querySelectorAll("[data-task-row]"));
+
+      const normalize = (value) => String(value || "").trim().toLowerCase();
+
+      const defaultState = { type: "all", active: true, finished: true, search: "" };
+
+      const loadState = () => {
+        try {
+          const raw = JSON.parse(localStorage.getItem(KEY) || "{}") || {};
+          return { ...defaultState, ...raw };
+        } catch (_) {
+          return { ...defaultState };
+        }
+      };
+
+      const saveState = (state) => {
+        try {
+          localStorage.setItem(KEY, JSON.stringify(state));
+        } catch (_) {}
+      };
+
+      const apply = () => {
+        const state = {
+          type: elType?.value || "all",
+          active: !!elActive?.checked,
+          finished: !!elFinished?.checked,
+          search: normalize(elSearch?.value || ""),
+        };
+        saveState(state);
+
+        let visible = 0;
+        for (const row of rows) {
+          const group = row.getAttribute("data-group") || "";
+          const isActive = (row.getAttribute("data-active") || "0") === "1";
+          const searchText = row.getAttribute("data-search") || "";
+
+          let show = true;
+          if (state.type !== "all" && group !== state.type) show = false;
+          if (!state.active && isActive) show = false;
+          if (!state.finished && !isActive) show = false;
+          if (state.search && !searchText.includes(state.search)) show = false;
+
+          row.classList.toggle("d-none", !show);
+          if (show) visible += 1;
+        }
+
+        if (elCount) elCount.textContent = String(visible);
+        if (elNone) elNone.classList.toggle("d-none", visible !== 0 || rows.length === 0);
+      };
+
+      const init = () => {
+        const state = loadState();
+        if (elType) elType.value = state.type || "all";
+        if (elActive) elActive.checked = !!state.active;
+        if (elFinished) elFinished.checked = !!state.finished;
+        if (elSearch) elSearch.value = state.search || "";
+        apply();
+      };
+
+      if (elType) elType.addEventListener("change", apply);
+      if (elActive) elActive.addEventListener("change", apply);
+      if (elFinished) elFinished.addEventListener("change", apply);
+      if (elSearch) {
+        let timer = null;
+        elSearch.addEventListener("input", () => {
+          if (timer) window.clearTimeout(timer);
+          timer = window.setTimeout(apply, 120);
+        });
+      }
+
+      init();
+    })();
+  </script>
+{% endblock %}
+

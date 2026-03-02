@@ -10,7 +10,7 @@
           <div class="accordion-item">
             <h2 class="accordion-header" id="targetNewHeadingChat">
               <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#targetNewChat" aria-expanded="true" aria-controls="targetNewChat">
-                1) Чат и промпт
+                1) Чат
               </button>
             </h2>
             <div id="targetNewChat" class="accordion-collapse collapse show" aria-labelledby="targetNewHeadingChat" data-bs-parent="#targetNewAccordion">
@@ -24,13 +24,15 @@
                     <input class="form-control" name="chat_input" autocomplete="off" placeholder="-100... или @channel или https://t.me/..." value="{{ chat_input_prefill }}" required />
                     <div class="text-muted small mt-1">Нужен хотя бы один авторизованный аккаунт для проверки/вступления.</div>
                     <div class="text-muted small">Если у канала включены комментарии, админка автоматически найдёт привязанный чат обсуждений.</div>
+                    <div class="text-muted small">Если комментатор сейчас работает, он будет временно остановлен и запущен снова для проверки чата.</div>
                   </div>
-                  <div class="col-12">
+                  <div class="col-12 col-md-4">
                     <label class="form-label app-label">
-                      <span class="app-label-text">Промпт по умолчанию</span>
-                      {{ ui.tip("Базовый промпт для всех аккаунтов в этом чате. Можно переопределять на странице «Промпты» для конкретных аккаунтов.") }}
+                      <span class="app-label-text">Медленное вступление (мин)</span>
+                      {{ ui.tip("Если позже назначить много аккаунтов на цель, они будут вступать постепенно: максимум 1 аккаунт раз в N минут. 0 = сразу (как сейчас).") }}
                     </label>
-                <textarea class="form-control" name="prompt_default" rows="4" placeholder="если пусто — будет базовый">Коротенький небрежно написанный коммент, как в чатах телеграм на тему поста. Без избыточного количества эмодзи, рандомно, обращаясь к одному из ключевых тезисов поста. Не пиши как нейросеть, пиши как обычный человек с присущими ему опечатками или речевыми ошибками (не обязательно). Без всяких длинных тире и кавычек-елочек. Сообщение может быть как очень короткое, так и чуть длиннее, иногда звучать как вопрос или сомнение, мягкое отрицание написанного. От двух до 40 слов в ответе, как захочется, лучше длинных фраз и мыслей избегать.</textarea>
+                    <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="slow_join_interval_mins" value="0" />
+                    <div class="text-muted small">Анти‑палевно: не вся «орава» вступает одновременно.</div>
                   </div>
                 </div>
               </div>
@@ -61,6 +63,18 @@
                   </div>
                   <div class="col-12 col-md-3">
                     <label class="form-label app-label">
+                      <span class="app-label-text">Цитировать пост (%)</span>
+                      {{ ui.tip("С этим шансом комментарий будет отправлен прямым реплаем к посту (с цитированием). Иначе — отправится в ветку комментариев к посту без цитаты (как в интерфейсе Telegram).") }}
+                    </label>
+                    <input class="form-control" id="tag_comment_chance" type="number" min="0" max="100" step="1" inputmode="numeric" name="tag_comment_chance" value="50" />
+                    <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрые пресеты вероятности цитирования">
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#tag_comment_chance" data-set-value="100">100%</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#tag_comment_chance" data-set-value="50">50%</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#tag_comment_chance" data-set-value="0">0%</button>
+                    </div>
+                  </div>
+                  <div class="col-12 col-md-3">
+                    <label class="form-label app-label">
                       <span class="app-label-text">Аккаунтов на пост (диапазон)</span>
                       {{ ui.tip("Случайное число аккаунтов на каждый пост. Укажите мин/макс. 0–0 = все. Для фиксированного числа укажите одинаковые значения (например 2–2).") }}
                     </label>
@@ -69,7 +83,7 @@
                       <span class="input-group-text">–</span>
                       <input class="form-control" id="accounts_per_post_max" type="number" min="0" step="1" inputmode="numeric" name="accounts_per_post_max" value="50" aria-label="Максимум" />
                     </div>
-                    <div class="form-text">Аккаунты выбираются по ротации: сначала те, кто ещё не комментировал в цикле, затем цикл обновляется.</div>
+                    <div class="form-text">Аккаунты выбираются случайно на каждый пост (и «план» сохраняется). Если бот перезапустился, он не начнёт снова с первого аккаунта и не будет повторять аккаунты, которые уже прокомментировали этот пост.</div>
                     <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрые пресеты диапазона аккаунтов">
                       <button class="btn btn-sm btn-outline-secondary" type="button" data-set-multi='{"#accounts_per_post_min":"1","#accounts_per_post_max":"3"}'>1–3</button>
                       <button class="btn btn-sm btn-outline-secondary" type="button" data-set-multi='{"#accounts_per_post_min":"2","#accounts_per_post_max":"4"}'>2–4</button>
@@ -190,7 +204,7 @@
                   <button
                     class="btn btn-sm btn-outline-secondary"
                     type="button"
-                    data-set-multi='{"#comment_chance":"100","#accounts_per_post_min":"1","#accounts_per_post_max":"50","input[name=\\"daily_comment_limit\\"]":"50","input[name=\\"initial_comment_delay\\"]":"180","input[name=\\"delay_between_accounts\\"]":"240","input[name=\\"min_word_count\\"]":"0","input[name=\\"min_post_interval_mins\\"]":"0","#min_meaningful_words":"6","#media_min_meaningful_words":"12","#skip_promotional_posts":"true","#skip_short_media_posts":"true"}'
+                    data-set-multi='{"#comment_chance":"100","#tag_comment_chance":"50","#accounts_per_post_min":"1","#accounts_per_post_max":"50","input[name=\\"daily_comment_limit\\"]":"50","input[name=\\"initial_comment_delay\\"]":"180","input[name=\\"delay_between_accounts\\"]":"240","input[name=\\"min_word_count\\"]":"0","input[name=\\"min_post_interval_mins\\"]":"0","#min_meaningful_words":"6","#media_min_meaningful_words":"12","#skip_promotional_posts":"true","#skip_short_media_posts":"true"}'
                   >
                     Вернуть по умолчанию
                   </button>

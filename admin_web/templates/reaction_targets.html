@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Реакции · TG-комментатор{% endblock %}
 {% block content %}
-  <div class="d-flex align-items-center justify-content-between mb-3">
+  <div class="app-page-head mb-3">
     <h1 class="h3 mb-0">Цели реакций</h1>
     <a class="btn btn-primary" href="/reaction-targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
   </div>
@@ -27,13 +27,22 @@
             {% for t in targets %}
               <tr>
                 <td>
-                  <div>{{ t.get('chat_name') }}</div>
+                  <div class="app-clamp-1" title="{{ t.get('chat_name') or '' }}">{{ t.get('chat_name') }}</div>
                   <div class="text-muted small mono">{{ t.get('chat_id') }}</div>
                 </td>
                 <td class="mono">{{ ' '.join(t.get('reactions', [])) }}</td>
                 <td><span class="badge text-bg-light border">{{ t.get('reaction_chance',80) }}%</span></td>
                 <td class="text-end">
-                  <a class="btn btn-sm btn-outline-primary" href="/reaction-targets/{{ t.get('chat_id') }}">Открыть</a>
+                  <a
+                    class="btn btn-sm btn-outline-primary app-icon-btn"
+                    href="/reaction-targets/{{ t.get('chat_id') }}"
+                    data-bs-toggle="tooltip"
+                    data-bs-title="Открыть"
+                    aria-label="Открыть"
+                    title="Открыть"
+                  >
+                    <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+                  </a>
                 </td>
               </tr>
             {% endfor %}

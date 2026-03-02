@@ -50,6 +50,13 @@
         </div>
         <div class="col-12 col-md-3">
           <label class="form-label app-label">
+            <span class="app-label-text">Медленное вступление (мин)</span>
+            {{ ui.tip("Если > 0 — назначенные аккаунты будут вступать в канал постепенно: максимум 1 аккаунт раз в N минут. 0 = сразу.") }}
+          </label>
+          <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="slow_join_interval_mins" value="0" />
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label app-label">
             <span class="app-label-text">Лимит/сутки</span>
             {{ ui.tip("Суммарный лимит реакций/сутки по этому каналу (учитывает все аккаунты). 0 = без лимита.") }}
           </label>

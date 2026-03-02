@@ -9,12 +9,13 @@
 
   <div class="card mb-3">
     <div class="card-body">
-      <form method="get" action="/targets/search" class="d-flex gap-2">
+      <form method="get" action="/targets/search" class="d-flex gap-2 align-items-center">
         <label class="visually-hidden" for="source_channel">Источник</label>
         <input class="form-control" id="source_channel" name="source" placeholder="@source_channel или ссылка" value="{{ source }}" required />
         <button class="btn btn-primary" type="submit">Искать</button>
       </form>
       <div class="text-muted small mt-2">Ищет рекомендации Telegram и оставляет только каналы с включёнными комментариями.</div>
+      <div class="text-muted small">Если комментатор работает, он будет временно остановлен и запущен снова.</div>
     </div>
   </div>
 

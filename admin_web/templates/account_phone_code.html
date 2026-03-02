@@ -6,7 +6,7 @@
     <div class="card-body">
       <p class="mb-1">Аккаунт: <span class="mono">{{ session_name }}</span></p>
       <p class="text-muted">Телефон: <span class="mono">{{ phone }}</span></p>
-      <form method="post" action="/accounts/new/phone/{{ token }}/code" class="d-flex gap-2">
+      <form method="post" action="/accounts/new/phone/{{ token }}/code" class="app-inline-form">
         <label class="visually-hidden" for="tg_code">Код из Telegram</label>
         <input class="form-control" id="tg_code" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="12345" required />
         <button class="btn btn-primary" type="submit">Подтвердить</button>

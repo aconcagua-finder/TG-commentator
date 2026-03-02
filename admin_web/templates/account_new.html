@@ -22,19 +22,21 @@
               <select class="form-select" name="proxy_id">
                 <option value="">без прокси</option>
                 {% for p in proxies %}
-                  <option value="{{ p.id }}">#{{ p.id }} · {{ p.ip }} ({{ p.country }})</option>
+                  {% set label = p.name or (p.ip or '—') ~ ((' (' ~ p.country ~ ')') if p.country else '') %}
+                  <option value="{{ p.id }}">{{ ('#' ~ p.id ~ ' · ') if not p.name else '' }}{{ label }}</option>
                 {% endfor %}
               </select>
             </div>
             <div class="mb-2">
-              <label class="form-label">Persona (опционально)</label>
-              <select class="form-select" name="persona_id">
-                <option value="">без роли</option>
-                {% for pid, pdata in personas.items() %}
-                  <option value="{{ pid }}">{{ pdata.name }}</option>
+              <label class="form-label">Роль</label>
+              <select class="form-select" name="role_id" required>
+                {% for rid, rdata in roles %}
+                  <option value="{{ rid }}" {% if rid == default_role_id %}selected{% endif %}>{{ rdata.name }}</option>
                 {% endfor %}
               </select>
+              <div class="form-text">У аккаунта всегда должна быть роль. По умолчанию ставится базовая.</div>
             </div>
+            <div class="text-muted small mb-2">Проверки отключены.</div>
             <button class="btn btn-primary" type="submit">Добавить</button>
           </form>
         </div>
@@ -59,10 +61,20 @@
               <select class="form-select" name="proxy_id">
                 <option value="">без прокси</option>
                 {% for p in proxies %}
-                  <option value="{{ p.id }}">#{{ p.id }} · {{ p.ip }} ({{ p.country }})</option>
+                  {% set label = p.name or (p.ip or '—') ~ ((' (' ~ p.country ~ ')') if p.country else '') %}
+                  <option value="{{ p.id }}">{{ ('#' ~ p.id ~ ' · ') if not p.name else '' }}{{ label }}</option>
                 {% endfor %}
               </select>
             </div>
+            <div class="mb-2">
+              <label class="form-label">Роль</label>
+              <select class="form-select" name="role_id" required>
+                {% for rid, rdata in roles %}
+                  <option value="{{ rid }}" {% if rid == default_role_id %}selected{% endif %}>{{ rdata.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="text-muted small mb-2">Проверки отключены.</div>
             <button class="btn btn-primary" type="submit">Отправить код</button>
           </form>
           <p class="text-muted small mt-2 mb-0">Код и 2FA вводятся на следующих шагах.</p>

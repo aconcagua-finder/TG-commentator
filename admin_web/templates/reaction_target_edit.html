@@ -58,14 +58,29 @@
             </label>
             <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="daily_reaction_limit" value="{{ target.get('daily_reaction_limit',999) }}" />
           </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label app-label">
+              <span class="app-label-text">Медленное вступление (мин)</span>
+              {{ ui.tip("Если > 0 — назначенные аккаунты будут вступать в канал постепенно: максимум 1 аккаунт раз в N минут. 0 = сразу.") }}
+            </label>
+            <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="slow_join_interval_mins" value="{{ target.get('slow_join_interval_mins',0) }}" />
+          </div>
           <div class="col-12">
             <h2 class="h6 mt-2 mb-2">Аккаунты</h2>
+            {% set assigned = target.get('assigned_accounts', []) %}
+            {% set all_selected = assigned and accounts and (assigned|length == accounts|length) %}
+            <div class="d-flex align-items-center gap-3 flex-wrap mb-2">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="select_all" value="1" id="select_all_accounts" {% if all_selected %}checked{% endif %} />
+                <label class="form-check-label" for="select_all_accounts">Выбрать все</label>
+              </div>
+              <div class="text-muted small">Если ничего не выбрано — ничего не используется.</div>
+            </div>
             <div class="row g-2">
-              {% set assigned = target.get('assigned_accounts', []) %}
               {% for a in accounts %}
                 <div class="col-12 col-md-4">
                   <div class="form-check">
-                    <input class="form-check-input" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
+                    <input class="form-check-input js-account-checkbox" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
                     <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
                   </div>
                 </div>
@@ -80,4 +95,37 @@
       </form>
     </div>
   </div>
+  <script>
+    (() => {
+      const selectAll = document.getElementById("select_all_accounts");
+      if (!selectAll) return;
+      const boxes = Array.from(document.querySelectorAll(".js-account-checkbox"));
+      const update = () => {
+        if (!boxes.length) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+          return;
+        }
+        const checked = boxes.filter((b) => b.checked).length;
+        if (checked === 0) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+        } else if (checked === boxes.length) {
+          selectAll.checked = true;
+          selectAll.indeterminate = false;
+        } else {
+          selectAll.checked = false;
+          selectAll.indeterminate = true;
+        }
+      };
+      selectAll.addEventListener("change", () => {
+        boxes.forEach((b) => {
+          b.checked = selectAll.checked;
+        });
+        selectAll.indeterminate = false;
+      });
+      boxes.forEach((b) => b.addEventListener("change", update));
+      update();
+    })();
+  </script>
 {% endblock %}

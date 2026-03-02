@@ -21,6 +21,11 @@ logs/
 !.env.example
 config.ini
 
+# Runtime sessions (./accounts)
+accounts/
+*.session
+*.session-journal
+
 # Runtime data (root)
 accounts.json
 ai_settings.json

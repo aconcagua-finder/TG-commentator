@@ -6,19 +6,11 @@ services:
     volumes:
       - ./logs:/app/logs  # опционально: для логов
       - ./data:/app/data  # состояние/настройки/БД
+      - ./accounts:/app/accounts  # сессии аккаунтов
     restart: unless-stopped
-    environment:
-      PYTHONUNBUFFERED: "1"
-      APP_DATA_DIR: /app/data
-
-  admin_bot:
-    build: .
-    container_name: admin_bot_service
-    command: python admin_bot.py
-    volumes:
-      - ./logs:/app/logs  # опционально: общие логи
-      - ./data:/app/data  # состояние/настройки/БД
-    restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     environment:
       PYTHONUNBUFFERED: "1"
       APP_DATA_DIR: /app/data
@@ -32,7 +24,11 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
+      - ./accounts:/app/accounts  # сессии аккаунтов
     restart: unless-stopped
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     environment:
       PYTHONUNBUFFERED: "1"
       APP_DATA_DIR: /app/data

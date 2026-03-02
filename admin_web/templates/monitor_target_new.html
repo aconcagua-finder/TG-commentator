@@ -39,6 +39,11 @@
           <label class="form-label">Мин. интервал (мин)</label>
           <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="min_post_interval_mins" value="0" />
         </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label">Медленное вступление (мин)</label>
+          <input class="form-control" type="number" min="0" step="1" inputmode="numeric" name="slow_join_interval_mins" value="0" />
+          <div class="text-muted small">0 = сразу; >0 = 1 аккаунт раз в N минут.</div>
+        </div>
         <div class="col-12">
           <button class="btn btn-primary" type="submit">Добавить</button>
           <a class="btn btn-outline-secondary" href="/monitor-targets">Отмена</a>

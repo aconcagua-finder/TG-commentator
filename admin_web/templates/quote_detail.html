@@ -4,7 +4,7 @@
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <div>
       <div class="d-flex align-items-center gap-2">
-        <a class="btn btn-sm btn-outline-secondary" href="/quotes"><i class="bi bi-arrow-left me-1"></i>К списку</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ back_url or '/quotes' }}"><i class="bi bi-arrow-left me-1"></i>К списку</a>
         <span class="badge text-bg-light border mono">#{{ item.session_name }}</span>
       </div>
       <h1 class="h4 mb-0 mt-2">{{ item.title }}</h1>
@@ -18,6 +18,10 @@
         </div>
       {% endif %}
     </div>
+    <form method="post" action="/quotes/{{ item.id }}/delete" onsubmit="return confirm('Удалить запись?');">
+      <input type="hidden" name="return_to" value="{{ back_url or '/quotes' }}" />
+      <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Удалить</button>
+    </form>
   </div>
 
   <div class="card mb-3">
@@ -30,6 +34,11 @@
         <hr />
         <div class="text-muted small mb-2">Сообщение пользователя:</div>
         <div style="white-space: pre-wrap;">{{ item.text }}</div>
+      {% endif %}
+      {% if item.reactions_summary %}
+        <hr />
+        <div class="text-muted small mb-2">Реакции на комментарий бота:</div>
+        <div>{{ item.reactions_summary }}</div>
       {% endif %}
     </div>
   </div>

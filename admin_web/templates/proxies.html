@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Прокси · TG-комментатор{% endblock %}
 {% block content %}
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="app-page-head mb-3">
     <div>
       <h1 class="h3 mb-1">Прокси</h1>
       <div class="text-muted">Всего: {{ total }}, active: {{ active }}, dead: {{ dead }}</div>
     </div>
-    <div class="d-flex gap-2">
+    <div class="app-actions">
       <form method="post" action="/proxies/check-all">
         <button class="btn btn-primary" type="submit">Проверить все</button>
       </form>
@@ -20,62 +20,103 @@
     <div class="alert alert-info">Если прокси не нужны — пропустите. Если нужны — вставьте список ниже (по одному в строке) и нажмите «Импортировать».</div>
   {% endif %}
 
-  <div class="row g-3">
-    <div class="col-12 col-lg-5">
-      <div class="card">
-        <div class="card-body">
-          <h2 class="h5">Добавить</h2>
-          <form method="post" action="/proxies/add">
-            <label class="form-label" for="proxies_text">Список прокси (по одному в строке)</label>
-            <textarea class="form-control mono" name="proxies_text" id="proxies_text" rows="6" placeholder="protocol://user:password@ip:port" required></textarea>
-            <button class="btn btn-primary mt-2" type="submit">Импортировать</button>
-          </form>
-        </div>
-      </div>
+  <div class="card mb-3">
+    <div class="card-body">
+      <h2 class="h5">Добавить</h2>
+      <form method="post" action="/proxies/add">
+        <label class="form-label" for="proxy_name">Название (опционально, применится ко всем строкам)</label>
+        <input class="form-control mb-2" name="proxy_name" id="proxy_name" placeholder="Например: Тестовый Билурк" />
+        <label class="form-label" for="proxies_text">Список прокси (по одному в строке)</label>
+        <textarea class="form-control mono" name="proxies_text" id="proxies_text" rows="5" placeholder="protocol://user:password@ip:port&#10;ip:port@login:pass&#10;ip:port:login:pass&#10;Название | ip:port:login:pass" required></textarea>
+        <button class="btn btn-primary mt-2" type="submit">Импортировать</button>
+      </form>
     </div>
-    <div class="col-12 col-lg-7">
-      <div class="card">
-        <div class="card-body p-0">
-          <div class="table-responsive">
-            <table class="table table-hover mb-0 align-middle app-table">
-              <caption class="visually-hidden">Список прокси</caption>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>IP</th>
-                  <th>Страна</th>
-                  <th>Статус</th>
-                  <th>URL</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for p in proxies %}
-                  <tr>
-                    <td class="mono">{{ p.id }}</td>
-                    <td class="mono">{{ p.ip or '—' }}</td>
-                    <td>{{ p.country or '—' }}</td>
-                    <td>
-                      <span class="badge text-bg-{{ 'success' if p.status=='active' else 'secondary' }}">{{ p.status }}</span>
-                    </td>
-                    <td class="mono small" title="{{ p.url }}">{{ p.url[:32] }}…</td>
-                    <td class="text-end">
-                      <form method="post" action="/proxies/{{ p.id }}/check" class="d-inline">
-                        <button class="btn btn-sm btn-outline-primary" type="submit">Проверить</button>
+  </div>
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle app-table">
+          <caption class="visually-hidden">Список прокси</caption>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Название</th>
+              <th>IP</th>
+              <th>Страна</th>
+              <th>Статус</th>
+              <th>URL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for p in proxies %}
+              <tr>
+                <td class="mono">{{ p.id }}</td>
+                <td>
+                  <form id="proxy_name_form_{{ p.id }}" method="post" action="/proxies/{{ p.id }}/name">
+                    <input class="form-control form-control-sm" name="name" value="{{ p.name or '' }}" placeholder="—" />
+                  </form>
+                </td>
+                <td class="mono">{{ p.ip or '—' }}</td>
+                <td>{{ p.country or '—' }}</td>
+                <td>
+                  <span class="badge text-bg-{{ 'success' if p.status=='active' else 'secondary' }}">{{ p.status }}</span>
+                </td>
+                <td class="mono small" title="{{ p.url }}">
+                  <div class="d-flex align-items-center gap-2 justify-content-between">
+                    <span class="app-clamp-1 flex-grow-1">
+                      {% if p.url|length > 34 %}{{ p.url[:34] }}…{% else %}{{ p.url }}{% endif %}
+                    </span>
+                    <div class="app-icon-actions flex-shrink-0">
+                      <button
+                        class="btn btn-sm btn-outline-primary app-icon-btn"
+                        type="submit"
+                        form="proxy_name_form_{{ p.id }}"
+                        data-bs-toggle="tooltip"
+                        data-bs-title="Сохранить название"
+                        aria-label="Сохранить название"
+                        title="Сохранить название"
+                      >
+                        <i class="bi bi-floppy" aria-hidden="true"></i>
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary app-icon-btn"
+                        type="button"
+                        data-copy="{{ p.url }}"
+                        data-copy-feedback="icon"
+                        data-bs-toggle="tooltip"
+                        data-bs-title="Скопировать полный прокси"
+                        aria-label="Скопировать полный прокси"
+                        title="Скопировать полный прокси"
+                      >
+                        <i class="bi bi-copy" aria-hidden="true"></i>
+                      </button>
+                      <form method="post" action="/proxies/{{ p.id }}/check" class="d-inline" title="Проверить прокси">
+                        <button class="btn btn-sm btn-outline-primary app-icon-btn" type="submit" aria-label="Проверить прокси">
+                          <i class="bi bi-search" aria-hidden="true"></i>
+                        </button>
                       </form>
-                      <form method="post" action="/proxies/{{ p.id }}/delete" class="d-inline" onsubmit="return confirm('Удалить прокси?');">
-                        <button class="btn btn-sm btn-outline-danger" type="submit">Удалить</button>
+                      <form
+                        method="post"
+                        action="/proxies/{{ p.id }}/delete"
+                        class="d-inline"
+                        onsubmit="return confirm('Удалить прокси?');"
+                        title="Удалить прокси"
+                      >
+                        <button class="btn btn-sm btn-outline-danger app-icon-btn" type="submit" aria-label="Удалить прокси">
+                          <i class="bi bi-trash" aria-hidden="true"></i>
+                        </button>
                       </form>
-                    </td>
-                  </tr>
-                {% endfor %}
-                {% if proxies|length == 0 %}
-                  <tr><td colspan="6" class="text-center text-muted py-4">Прокси нет.</td></tr>
-                {% endif %}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+            {% if proxies|length == 0 %}
+              <tr><td colspan="6" class="text-center text-muted py-4">Прокси нет.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>

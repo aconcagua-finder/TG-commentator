@@ -45,7 +45,16 @@
                     <div class="text-muted small">{{ t.answer_text }}</div>
                   </div>
                   <form method="post" action="/targets/{{ target.chat_id }}/triggers/{{ t.id }}/delete" onsubmit="return confirm('Удалить триггер?');">
-                    <button class="btn btn-sm btn-outline-danger" type="submit">Удалить</button>
+                    <button
+                      class="btn btn-sm btn-outline-danger app-icon-btn"
+                      type="submit"
+                      data-bs-toggle="tooltip"
+                      data-bs-title="Удалить"
+                      aria-label="Удалить"
+                      title="Удалить"
+                    >
+                      <i class="bi bi-trash" aria-hidden="true"></i>
+                    </button>
                   </form>
                 </div>
               {% endfor %}

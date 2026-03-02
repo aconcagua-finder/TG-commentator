@@ -20,7 +20,7 @@
   </head>
   <body class="app-body">
     {% if flashes %}
-      <div class="toast-container position-fixed top-0 end-0 p-3 app-toasts">
+      <div class="toast-container position-fixed end-0 p-3 app-toasts">
         {% for f in flashes %}
           {% set is_error = f.category in ['danger', 'error'] %}
           {% set is_dark = f.category in ['success', 'danger', 'primary', 'secondary', 'dark'] %}

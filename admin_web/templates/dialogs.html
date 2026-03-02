@@ -1,11 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Диалоги · TG-комментатор{% endblock %}
 {% block content %}
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="app-page-head mb-3">
     <div>
       <h1 class="h3 mb-1">Диалоги</h1>
-      <div class="text-muted">Личные сообщения, которые пришли на Telegram‑аккаунты.</div>
+      <div class="text-muted">Личные сообщения, которые пришли на Telegram‑аккаунты. Всего: {{ threads|length }}</div>
     </div>
+    <form method="get" class="app-inline-form">
+      <label class="form-label mb-0 small text-muted" for="session_name">Аккаунт</label>
+      <select class="form-select form-select-sm" id="session_name" name="session_name">
+        <option value="">Все аккаунты</option>
+        {% for s in sessions %}
+          <option value="{{ s }}" {% if selected_session == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+      <button class="btn btn-sm btn-outline-secondary" type="submit">Фильтр</button>
+    </form>
   </div>
 
   <div class="card">
@@ -15,22 +25,42 @@
       {% else %}
         <div class="list-group">
           {% for t in threads %}
-            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-start gap-3" href="{{ t.url }}">
-              <div class="flex-grow-1">
-                <div class="d-flex flex-wrap align-items-center gap-2">
-                  <span class="badge text-bg-light border mono">#{{ t.session_name }}</span>
-                  <span class="fw-semibold">{{ t.title }}</span>
+            <div class="list-group-item d-flex justify-content-between align-items-start gap-3">
+              <a class="flex-grow-1 text-decoration-none text-reset" href="{{ t.url }}" style="min-width: 0;">
+                <div class="d-flex justify-content-between align-items-center gap-2">
+                  <div class="d-flex flex-wrap align-items-center gap-2" style="min-width: 0;">
+                    <span class="badge text-bg-light border mono">#{{ t.session_name }}</span>
+                    <span class="fw-semibold app-clamp-1">{{ t.title }}</span>
+                  </div>
+                  <span class="text-muted small mono flex-shrink-0">{{ t.last_at|human_dt }}</span>
                 </div>
                 <div class="text-muted small mt-1 mono">{{ t.chat_id }}</div>
                 {% if t.last_text %}
-                  <div class="mt-2">{{ t.last_text }}</div>
+                  <div class="mt-2 app-clamp-2">{{ t.last_text }}</div>
                 {% endif %}
-                <div class="text-muted small mt-1 mono">{{ t.last_at|human_dt }}</div>
+                {% if t.reactions_summary %}
+                  <div class="small text-muted mt-1">Реакции: {{ t.reactions_summary }}</div>
+                {% endif %}
+              </a>
+              <div class="d-flex flex-column align-items-end gap-2">
+                {% if t.unread %}
+                  <span class="badge text-bg-danger rounded-pill flex-shrink-0">{{ t.unread }}</span>
+                {% endif %}
+                <form method="post" action="{{ t.delete_url }}" onsubmit="return confirm('Удалить эту переписку?');">
+                  <input type="hidden" name="return_to" value="{{ return_to }}" />
+                  <button
+                    class="btn btn-sm btn-outline-danger app-icon-btn"
+                    type="submit"
+                    data-bs-toggle="tooltip"
+                    data-bs-title="Удалить"
+                    aria-label="Удалить"
+                    title="Удалить"
+                  >
+                    <i class="bi bi-trash" aria-hidden="true"></i>
+                  </button>
+                </form>
               </div>
-              {% if t.unread %}
-                <span class="badge text-bg-danger rounded-pill">{{ t.unread }}</span>
-              {% endif %}
-            </a>
+            </div>
           {% endfor %}
         </div>
       {% endif %}

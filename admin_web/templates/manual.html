@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}Ручной запуск · TG-комментатор{% endblock %}
 {% block content %}
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  {% import "macros.html" as ui %}
+  <div class="app-page-head mb-3">
     <h1 class="h3 mb-0">Ручной запуск</h1>
     <form method="post" action="/manual/clear" onsubmit="return confirm('Очистить очередь?');">
       <button class="btn btn-outline-danger" type="submit">Очистить очередь</button>
@@ -11,11 +12,73 @@
 
   <div class="card mb-3">
     <div class="card-body">
-      <form method="post" action="/manual/run" class="d-flex gap-2">
-        <label class="visually-hidden" for="manual_link">Ссылка на пост</label>
-        <input class="form-control" id="manual_link" name="link" placeholder="https://t.me/channel/123 или https://t.me/c/123/456" required />
-        <button class="btn btn-primary" type="submit">Добавить</button>
+      <form method="post" action="/manual/run">
+        <div class="app-inline-form">
+          <label class="visually-hidden" for="manual_link">Ссылка на пост</label>
+          <input class="form-control" id="manual_link" name="link" placeholder="https://t.me/channel/123 или https://t.me/c/123/456" required />
+          <button class="btn btn-primary" type="submit">Добавить</button>
+        </div>
+
+        <div class="accordion mt-3" id="manualOverridesAccordion">
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="manualOverridesHeading">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#manualOverridesCollapse" aria-expanded="false" aria-controls="manualOverridesCollapse">
+                Параметры запуска (опционально)
+              </button>
+            </h2>
+            <div id="manualOverridesCollapse" class="accordion-collapse collapse" aria-labelledby="manualOverridesHeading" data-bs-parent="#manualOverridesAccordion">
+              <div class="accordion-body">
+                <div class="text-muted small mb-2">
+                  Эти значения применятся только к данному ручному запуску и не изменят настройки цели канала.
+                  Пусто = использовать стандартные настройки.
+                </div>
+                <div class="row g-3">
+                  <div class="col-12">
+                    <label class="form-label app-label" for="override_vector_prompt">
+                      <span class="app-label-text">Вектор (override)</span>
+                      {{ ui.tip("Текст, который будет добавлен как направление для комментария именно в этом ручном запуске.") }}
+                    </label>
+                    <textarea class="form-control" id="override_vector_prompt" name="override_vector_prompt" rows="3" placeholder="Например: Комментировать как опытный юрист, упомянуть риск галлюцинаций и необходимость перепроверять источники."></textarea>
+                  </div>
+
+                  <div class="col-12 col-md-4">
+                    <label class="form-label app-label" for="override_accounts_per_post_min">
+                      <span class="app-label-text">Мин. аккаунтов (override)</span>
+                      {{ ui.tip("0–0 = все доступные аккаунты, назначенные на цель.") }}
+                    </label>
+                    <input class="form-control" id="override_accounts_per_post_min" type="number" min="0" max="200" step="1" inputmode="numeric" name="override_accounts_per_post_min" placeholder="—" />
+                  </div>
+                  <div class="col-12 col-md-4">
+                    <label class="form-label app-label" for="override_accounts_per_post_max">
+                      <span class="app-label-text">Макс. аккаунтов (override)</span>
+                      {{ ui.tip("Если меньше минимума — будет приравнено к минимуму.") }}
+                    </label>
+                    <input class="form-control" id="override_accounts_per_post_max" type="number" min="0" max="200" step="1" inputmode="numeric" name="override_accounts_per_post_max" placeholder="—" />
+                  </div>
+                  <div class="col-12 col-md-4">
+                    <label class="form-label app-label" for="override_delay_between_accounts">
+                      <span class="app-label-text">Пауза между аккаунтами (сек)</span>
+                      {{ ui.tip("Позволяет ускорить ручной запуск, если в цели стоят большие паузы. 0 = без паузы.") }}
+                    </label>
+                    <input class="form-control" id="override_delay_between_accounts" type="number" min="0" max="86400" step="1" inputmode="numeric" name="override_delay_between_accounts" placeholder="—" />
+                  </div>
+
+                  <div class="col-12">
+                    <div class="form-check">
+                      <input class="form-check-input" type="checkbox" name="override_ignore_daily_limit" id="override_ignore_daily_limit" value="1" />
+                      <label class="form-check-label d-inline-flex align-items-center gap-2" for="override_ignore_daily_limit">
+                        <span>Игнорировать дневной лимит комментариев</span>
+                        {{ ui.tip("Если включить — лимит из цели будет отключён только для этого ручного запуска.") }}
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </form>
+      <div class="text-muted small mt-2">Если комментатор работает, он будет временно остановлен и запущен снова.</div>
     </div>
   </div>
 
@@ -28,8 +91,37 @@
         <div class="list-group">
           {% for item in queue %}
             <div class="list-group-item">
-              <div class="mono">chat_id={{ item.chat_id }} · post_id={{ item.post_id }}</div>
+              <div class="mono">#{{ item.get('id') }} · status={{ item.get('status') or 'pending' }} · target={{ item.chat_id }} · msg_chat={{ item.get('message_chat_id') or item.chat_id }} · post_id={{ item.post_id }}</div>
               <div class="text-muted small">added_at={{ item.added_at }}</div>
+              {% if item.get('last_error') %}
+                <div class="text-danger small">error={{ item.get('last_error') }}</div>
+              {% endif %}
+              {% set ov = item.get('overrides') %}
+              {% if ov %}
+                <div class="text-muted small">
+                  overrides:
+                  {% set ns = namespace(first=true) %}
+                  {% if ov.get('accounts_per_post_min') is not none or ov.get('accounts_per_post_max') is not none %}
+                    {% if not ns.first %} · {% endif %}
+                    <span class="mono">accounts={{ ov.get('accounts_per_post_min','') }}–{{ ov.get('accounts_per_post_max','') }}</span>
+                    {% set ns.first = false %}
+                  {% endif %}
+                  {% if ov.get('delay_between_accounts') is not none %}
+                    {% if not ns.first %} · {% endif %}
+                    <span class="mono">delay={{ ov.get('delay_between_accounts') }}s</span>
+                    {% set ns.first = false %}
+                  {% endif %}
+                  {% if ov.get('daily_comment_limit') is not none and (ov.get('daily_comment_limit')|int) == 0 %}
+                    {% if not ns.first %} · {% endif %}
+                    <span class="mono">daily_limit=off</span>
+                    {% set ns.first = false %}
+                  {% endif %}
+                  {% if ov.get('vector_prompt') %}
+                    {% if not ns.first %} · {% endif %}
+                    <span class="mono">vector={{ ov.get('vector_prompt')|truncate(80, True) }}</span>
+                  {% endif %}
+                </div>
+              {% endif %}
             </div>
           {% endfor %}
         </div>
