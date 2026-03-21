@@ -1,19 +1,39 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: commentator_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-commentator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-commentator}
+      POSTGRES_DB: ${POSTGRES_DB:-commentator}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-commentator}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   commentator:
     build: .
     container_name: commentator_service
     command: python commentator.py
     volumes:
-      - ./logs:/app/logs  # опционально: для логов
-      - ./data:/app/data  # состояние/настройки/БД
-      - ./accounts:/app/accounts  # сессии аккаунтов
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./accounts:/app/accounts
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     dns:
       - 1.1.1.1
       - 8.8.8.8
     environment:
       PYTHONUNBUFFERED: "1"
       APP_DATA_DIR: /app/data
+      DB_URL: postgres://${POSTGRES_USER:-commentator}:${POSTGRES_PASSWORD:-commentator}@postgres:5432/${POSTGRES_DB:-commentator}
 
   admin_web:
     build: .
@@ -24,14 +44,41 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
-      - ./accounts:/app/accounts  # сессии аккаунтов
+      - ./accounts:/app/accounts
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     dns:
       - 1.1.1.1
       - 8.8.8.8
     environment:
       PYTHONUNBUFFERED: "1"
       APP_DATA_DIR: /app/data
+      DB_URL: postgres://${POSTGRES_USER:-commentator}:${POSTGRES_PASSWORD:-commentator}@postgres:5432/${POSTGRES_DB:-commentator}
       ADMIN_WEB_USERNAME: ${ADMIN_WEB_USERNAME:-admin}
       ADMIN_WEB_PASSWORD: ${ADMIN_WEB_PASSWORD:-admin}
       ADMIN_WEB_SECRET: ${ADMIN_WEB_SECRET:-}
+
+  admin_bot:
+    build: .
+    container_name: admin_bot_service
+    command: python admin_bot.py
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./accounts:/app/accounts
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      PYTHONUNBUFFERED: "1"
+      APP_DATA_DIR: /app/data
+      DB_URL: postgres://${POSTGRES_USER:-commentator}:${POSTGRES_PASSWORD:-commentator}@postgres:5432/${POSTGRES_DB:-commentator}
+
+volumes:
+  pgdata:

@@ -60,8 +60,11 @@
                 <td>
                   {% set st = a.get('status','') %}
                   {% set st_lower = st|string|lower %}
-                  {% set st_badge = 'success' if st_lower=='active' else ('danger' if st_lower=='banned' else ('warning' if st_lower in ['limited','frozen','human_check'] else 'secondary')) %}
+                  {% set st_badge = 'success' if st_lower=='active' else ('danger' if st_lower in ['banned','unavailable'] else ('warning' if st_lower in ['limited','frozen','human_check','unauthorized'] else 'secondary')) %}
                   <span class="badge text-bg-{{ st_badge }}">{{ st }}</span>
+                  {% if a.get('last_checked') %}
+                    <div class="text-muted small">{{ a.get('last_checked')|human_dt }}</div>
+                  {% endif %}
                 </td>
                 <td>
                   {% set rid = a.get('role_id') %}

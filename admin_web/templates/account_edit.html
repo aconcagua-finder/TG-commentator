@@ -4,11 +4,30 @@
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
       <h1 class="h3 mb-1">Аккаунт: <span class="mono">{{ account.session_name }}</span></h1>
-      <div class="text-muted">ID: {{ account.get('user_id','—') }} · @{{ account.get('username','') }} · статус: {{ account.get('status','') }}</div>
+      <div class="text-muted">
+        ID: {{ account.get('user_id','—') }} · @{{ account.get('username','') }}
+        {% set st = account.get('status','') %}
+        {% set st_lower = st|string|lower %}
+        {% set st_badge = 'success' if st_lower=='active' else ('danger' if st_lower in ['banned','unavailable'] else ('warning' if st_lower in ['limited','frozen','human_check','unauthorized'] else 'secondary')) %}
+        · <span class="badge text-bg-{{ st_badge }}">{{ st }}</span>
+        {% if account.get('last_checked') %}
+          <span class="text-muted small ms-1">проверен: {{ account.get('last_checked')|human_dt }}</span>
+        {% endif %}
+      </div>
     </div>
-    <form method="post" action="/accounts/{{ account.session_name }}/delete" onsubmit="return confirm('Удалить аккаунт?');">
-      <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Удалить</button>
-    </form>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="/accounts/{{ account.session_name }}/errors">
+        <i class="bi bi-journal-text me-1"></i>Ошибки
+      </a>
+      {% if account_checks_enabled %}
+        <form method="post" action="/accounts/{{ account.session_name }}/check">
+          <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-shield-check me-1"></i>Проверить</button>
+        </form>
+      {% endif %}
+      <form method="post" action="/accounts/{{ account.session_name }}/delete" onsubmit="return confirm('Удалить аккаунт?');">
+        <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Удалить</button>
+      </form>
+    </div>
   </div>
 
   <div class="row g-3">

@@ -10,7 +10,7 @@ import locale
 import html
 import csv
 import io
-import sqlite3
+from db.connection import get_connection, is_integrity_error
 import pandas as pd
 import base64
 from openpyxl.utils import get_column_letter
@@ -32,7 +32,7 @@ from telethon.tl import types
 from telethon.tl.functions.channels import JoinChannelRequest, GetFullChannelRequest, GetChannelRecommendationsRequest
 from telethon.tl.functions.messages import CheckChatInviteRequest
 
-from app_paths import ACCOUNTS_FILE, CONFIG_FILE, DB_FILE, LOGS_FILE, PROXIES_FILE, SETTINGS_FILE, ensure_data_dir
+from app_paths import ACCOUNTS_FILE, CONFIG_FILE, LOGS_FILE, PROXIES_FILE, SETTINGS_FILE, ensure_data_dir
 from app_storage import load_json, save_json
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -193,102 +193,10 @@ def no_link_preview_kwargs() -> dict:
 
 def init_database():
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.execute('PRAGMA journal_mode=WAL;')
-            conn.execute('PRAGMA synchronous=NORMAL;')
-
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, log_type TEXT NOT NULL, timestamp TEXT NOT NULL,
-                    destination_chat_id INTEGER NOT NULL, channel_name TEXT, channel_username TEXT,
-                    source_channel_id INTEGER, post_id INTEGER NOT NULL, account_session_name TEXT,
-                    account_first_name TEXT, account_username TEXT, content TEXT
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS proxies (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    url TEXT NOT NULL UNIQUE,
-                    ip TEXT,
-                    country TEXT,
-                    status TEXT,
-                    last_check TEXT
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS scenarios (
-                    chat_id TEXT PRIMARY KEY,
-                    script_content TEXT,
-                    current_index INTEGER DEFAULT 0,
-                    status TEXT DEFAULT 'stopped',
-                    last_run_time REAL DEFAULT 0
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS post_scenarios (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id TEXT,
-                    post_id INTEGER,
-                    current_index INTEGER DEFAULT 0,
-                    last_run_time REAL DEFAULT 0,
-                    UNIQUE(chat_id, post_id)
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS triggers (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id TEXT NOT NULL,
-                    trigger_phrase TEXT NOT NULL,
-                    answer_text TEXT NOT NULL
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS alert_context (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id TEXT,
-                    msg_id INTEGER,
-                    session_name TEXT,
-                    created_at REAL
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS outbound_queue (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    chat_id TEXT,
-                    reply_to_msg_id INTEGER,
-                    session_name TEXT,
-                    text TEXT,
-                    status TEXT DEFAULT 'pending'
-                )
-            ''')
-            conn.execute('''
-                CREATE TABLE IF NOT EXISTS inbox_messages (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    kind TEXT NOT NULL,
-                    direction TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    session_name TEXT NOT NULL,
-                    chat_id TEXT NOT NULL,
-                    msg_id INTEGER,
-                    reply_to_msg_id INTEGER,
-                    sender_id INTEGER,
-                    sender_username TEXT,
-                    sender_name TEXT,
-                    chat_title TEXT,
-                    chat_username TEXT,
-                    text TEXT,
-                    replied_to_text TEXT,
-                    is_read INTEGER DEFAULT 0,
-                    error TEXT
-                )
-            ''')
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_inbox_unique ON inbox_messages(session_name, chat_id, msg_id, direction)"
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_inbox_kind_unread ON inbox_messages(kind, is_read, id)")
-            conn.commit()
-    except sqlite3.Error as e:
+        from db.schema import init_database as _init_schema
+        with get_connection() as conn:
+            _init_schema(conn)
+    except Exception as e:
         logger.critical(f"Критическая ошибка при инициализации БД: {e}")
         exit()
 
@@ -2917,42 +2825,47 @@ async def delete_reaction_target_confirm(update: Update, context: ContextTypes.D
 
 def get_logs_for_period_from_db(period: str, page: int = 0, items_per_page: int = 5) -> tuple:
     if period == 'day':
-        period_filter = "timestamp >= datetime('now', '-1 day', 'localtime')"
+        since = (datetime.now() - timedelta(days=1)).isoformat()
     elif period == 'week':
-        period_filter = "timestamp >= datetime('now', '-7 days', 'localtime')"
+        since = (datetime.now() - timedelta(days=7)).isoformat()
     else:
-        period_filter = "timestamp >= datetime('now', '-30 days', 'localtime')"
+        since = (datetime.now() - timedelta(days=30)).isoformat()
 
     offset = page * items_per_page
 
     try:
-        with sqlite3.connect(DB_FILE) as conn:
-            conn.row_factory = sqlite3.Row
+        with get_connection() as conn:
             cursor = conn.cursor()
 
-            count_query = f"""
-                SELECT COUNT(*) 
+            count_query = """
+                SELECT COUNT(*)
                 FROM (
-                    SELECT 1 
-                    FROM logs 
-                    WHERE {period_filter} 
+                    SELECT 1
+                    FROM logs
+                    WHERE timestamp >= ?
                     GROUP BY post_id, account_session_name, content
-                )
+                ) sub
             """
-            cursor.execute(count_query)
+            cursor.execute(count_query, (since,))
             total_items = cursor.fetchone()[0]
 
-            data_query = f"""
-                SELECT * FROM logs 
-                WHERE {period_filter} 
-                GROUP BY post_id, account_session_name, content
-                ORDER BY timestamp DESC 
+            data_query = """
+                SELECT log_type, timestamp, destination_chat_id, channel_name,
+                       channel_username, source_channel_id, post_id,
+                       account_session_name, account_first_name, account_username, content
+                FROM logs
+                WHERE timestamp >= ?
+                GROUP BY post_id, account_session_name, content,
+                         log_type, timestamp, destination_chat_id, channel_name,
+                         channel_username, source_channel_id,
+                         account_first_name, account_username
+                ORDER BY timestamp DESC
                 LIMIT ? OFFSET ?
             """
-            cursor.execute(data_query, (items_per_page, offset))
+            cursor.execute(data_query, (since, items_per_page, offset))
             rows = cursor.fetchall()
 
-    except sqlite3.Error as e:
+    except Exception as e:
         logger.error(f"Ошибка при чтении логов из БД: {e}")
         return [], 0
 
@@ -3565,7 +3478,7 @@ async def proxies_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query:
         await query.answer()
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM proxies")
         total_proxies = cursor.fetchone()[0]
@@ -3604,7 +3517,7 @@ async def add_proxies_get_input(update: Update, context: ContextTypes.DEFAULT_TY
 
     await update.message.reply_text(f"⏳ Начинаю импорт и проверку {len(input_text)} прокси...")
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         for line in input_text:
             url = line.strip()
@@ -3617,9 +3530,10 @@ async def add_proxies_get_input(update: Update, context: ContextTypes.DEFAULT_TY
                     (url, check_res['ip'], check_res['country'], check_res['status'], datetime.now().isoformat())
                 )
                 added_count += 1
-            except sqlite3.IntegrityError:
-                duplicate_count += 1
             except Exception as e:
+                if is_integrity_error(e):
+                    duplicate_count += 1
+                    continue
                 logger.error(f"Error adding proxy {url}: {e}")
         conn.commit()
 
@@ -3644,7 +3558,7 @@ async def show_my_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             page = 0
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, url, ip, country, status FROM proxies LIMIT 10 OFFSET ?", (page * 10,))
         proxies = cursor.fetchall()
@@ -3681,7 +3595,7 @@ async def check_all_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_count = 0
     dead_count = 0
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, url FROM proxies")
         rows = cursor.fetchall()
@@ -3724,7 +3638,7 @@ async def select_proxy_for_account(update: Update, context: ContextTypes.DEFAULT
     if "page_" in query.data:
         page = int(query.data.split('_')[-1])
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, url, ip, country FROM proxies WHERE status = 'active' LIMIT 10 OFFSET ?", (page * 10,))
         proxies = cursor.fetchall()
@@ -3763,7 +3677,7 @@ async def add_proxies_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(f"⏳ Проверяю {len(lines)} прокси...")
 
     added, duplicates = 0, 0
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         for url in lines:
             url = url.strip()
@@ -3775,8 +3689,11 @@ async def add_proxies_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     (url, res['ip'], res['country'], res['status'], datetime.now().isoformat())
                 )
                 added += 1
-            except sqlite3.IntegrityError:
-                duplicates += 1
+            except Exception as e:
+                if is_integrity_error(e):
+                    duplicates += 1
+                    continue
+                logger.error(f"Error adding proxy {url}: {e}")
         conn.commit()
 
     await msg.edit_text(f"✅ Добавлено: {added}\n❌ Дубликатов: {duplicates}\n\nПроверка завершена.")
@@ -3787,7 +3704,7 @@ async def add_proxies_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def delete_dead_proxies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT url FROM proxies WHERE status = 'dead'")
         dead_urls = [r[0] for r in cursor.fetchall()]
@@ -3818,7 +3735,7 @@ async def save_account_proxy_callback(update: Update, context: ContextTypes.DEFA
     if data != "none":
         try:
             proxy_id = int(data)
-            with sqlite3.connect(DB_FILE) as conn:
+            with get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT url FROM proxies WHERE id = ?", (proxy_id,))
                 row = cursor.fetchone()
@@ -3855,7 +3772,7 @@ async def proxy_action_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     proxy_id = int(query.data.split('_')[-1])
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT url, ip, country, status, last_check FROM proxies WHERE id = ?", (proxy_id,))
         proxy = cursor.fetchone()
@@ -3895,7 +3812,7 @@ async def process_proxy_specific_action(update: Update, context: ContextTypes.DE
     proxy_id = int(parts[-1])
 
     if action == "del":
-        with sqlite3.connect(DB_FILE) as conn:
+        with get_connection() as conn:
             conn.execute("DELETE FROM proxies WHERE id = ?", (proxy_id,))
             conn.commit()
         await query.answer("✅ Прокси удален!", show_alert=True)
@@ -3904,7 +3821,7 @@ async def process_proxy_specific_action(update: Update, context: ContextTypes.DE
 
     elif action == "chk":
         await query.answer("⏳ Проверяю...")
-        with sqlite3.connect(DB_FILE) as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT url FROM proxies WHERE id = ?", (proxy_id,))
             row = cursor.fetchone()
@@ -4112,7 +4029,7 @@ async def scenario_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status = "stopped"
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT status FROM scenarios WHERE chat_id = ?", (chat_id,))
         row = cursor.fetchone()
@@ -4180,7 +4097,7 @@ async def save_scenario_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Пустой скрипт.")
         return await scenario_menu(update, context)
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         conn.execute("""
             INSERT INTO scenarios (chat_id, script_content, current_index, status) 
             VALUES (?, ?, 0, 'stopped')
@@ -4205,7 +4122,7 @@ async def scenario_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     new_status = 'running' if action == 'scen_start' else 'stopped'
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         conn.execute("UPDATE scenarios SET status = ? WHERE chat_id = ?", (new_status, chat_id))
         conn.commit()
 
@@ -4220,7 +4137,7 @@ async def scenario_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     settings = get_data(SETTINGS_FILE, {})
     chat_id = settings['targets'][target_index]['chat_id']
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         conn.execute("UPDATE scenarios SET current_index = 0 WHERE chat_id = ?", (chat_id,))
         conn.commit()
 
@@ -4244,7 +4161,7 @@ async def triggers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = target.get('chat_id')
 
     triggers = []
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, trigger_phrase, answer_text FROM triggers WHERE chat_id = ?", (chat_id,))
         triggers = cursor.fetchall()
@@ -4293,7 +4210,7 @@ async def add_trigger_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     settings = get_data(SETTINGS_FILE, {})
     chat_id = settings['targets'][target_index]['chat_id']
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         conn.execute("INSERT INTO triggers (chat_id, trigger_phrase, answer_text) VALUES (?, ?, ?)",
                      (chat_id, phrase, answer))
         conn.commit()
@@ -4307,7 +4224,7 @@ async def delete_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     t_id = int(query.data.split('_')[-1])
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         conn.execute("DELETE FROM triggers WHERE id = ?", (t_id,))
         conn.commit()
 
@@ -4326,7 +4243,7 @@ async def manual_reply_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.message.reply_text("❌ Некорректные данные кнопки.")
         return MAIN_MENU
 
-    with sqlite3.connect(DB_FILE) as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT chat_id, msg_id, session_name FROM alert_context WHERE id = ?", (alert_id,))
         row = cursor.fetchone()
@@ -4363,7 +4280,7 @@ async def manual_reply_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return MAIN_MENU
 
     try:
-        with sqlite3.connect(DB_FILE) as conn:
+        with get_connection() as conn:
             conn.execute('''
                 INSERT INTO outbound_queue (chat_id, reply_to_msg_id, session_name, text, status)
                 VALUES (?, ?, ?, ?, 'pending')
