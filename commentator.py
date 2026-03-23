@@ -4,7 +4,7 @@ import configparser
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app_paths import CONFIG_FILE, OLD_LOGS_FILE, PROXIES_FILE, SETTINGS_FILE, ensure_data_dir
 from app_storage import load_json, save_json
@@ -22,8 +22,24 @@ from services.project import (
 from services.rebrand import run_rebrand_logic
 from services.scenarios import process_scenarios
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+NO_ACTIVE_CLIENTS_LOG_INTERVAL = timedelta(minutes=5)
+
+
+def configure_logging():
+    """Configure root logging with a single stdout handler.
+
+    Docker and repeated interpreter initialisation can leave multiple root
+    handlers attached. Reset the root logger explicitly so each record is
+    emitted once.
+    """
+    root_logger = logging.getLogger()
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
 
 # Avoid leaking secrets (e.g., Telegram bot token is part of the URL).
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -229,6 +245,7 @@ async def main():
     ensure_data_dir()
     init_database()
     logger.info(">>> AI-Комментатор запускается...")
+    last_no_active_clients_log_at = None
     try:
         telethon_config = load_config('telethon_credentials')
         api_id, api_hash = int(telethon_config['api_id']), telethon_config['api_hash']
@@ -290,10 +307,21 @@ async def main():
                 )
 
                 if not active_clients:
-                    logger.info("Статус: Работает, но нет активных аккаунтов (спят или не добавлены)")
+                    now = datetime.now(timezone.utc)
+                    should_log_no_active_clients = (
+                        last_no_active_clients_log_at is None
+                        or now - last_no_active_clients_log_at >= NO_ACTIVE_CLIENTS_LOG_INTERVAL
+                    )
+                    if should_log_no_active_clients:
+                        logger.info("Статус: Работает, но нет активных аккаунтов (спят или не добавлены)")
+                        last_no_active_clients_log_at = now
+                else:
+                    last_no_active_clients_log_at = None
+
                 if 'rebrand_task' in current_settings and current_settings['rebrand_task'].get('status') == 'pending':
                     await run_rebrand_logic(api_id, api_hash, current_settings=current_settings, active_clients=active_clients)
             else:
+                last_no_active_clients_log_at = None
                 if PENDING_TASKS:
                     logger.info(f"⏳ Завершаю фоновые задачи ({len(PENDING_TASKS)})...")
                     for t in list(PENDING_TASKS):
@@ -314,4 +342,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    configure_logging()
     asyncio.run(main())

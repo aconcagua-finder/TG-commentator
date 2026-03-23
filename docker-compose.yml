@@ -60,25 +60,5 @@ services:
       ADMIN_WEB_PASSWORD: ${ADMIN_WEB_PASSWORD:-admin}
       ADMIN_WEB_SECRET: ${ADMIN_WEB_SECRET:-}
 
-  admin_bot:
-    build: .
-    container_name: admin_bot_service
-    command: python admin_bot.py
-    volumes:
-      - ./logs:/app/logs
-      - ./data:/app/data
-      - ./accounts:/app/accounts
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-    dns:
-      - 1.1.1.1
-      - 8.8.8.8
-    environment:
-      PYTHONUNBUFFERED: "1"
-      APP_DATA_DIR: /app/data
-      DB_URL: postgres://${POSTGRES_USER:-commentator}:${POSTGRES_PASSWORD:-commentator}@postgres:5432/${POSTGRES_DB:-commentator}
-
 volumes:
   pgdata:

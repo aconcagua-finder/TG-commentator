@@ -1,10 +1,9 @@
 # Commentator
 
-Инструмент автоматизации для Telegram: комментарии, реакции и мониторинг с админ‑ботом и веб‑панелью.
+Инструмент автоматизации для Telegram: комментарии, реакции, мониторинг и веб‑панель управления.
 
 ## Компоненты
 - `commentator.py` — основной воркер (комменты/реакции/сценарии).
-- `admin_bot.py` — Telegram админ‑бот для управления настройками и аккаунтами.
 - `admin_web/` — веб‑панель (FastAPI) для конфигурации и мониторинга.
 
 ## Быстрый старт (Docker)
@@ -18,7 +17,7 @@ cp data/proxies.example.txt data/proxies.txt
 ```
 
 2) Заполните:
-- `config.ini` (токен бота, ID админов, `api_id`/`api_hash`).
+- `config.ini` (`api_id`/`api_hash` для Telethon).
 - `.env` (логин/пароль веб‑панели и секрет, опционально).
 - `data/accounts.json` (Telethon session strings аккаунтов).
 - `data/ai_settings.json` (провайдер AI, ключи, цели).
@@ -35,14 +34,12 @@ python3 -m venv .venv
 pip install -r requirements.txt
 export APP_DATA_DIR=./data
 python commentator.py
-# в другом терминале
-python admin_bot.py
 # веб‑панель
 uvicorn admin_web.main:app --host 0.0.0.0 --port 8080
 ```
 
 ## Конфигурация
-- `config.ini` — токен бота + Telegram API креды.
+- `config.ini` — Telegram API креды для Telethon.
 - `data/ai_settings.json` — AI провайдеры, модели, цели, роли, и т.д.
 - `data/accounts.json` — Telethon session strings аккаунтов.
 - `data/proxies.txt` — список прокси (опционально).

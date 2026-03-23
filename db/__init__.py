@@ -1,7 +1,7 @@
 """Database abstraction layer.
 
 Provides a unified interface for PostgreSQL (production) and SQLite (fallback).
-All services (commentator, admin_web, admin_bot) use this module.
+All services (commentator, admin_web) use this module.
 
 Usage:
     from db import get_connection, init_database
