@@ -24,8 +24,9 @@
         <div class="d-flex flex-column gap-2">
           {% for m in messages %}
             {% set is_out = m.direction == 'out' %}
+            {% set can_manage = is_out and m.status == 'sent' and m.msg_id and m.text %}
             <div class="d-flex {% if is_out %}justify-content-end{% else %}justify-content-start{% endif %}">
-              <div class="p-2 rounded-3 border {% if is_out %}bg-body-tertiary{% endif %}" style="max-width: 820px;">
+              <div class="p-2 rounded-3 border {% if is_out %}bg-body-tertiary{% endif %}" style="max-width: 820px;" data-msg-row>
                 <div class="text-muted small d-flex flex-wrap gap-2">
                   {% if is_out %}
                     <span>вы</span>
@@ -37,8 +38,37 @@
                     <span class="badge text-bg-light border">{{ m.status }}</span>
                   {% endif %}
                 </div>
-                {% if m.text %}
-                  <div class="mt-1" style="white-space: pre-wrap;">{{ m.text }}</div>
+                {% if m.status == 'deleted' %}
+                  <div class="mt-1 text-body-secondary fst-italic">Сообщение удалено</div>
+                {% elif m.text %}
+                  <div class="mt-1" data-msg-text style="white-space: pre-wrap;">{{ m.text }}</div>
+                {% endif %}
+                {% if can_manage %}
+                  <form method="post" action="/messages/edit" data-msg-edit-form class="mt-2" style="display:none">
+                    <input type="hidden" name="source" value="inbox" />
+                    <input type="hidden" name="record_id" value="{{ m.id }}" />
+                    <input type="hidden" name="return_to" value="/dialogs/{{ session_name }}/{{ chat_id }}" />
+                    <textarea class="form-control form-control-sm" name="new_text" rows="4" required>{{ m.text or '' }}</textarea>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                      <button class="btn btn-sm btn-secondary" type="submit">Сохранить</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" onclick="cancelMessageEdit(this)">Отменить</button>
+                    </div>
+                  </form>
+                  <div class="d-flex flex-wrap gap-1 mt-2" data-msg-actions>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" onclick="startMessageEdit(this)" title="Редактировать">
+                      <i class="bi bi-pencil"></i>
+                      <span class="visually-hidden">Редактировать</span>
+                    </button>
+                    <form method="post" action="/messages/delete" onsubmit="return confirm('Удалить сообщение в Telegram?');">
+                      <input type="hidden" name="source" value="inbox" />
+                      <input type="hidden" name="record_id" value="{{ m.id }}" />
+                      <input type="hidden" name="return_to" value="/dialogs/{{ session_name }}/{{ chat_id }}" />
+                      <button class="btn btn-sm btn-outline-danger" type="submit" title="Удалить">
+                        <i class="bi bi-trash"></i>
+                        <span class="visually-hidden">Удалить</span>
+                      </button>
+                    </form>
+                  </div>
                 {% endif %}
                 {% if m.reactions_summary %}
                   <div class="mt-2 small text-muted">Реакции: {{ m.reactions_summary }}</div>

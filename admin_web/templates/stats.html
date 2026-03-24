@@ -31,12 +31,14 @@
               <th>Аккаунт</th>
               <th>Пост</th>
               <th>Текст</th>
+              <th class="text-end">Действия</th>
             </tr>
           </thead>
           <tbody>
             {% for r in rows %}
-              <tr>
+              <tr data-msg-row>
                 {% set lt = r.log_type %}
+                {% set can_manage = lt in ['comment', 'comment_reply', 'monitoring'] and r.msg_id is not none %}
                 {% if lt == 'reaction' %}
                   {% set lt_label = 'Реакция' %}
                 {% elif lt == 'comment' %}
@@ -64,12 +66,45 @@
                 <td class="mono">{{ r.account_session_name or '—' }}</td>
                 <td class="mono">{{ r.post_id }}</td>
                 <td class="small">
-                  <div class="app-clamp-3" title="{{ r.content or '' }}">{{ r.content }}</div>
+                  <div data-msg-text class="app-clamp-3" title="{{ r.content or '' }}">{{ r.content }}</div>
+                  {% if can_manage %}
+                    <form method="post" action="/messages/edit" data-msg-edit-form class="mt-2" style="display:none">
+                      <input type="hidden" name="source" value="logs" />
+                      <input type="hidden" name="record_id" value="{{ r.id }}" />
+                      <input type="hidden" name="return_to" value="/stats?period={{ period }}&page={{ page }}" />
+                      <textarea class="form-control form-control-sm" name="new_text" rows="4" required>{{ r.content or '' }}</textarea>
+                      <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button class="btn btn-sm btn-secondary" type="submit">Сохранить</button>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="cancelMessageEdit(this)">Отменить</button>
+                      </div>
+                    </form>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  {% if can_manage %}
+                    <div class="d-inline-flex flex-wrap gap-1 justify-content-end" data-msg-actions>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" onclick="startMessageEdit(this)" title="Редактировать">
+                        <i class="bi bi-pencil"></i>
+                        <span class="visually-hidden">Редактировать</span>
+                      </button>
+                      <form method="post" action="/messages/delete" onsubmit="return confirm('Удалить сообщение в Telegram?');">
+                        <input type="hidden" name="source" value="logs" />
+                        <input type="hidden" name="record_id" value="{{ r.id }}" />
+                        <input type="hidden" name="return_to" value="/stats?period={{ period }}&page={{ page }}" />
+                        <button class="btn btn-sm btn-outline-danger" type="submit" title="Удалить">
+                          <i class="bi bi-trash"></i>
+                          <span class="visually-hidden">Удалить</span>
+                        </button>
+                      </form>
+                    </div>
+                  {% else %}
+                    <span class="text-muted small">—</span>
+                  {% endif %}
                 </td>
               </tr>
             {% endfor %}
             {% if rows|length == 0 %}
-              <tr><td colspan="6" class="text-center text-muted py-4">Записей нет.</td></tr>
+              <tr><td colspan="7" class="text-center text-muted py-4">Записей нет.</td></tr>
             {% endif %}
           </tbody>
         </table>

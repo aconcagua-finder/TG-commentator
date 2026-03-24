@@ -16,6 +16,9 @@ from admin_web.helpers import (
     _filter_accounts_by_project,
     _db_connect,
     _collect_warnings,
+    _collect_warnings_for_scope,
+    _sync_warning_history,
+    _load_resolved_warning_history,
     _load_seen_warning_keys,
     _mark_warning_keys_seen,
     _flash,
@@ -131,7 +134,14 @@ async def guide_page(request: Request):
 async def warnings_page(request: Request):
     accounts, _ = _load_accounts()
     settings, _ = _load_settings()
+    _sync_warning_history(_collect_warnings_for_scope(accounts, settings, project_id=None))
     warnings = _collect_warnings(accounts, settings)
+    project_id = _active_project_id(settings)
+    active_sessions = [
+        str(account.get("session_name")).strip()
+        for account in _filter_accounts_by_project(accounts, project_id)
+        if account.get("session_name")
+    ]
     keys = [w.get("key") for w in warnings if w.get("key")]
     seen = _load_seen_warning_keys(keys)
     for w in warnings:
@@ -139,9 +149,10 @@ async def warnings_page(request: Request):
         if key:
             w["is_new"] = key not in seen
     _mark_warning_keys_seen(keys)
+    resolved_warnings = _load_resolved_warning_history(active_sessions, limit=50)
     return templates.TemplateResponse(
         "warnings.html",
-        _template_context(request, warnings=warnings),
+        _template_context(request, warnings=warnings, resolved_warnings=resolved_warnings),
     )
 
 

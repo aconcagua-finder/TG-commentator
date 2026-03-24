@@ -78,6 +78,11 @@ async def dialogs_page(request: Request, session_name: str = ""):
                 """,
                 params,
             ).fetchall()
+            conn.execute(
+                f"UPDATE inbox_messages SET is_read=1 WHERE kind='dm' AND direction='in' AND is_read=0 AND session_name IN ({placeholders})",
+                tuple(active_sessions),
+            )
+            conn.commit()
 
     return_suffix = f"?session_name={quote(selected_session)}" if selected_session else ""
     return_to = f"/dialogs{return_suffix}"
@@ -255,6 +260,11 @@ async def quotes_page(request: Request, session_name: str = ""):
                 """,
                 tuple(active_sessions),
             ).fetchall()
+            conn.execute(
+                f"UPDATE inbox_messages SET is_read=1 WHERE kind='quote' AND direction='in' AND is_read=0 AND session_name IN ({placeholders})",
+                tuple(active_sessions),
+            )
+            conn.commit()
 
     suffix = f"?session_name={quote(selected_session)}" if selected_session else ""
     return_to = f"/quotes{suffix}"

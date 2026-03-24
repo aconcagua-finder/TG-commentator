@@ -36,6 +36,7 @@ def _table_logs() -> str:
         channel_username TEXT,
         source_channel_id BIGINT,
         post_id BIGINT NOT NULL,
+        msg_id BIGINT,
         account_session_name TEXT,
         account_first_name TEXT,
         account_username TEXT,
@@ -305,6 +306,21 @@ def _table_warning_seen() -> str:
     """
 
 
+def _table_warning_history() -> str:
+    return f"""
+    CREATE TABLE IF NOT EXISTS warning_history (
+        id {_serial_pk()},
+        key TEXT NOT NULL,
+        level TEXT NOT NULL DEFAULT 'warning',
+        title TEXT NOT NULL,
+        detail TEXT,
+        session_name TEXT,
+        created_at REAL NOT NULL,
+        resolved_at REAL
+    )
+    """
+
+
 # ---------------------------------------------------------------------------
 # Indexes
 # ---------------------------------------------------------------------------
@@ -323,6 +339,8 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_discussion_sessions_status ON discussion_sessions(project_id, status, schedule_at)",
     "CREATE INDEX IF NOT EXISTS idx_discussion_messages_session ON discussion_messages(session_id, id)",
     "CREATE INDEX IF NOT EXISTS idx_manual_tasks_project_status ON manual_tasks(project_id, status, id)",
+    "CREATE INDEX IF NOT EXISTS idx_warning_history_key ON warning_history(key)",
+    "CREATE INDEX IF NOT EXISTS idx_warning_history_resolved ON warning_history(resolved_at)",
 ]
 
 
@@ -357,12 +375,21 @@ def init_database(conn) -> None:
         _table_discussion_messages,
         _table_manual_tasks,
         _table_warning_seen,
+        _table_warning_history,
     ]
 
     for fn in table_funcs:
         sql = fn().strip()
         if sql:
             conn.execute(sql)
+
+    if _is_postgres():
+        conn.execute("ALTER TABLE logs ADD COLUMN IF NOT EXISTS msg_id BIGINT")
+    else:
+        try:
+            conn.execute("ALTER TABLE logs ADD COLUMN msg_id BIGINT")
+        except Exception:
+            pass
 
     for idx_sql in INDEXES:
         conn.execute(idx_sql)

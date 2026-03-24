@@ -614,7 +614,7 @@ async def process_new_post(
                 except Exception:
                     pass
 
-                await human_type_and_send(
+                sent_msg = await human_type_and_send(
                     client_wrapper.client,
                     event.chat_id,
                     generated_text,
@@ -633,6 +633,7 @@ async def process_new_post(
                     {
                         "type": "comment",
                         "post_id": msg_id,
+                        "msg_id": getattr(sent_msg, "id", None) if sent_msg else None,
                         "comment": log_content,
                         "date": datetime.now(timezone.utc).isoformat(),
                         "account": {

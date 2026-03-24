@@ -5,7 +5,7 @@
     <h1 class="h3 mb-0">Предупреждения</h1>
     <a class="btn btn-outline-secondary" href="/accounts">Аккаунты</a>
   </div>
-  <p class="text-muted">Здесь собраны важные сигналы по аккаунтам и ошибкам выполнения. Список отражает текущие проблемы: после восстановления предупреждения могут исчезать. При открытии страницы предупреждения помечаются как прочитанные (счётчик в меню сбрасывается).</p>
+  <p class="text-muted">Здесь собраны важные сигналы по аккаунтам и ошибкам выполнения. Сверху показаны текущие проблемы, ниже — последние решённые предупреждения. При открытии страницы активные предупреждения помечаются как прочитанные, поэтому счётчик в меню сбрасывается.</p>
 
   {% if warnings|length == 0 %}
     <div class="alert alert-success">Пока всё выглядит хорошо — предупреждений нет.</div>
@@ -50,6 +50,32 @@
           {% endif %}
         </div>
       {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if resolved_warnings %}
+    <div class="mt-4">
+      <h2 class="h5 mb-3">Решённые предупреждения</h2>
+      <div class="list-group">
+        {% for w in resolved_warnings %}
+          <div class="list-group-item bg-light text-secondary">
+            <div class="d-flex align-items-center gap-2 mb-1">
+              <span class="badge text-bg-secondary">{{ w.get('level','warning') }}</span>
+              <strong>{{ w.get('title','') }}</strong>
+            </div>
+            {% if w.get('detail_lines') %}
+              {% for line in w.get('detail_lines') %}
+                <div class="small text-muted">{{ line }}</div>
+              {% endfor %}
+            {% elif w.get('detail') %}
+              <div class="small text-muted">{{ w.get('detail') }}</div>
+            {% endif %}
+            <div class="small mt-2">
+              {{ w.get('created_at')|human_dt }} → {{ w.get('resolved_at')|human_dt }}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
     </div>
   {% endif %}
 {% endblock %}

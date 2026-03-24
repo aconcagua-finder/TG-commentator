@@ -459,9 +459,9 @@ def log_action_to_db(log_entry):
             cursor.execute('''
                 INSERT INTO logs (
                     log_type, timestamp, destination_chat_id, channel_name, channel_username,
-                    source_channel_id, post_id, account_session_name, account_first_name,
+                    source_channel_id, post_id, msg_id, account_session_name, account_first_name,
                     account_username, content
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 log_entry.get('type'),
                 log_entry.get('date'),
@@ -470,6 +470,7 @@ def log_action_to_db(log_entry):
                 log_entry.get('target', {}).get('chat_username'),
                 log_entry.get('target', {}).get('channel_id'),
                 log_entry.get('post_id'),
+                log_entry.get('msg_id'),
                 log_entry.get('account', {}).get('session_name'),
                 log_entry.get('account', {}).get('first_name'),
                 log_entry.get('account', {}).get('username'),

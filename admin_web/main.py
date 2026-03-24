@@ -21,22 +21,35 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from app_paths import ACCOUNTS_FILE, SETTINGS_FILE, ensure_data_dir
+from app_paths import ACCOUNTS_FILE, DB_FILE, SETTINGS_FILE, ensure_data_dir
 
 from admin_web.helpers import (
+    ADMIN_WEB_PASSWORD,
+    ADMIN_WEB_USERNAME,
+    DEFAULT_PROJECT_ID,
     STATIC_DIR,
     logger,
     ADMIN_WEB_DISABLE_AUTH,
     ADMIN_WEB_SECRET,
     ACCOUNT_CHECK_HOUR,
+    WARNING_FAILURE_THRESHOLD,
+    _channel_bare_id,
+    _clear_account_failure,
+    _db_connect,
     _wants_html,
     _ensure_settings_schema,
+    _filter_by_project,
     _load_settings,
     _save_settings,
     _load_accounts,
     _save_accounts,
     _init_database,
     _migrate_legacy_manual_queue,
+    _parse_bool,
+    _project_id_for,
+    _record_account_failure,
+    _safe_local_redirect_path,
+    _telegram_message_link,
 )
 
 from admin_web.telethon_utils import (
@@ -119,6 +132,7 @@ async def _app_lifespan(_: FastAPI):
 # ---------------------------------------------------------------------------
 
 app = FastAPI(title="TG-комментатор (Web Admin)", lifespan=_app_lifespan)
+app.state.active_clients = {}
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Register all route modules
