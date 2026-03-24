@@ -285,13 +285,15 @@ def _ensure_projects_schema(settings: Dict[str, Any]) -> None:
             continue
         if pid == DEFAULT_PROJECT_ID:
             has_default = True
-        normalized.append(
+        project_data = {k: v for k, v in p.items() if k not in {"id", "name", "created_at"}}
+        project_data.update(
             {
                 "id": pid,
                 "name": name,
                 "created_at": p.get("created_at") or datetime.now(timezone.utc).isoformat(),
             }
         )
+        normalized.append(project_data)
 
     if not has_default:
         normalized.insert(
@@ -940,15 +942,16 @@ def _mark_warning_keys_seen(keys: List[str]) -> None:
     now = time.time()
     rows = [(k, now) for k in dict.fromkeys(keys)]
     with _db_connect() as conn:
-        conn.executemany(
-            """
-            INSERT INTO warning_seen(key, seen_at)
-            VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-              seen_at = excluded.seen_at
-            """,
-            rows,
-        )
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO warning_seen(key, seen_at)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                  seen_at = excluded.seen_at
+                """,
+                row,
+            )
         conn.commit()
 
 
@@ -1010,12 +1013,120 @@ def _humanize_failure_error(kind: str, last_error: str) -> str:
     return raw
 
 
-def _collect_warnings(accounts: List[Dict[str, Any]], settings: Dict[str, Any]) -> List[Dict[str, Any]]:
-    project_id = _active_project_id(settings)
-    accounts = _filter_accounts_by_project(accounts, project_id)
+def _warning_history_detail(warning: Dict[str, Any]) -> str | None:
+    lines = warning.get("detail_lines")
+    if isinstance(lines, list):
+        normalized = [str(line).strip() for line in lines if str(line or "").strip()]
+        if normalized:
+            return "\n".join(normalized)
+    detail = str(warning.get("detail") or "").strip()
+    return detail or None
+
+
+def _sync_warning_history(warnings: List[Dict[str, Any]]) -> None:
+    active_warnings: Dict[str, Dict[str, Any]] = {}
+    for warning in warnings:
+        key = str(warning.get("key") or "").strip()
+        if not key or key in active_warnings:
+            continue
+        active_warnings[key] = warning
+
+    with _db_connect() as conn:
+        rows = conn.execute(
+            "SELECT id, key FROM warning_history WHERE resolved_at IS NULL",
+        ).fetchall()
+        active_history_by_key: Dict[str, List[int]] = {}
+        for row in rows:
+            key = str(row["key"] or "").strip()
+            if key:
+                active_history_by_key.setdefault(key, []).append(int(row["id"]))
+
+        now = time.time()
+        inserted = False
+        resolved_ids: List[int] = []
+
+        for key, warning in active_warnings.items():
+            if key in active_history_by_key:
+                continue
+            conn.execute(
+                """
+                INSERT INTO warning_history (
+                    key, level, title, detail, session_name, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    key,
+                    str(warning.get("level") or "warning"),
+                    str(warning.get("title") or key),
+                    _warning_history_detail(warning),
+                    str(warning.get("session_name") or "").strip() or None,
+                    now,
+                ),
+            )
+            inserted = True
+
+        for key, ids in active_history_by_key.items():
+            if key not in active_warnings:
+                resolved_ids.extend(ids)
+
+        if resolved_ids:
+            placeholders = ",".join("?" for _ in resolved_ids)
+            conn.execute(
+                f"UPDATE warning_history SET resolved_at = ? WHERE id IN ({placeholders})",
+                (now, *resolved_ids),
+            )
+
+        if inserted or resolved_ids:
+            conn.commit()
+
+
+def _load_resolved_warning_history(session_names: List[str], *, limit: int = 50) -> List[Dict[str, Any]]:
+    session_names = [str(name).strip() for name in session_names if str(name or "").strip()]
+    where = ["resolved_at IS NOT NULL"]
+    params: List[Any] = []
+    if session_names:
+        placeholders = ",".join("?" for _ in session_names)
+        where.append(f"(session_name IN ({placeholders}) OR session_name IS NULL OR session_name='')")
+        params.extend(session_names)
+    else:
+        where.append("(session_name IS NULL OR session_name='')")
+    params.append(int(limit))
+
+    with _db_connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, key, level, title, detail, session_name, created_at, resolved_at
+            FROM warning_history
+            WHERE {' AND '.join(where)}
+            ORDER BY resolved_at DESC, id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+
+    items: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        detail = str(item.get("detail") or "").strip()
+        item["detail_lines"] = [line for line in detail.splitlines() if line] if detail else []
+        items.append(item)
+    return items
+
+
+def _collect_warnings_for_scope(
+    accounts: List[Dict[str, Any]],
+    settings: Dict[str, Any],
+    *,
+    project_id: str | None,
+) -> List[Dict[str, Any]]:
+    if project_id is not None:
+        accounts = _filter_accounts_by_project(accounts, project_id)
     warnings: List[Dict[str, Any]] = []
 
-    targets = _filter_by_project(settings.get("targets", []) or [], project_id)
+    targets = settings.get("targets", []) or []
+    if project_id is not None:
+        targets = _filter_by_project(targets, project_id)
     target_by_id: Dict[str, Dict[str, Any]] = {}
     for t in targets:
         if not isinstance(t, dict):
@@ -1089,6 +1200,11 @@ def _collect_warnings(accounts: List[Dict[str, Any]], settings: Dict[str, Any]) 
         )
 
     return warnings
+
+
+def _collect_warnings(accounts: List[Dict[str, Any]], settings: Dict[str, Any]) -> List[Dict[str, Any]]:
+    project_id = _active_project_id(settings)
+    return _collect_warnings_for_scope(accounts, settings, project_id=project_id)
 
 
 def _warnings_count(accounts: List[Dict[str, Any]], settings: Dict[str, Any]) -> int:

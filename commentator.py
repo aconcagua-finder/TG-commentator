@@ -21,6 +21,7 @@ from services.project import (
 )
 from services.rebrand import run_rebrand_logic
 from services.scenarios import process_scenarios
+from services.warning_notifier import process_warning_notifications
 
 logger = logging.getLogger(__name__)
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -305,6 +306,7 @@ async def main():
                     joined_cache=JOINED_CACHE,
                     process_new_post_fn=_make_process_new_post_fn(),
                 )
+                await process_warning_notifications(current_settings=current_settings)
 
                 if not active_clients:
                     now = datetime.now(timezone.utc)

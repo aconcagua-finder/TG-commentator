@@ -50,6 +50,13 @@ from services.project import (
 )
 from services.reactions import process_new_post_for_reaction
 from services.replies import process_reply_to_comment
+from services.telegram_bot import (
+    build_inbox_dm_notification,
+    build_inbox_reply_notification,
+    build_reaction_notification,
+    notify_event,
+    resolve_project_id_for_session,
+)
 from services.triggers import process_trigger
 from tg_device import device_kwargs
 
@@ -61,6 +68,20 @@ logger = logging.getLogger(__name__)
 def _db_connect():
     from db.connection import get_connection
     return get_connection()
+
+
+async def _safe_notify_event(event_type: str, project_id: str, message_text: str, settings: dict) -> None:
+    try:
+        await notify_event(event_type, project_id, message_text, settings=settings)
+    except Exception as exc:
+        logger.warning("Telegram bot notify_event failed: event=%s project_id=%s error=%s", event_type, project_id, exc)
+
+
+def _schedule_notify_event(event_type: str, project_id: str, message_text: str, settings: dict) -> None:
+    try:
+        asyncio.create_task(_safe_notify_event(event_type, project_id, message_text, settings))
+    except Exception as exc:
+        logger.warning("Telegram bot notification scheduling failed: event=%s project_id=%s error=%s", event_type, project_id, exc)
 
 
 class CommentatorClient:
@@ -151,6 +172,7 @@ class CommentatorClient:
 
     async def reaction_event_handler(self, update):
         try:
+            current_settings = self._shared["current_settings_ref"]()
             peer = getattr(update, "peer", None)
             msg_id = int(getattr(update, "msg_id", 0) or 0)
             chat_id = _peer_chat_id(peer)
@@ -186,6 +208,18 @@ class CommentatorClient:
                 chat_title=chat_title,
                 chat_username=chat_username,
                 reactions_summary=summary,
+            )
+
+            project_id = resolve_project_id_for_session(self.session_name, current_settings)
+            _schedule_notify_event(
+                "inbox_reactions",
+                project_id,
+                build_reaction_notification(
+                    session_name=self.session_name,
+                    chat_title=chat_title,
+                    summary=summary,
+                ),
+                current_settings,
             )
         except Exception:
             return
@@ -364,7 +398,7 @@ class CommentatorClient:
                         except Exception:
                             pass
 
-                    log_inbox_message_to_db(
+                    saved_dm_id = log_inbox_message_to_db(
                         kind="dm",
                         direction="in",
                         status="received",
@@ -379,6 +413,19 @@ class CommentatorClient:
                         text=text,
                         is_read=0,
                     )
+                    if saved_dm_id is not None:
+                        project_id = resolve_project_id_for_session(self.session_name, current_settings)
+                        _schedule_notify_event(
+                            "inbox_dm",
+                            project_id,
+                            build_inbox_dm_notification(
+                                session_name=self.session_name,
+                                sender_name=sender_name,
+                                sender_username=sender_username,
+                                text=text,
+                            ),
+                            current_settings,
+                        )
 
                 if event.is_reply and sender_id and sender_id not in our_ids and not event.is_private:
                     reply_msg = None
@@ -427,7 +474,7 @@ class CommentatorClient:
                                 pass
 
                         replied_to_text = getattr(reply_msg, "text", None) or getattr(reply_msg, "message", None) or ""
-                        log_inbox_message_to_db(
+                        saved_quote_id = log_inbox_message_to_db(
                             kind="quote",
                             direction="in",
                             status="received",
@@ -444,6 +491,19 @@ class CommentatorClient:
                             replied_to_text=replied_to_text,
                             is_read=0,
                         )
+                        if saved_quote_id is not None:
+                            project_id = resolve_project_id_for_session(self.session_name, current_settings)
+                            _schedule_notify_event(
+                                "inbox_replies",
+                                project_id,
+                                build_inbox_reply_notification(
+                                    session_name=self.session_name,
+                                    chat_title=chat_title,
+                                    sender_name=sender_name,
+                                    text=text,
+                                ),
+                                current_settings,
+                            )
             except Exception:
                 pass
 

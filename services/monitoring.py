@@ -29,6 +29,7 @@ from services.db_queries import (
     _db_set_last_post_time,
     log_action_to_db,
 )
+from services.telegram_bot import build_monitoring_notification, notify_event
 from services.text_analysis import normalize_id
 
 logger = logging.getLogger(__name__)
@@ -209,12 +210,12 @@ async def process_post_for_monitoring(
         )
         if is_relevant:
             notification_chat_id = monitor_target['notification_chat_id']
+            channel_username = monitor_target.get('chat_username')
+            channel_id_str = str(monitor_target.get('chat_id', '')).replace('-100', '')
+            post_link = f"https://t.me/{channel_username}/{post_id}" if channel_username else f"https://t.me/c/{channel_id_str}/{post_id}"
             try:
                 await client_wrapper.client.forward_messages(notification_chat_id, event.message)
             except Exception:
-                channel_username = monitor_target.get('chat_username')
-                channel_id_str = str(monitor_target.get('chat_id', '')).replace('-100', '')
-                post_link = f"https://t.me/{channel_username}/{post_id}" if channel_username else f"https://t.me/c/{channel_id_str}/{post_id}"
                 message_text = f"❗️ <b>Найден пост</b>\n\n<b>Канал:</b> {monitor_target.get('chat_name', 'N/A')}\n<b>Ссылка:</b> {post_link}"
                 await client_wrapper.client.send_message(notification_chat_id, message_text, parse_mode='html', link_preview=False)
             me = await client_wrapper.client.get_me()
@@ -224,6 +225,19 @@ async def process_post_for_monitoring(
                 'target': {'chat_name': monitor_target.get('chat_name'), 'channel_id': channel_id, 'destination_chat_id': channel_id},
                 'comment': f"Found post, notified {notification_chat_id}"
             })
+            project_id = str(monitor_target.get("project_id") or "default").strip() or "default"
+            try:
+                await notify_event(
+                    "monitoring",
+                    project_id,
+                    build_monitoring_notification(
+                        chat_name=str(monitor_target.get("chat_name") or ""),
+                        post_link=post_link,
+                    ),
+                    settings=current_settings,
+                )
+            except Exception as exc:
+                logger.warning("Telegram bot monitoring notification failed: project_id=%s error=%s", project_id, exc)
     except asyncio.CancelledError:
         pass
     finally:

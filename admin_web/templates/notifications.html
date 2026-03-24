@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Уведомления · TG-комментатор{% endblock %}
+{% block content %}
+  {% set chat_label = telegram_bot.get('chat_title') or (('@' ~ telegram_bot.get('chat_username')) if telegram_bot.get('chat_username') else '') or telegram_bot.get('chat_id') or 'не задан' %}
+  <h1 class="h3 mb-3">Уведомления Telegram</h1>
+  <p class="text-muted">
+    Для проекта <b>{{ active_project.get('name', 'Проект') }}</b> можно подключить отдельного бота и выбрать события для отправки в один чат.
+    Чат уведомлений можно указать числовым ID, публичной ссылкой или invite-ссылкой.
+  </p>
+  {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
+
+  <form method="post" action="/notifications" id="notifications_settings_form">
+    <div class="row g-3">
+      <div class="col-12 col-lg-7">
+        <div class="card h-100">
+          <div class="card-body">
+            <h2 class="h5">1) Бот и чат</h2>
+            <div class="d-flex flex-wrap gap-2 mb-3">
+              <span class="badge text-bg-light border">Статус: {{ 'включено' if telegram_bot.get('enabled') else 'выключено' }}</span>
+              <span class="badge text-bg-light border">Bot token: {{ bot_token_masked }}</span>
+              <span class="badge text-bg-light border">Чат: {{ chat_label }}</span>
+              <span class="badge text-bg-light border mono">Адрес: {{ telegram_bot.get('chat_id') or 'не задан' }}</span>
+            </div>
+
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch" name="enabled" id="telegram_bot_enabled" {% if telegram_bot.get('enabled') %}checked{% endif %} />
+              <label class="form-check-label" for="telegram_bot_enabled">Включить уведомления</label>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="telegram_bot_token_saved">Сохранённый bot token</label>
+              <input class="form-control mono" type="text" id="telegram_bot_token_saved" value="{{ bot_token_masked }}" readonly />
+              <div class="form-text">Полный token из соображений безопасности сюда не подставляется обратно.</div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label app-label" for="telegram_bot_token">
+                <span class="app-label-text">Новый bot token</span>
+              </label>
+              <div class="input-group">
+                <input class="form-control" type="password" name="bot_token" id="telegram_bot_token" placeholder="введите только если хотите заменить сохранённый token" autocomplete="off" spellcheck="false" autocapitalize="off" />
+                <button class="btn btn-outline-secondary" type="button" data-toggle-password="#telegram_bot_token" aria-pressed="false">Показать</button>
+              </div>
+              <div class="form-text">Кнопка «Показать» раскрывает только то, что ты вводишь сейчас в это поле.</div>
+              <div class="form-check mt-1">
+                <input class="form-check-input" type="checkbox" name="clear_bot_token" id="clear_bot_token" />
+                <label class="form-check-label" for="clear_bot_token">очистить сохранённый token</label>
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="telegram_chat_id">Чат уведомлений</label>
+              <input class="form-control" type="text" name="chat_id" id="telegram_chat_id" value="{{ telegram_bot.get('chat_id', '') }}" placeholder="-1001234567890 или @channel или https://t.me/..." autocomplete="off" spellcheck="false" autocapitalize="off" />
+              <div class="form-text">Можно указать числовой chat_id, <code>@username</code>, публичную ссылку <code>https://t.me/...</code> или invite-ссылку закрытого чата.</div>
+            </div>
+
+            <div class="border rounded-3 p-3 bg-body-tertiary mb-3">
+              <div class="fw-semibold mb-2">Допустимые форматы</div>
+              <div class="d-flex flex-wrap gap-2 mb-2">
+                <span class="badge text-bg-light border mono">-1001234567890</span>
+                <span class="badge text-bg-light border mono">@test23032206</span>
+                <span class="badge text-bg-light border mono">https://t.me/test23032206</span>
+                <span class="badge text-bg-light border mono">https://t.me/+AbCdEf123456</span>
+              </div>
+              <div class="small text-muted">
+                Для <code>@username</code> и публичной ссылки <code>t.me/...</code> авторизованные аккаунты не нужны: бот отправит сообщение напрямую.
+                Для invite-ссылки закрытого чата нужен хотя бы один авторизованный аккаунт, потому что Bot API сам не умеет превращать invite в <code>chat_id</code>.
+                Бот всё равно должен быть добавлен в группу или канал, иначе тестовая отправка не пройдёт.
+              </div>
+            </div>
+
+            <div class="alert alert-light border mb-0">
+              <div class="fw-semibold mb-1">Где взять данные</div>
+              <div class="small text-muted">
+                Token создаётся через <code>@BotFather</code>. Chat ID можно узнать, написав боту и вызвав Bot API
+                <code>getUpdates</code> или через вспомогательного бота для просмотра ID чатов, но можно просто вставить ссылку на нужный чат.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-5">
+        <div class="card h-100">
+          <div class="card-body">
+            <h2 class="h5">2) События</h2>
+            <p class="text-muted small mb-3">Каждый тип уведомлений включается отдельно для текущего проекта.</p>
+            <div class="d-flex flex-column gap-2">
+              {% set events = telegram_bot.get('events', {}) %}
+              {% for key, label in event_options %}
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="{{ key }}" id="event_{{ key }}" {% if events.get(key) %}checked{% endif %} />
+                  <label class="form-check-label" for="event_{{ key }}">{{ label }}</label>
+                </div>
+              {% endfor %}
+            </div>
+
+            <div class="d-flex flex-wrap gap-2 mt-4">
+              <button class="btn btn-primary" type="submit">Сохранить</button>
+              <a class="btn btn-outline-secondary" href="/">Назад</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </form>
+
+  <div class="card mt-3">
+    <div class="card-body">
+      <h2 class="h5">3) Проверка подключения</h2>
+      <p class="text-muted small mb-3">Кнопка ниже сохраняет текущие значения формы для проекта и затем отправляет отдельное тестовое сообщение. События можно оставить выключенными.</p>
+      <div class="d-flex flex-wrap gap-2 align-items-center">
+        <button class="btn btn-outline-primary" type="submit" form="notifications_settings_form" formaction="/notifications/test" formmethod="post">Сохранить и протестировать</button>
+        <span class="text-muted small">Если bot_token и чат корректны, в чат придёт сообщение «Бот подключен!».</span>
+      </div>
+    </div>
+  </div>
+{% endblock %}
