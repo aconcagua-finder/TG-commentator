@@ -31,6 +31,7 @@ async def process_trigger(
     active_clients: dict,
     current_settings: dict,
     reply_process_cache: set,
+    spam_blocked_msgs: set | None = None,
 ):
     """Check if message matches a trigger phrase and send auto-reply.
 
@@ -46,6 +47,14 @@ async def process_trigger(
     msg_id = event.message.id
     if msg_id in reply_process_cache:
         return
+
+    if isinstance(spam_blocked_msgs, set):
+        try:
+            reply_to_id = int(getattr(event.message, "reply_to_msg_id", None) or 0)
+        except Exception:
+            reply_to_id = 0
+        if msg_id in spam_blocked_msgs or (reply_to_id and reply_to_id in spam_blocked_msgs):
+            return
 
     post_text = (event.message.text or "").lower()
     if not post_text:

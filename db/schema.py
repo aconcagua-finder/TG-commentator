@@ -321,6 +321,42 @@ def _table_warning_history() -> str:
     """
 
 
+def _table_spam_rules() -> str:
+    return f"""
+    CREATE TABLE IF NOT EXISTS spam_rules (
+        id {_serial_pk()},
+        chat_id TEXT NOT NULL,
+        enabled INTEGER DEFAULT 0,
+        keywords TEXT DEFAULT '',
+        ai_enabled INTEGER DEFAULT 1,
+        ai_prompt TEXT DEFAULT '',
+        ai_model TEXT DEFAULT 'gpt-4.1-nano',
+        notify_telegram INTEGER DEFAULT 0,
+        created_at TEXT,
+        UNIQUE(chat_id)
+    )
+    """
+
+
+def _table_spam_log() -> str:
+    return f"""
+    CREATE TABLE IF NOT EXISTS spam_log (
+        id {_serial_pk()},
+        chat_id TEXT NOT NULL,
+        msg_id BIGINT,
+        sender_id BIGINT,
+        sender_name TEXT,
+        sender_username TEXT,
+        message_text TEXT,
+        detection_method TEXT,
+        matched_keyword TEXT,
+        ai_reason TEXT,
+        action TEXT DEFAULT 'deleted',
+        created_at TEXT
+    )
+    """
+
+
 # ---------------------------------------------------------------------------
 # Indexes
 # ---------------------------------------------------------------------------
@@ -341,6 +377,7 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_manual_tasks_project_status ON manual_tasks(project_id, status, id)",
     "CREATE INDEX IF NOT EXISTS idx_warning_history_key ON warning_history(key)",
     "CREATE INDEX IF NOT EXISTS idx_warning_history_resolved ON warning_history(resolved_at)",
+    "CREATE INDEX IF NOT EXISTS idx_spam_log_chat_created ON spam_log(chat_id, created_at)",
 ]
 
 
@@ -376,6 +413,8 @@ def init_database(conn) -> None:
         _table_manual_tasks,
         _table_warning_seen,
         _table_warning_history,
+        _table_spam_rules,
+        _table_spam_log,
     ]
 
     for fn in table_funcs:

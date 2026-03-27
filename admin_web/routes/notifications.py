@@ -193,6 +193,7 @@ async def notifications_save(
     inbox_replies: Optional[str] = Form(None),
     inbox_reactions: Optional[str] = Form(None),
     monitoring: Optional[str] = Form(None),
+    spam_deleted: Optional[str] = Form(None),
 ):
     settings, _ = _load_settings()
     project_id = _active_project_id(settings)
@@ -222,6 +223,7 @@ async def notifications_save(
                 "inbox_replies": inbox_replies is not None,
                 "inbox_reactions": inbox_reactions is not None,
                 "monitoring": monitoring is not None,
+                "spam_deleted": spam_deleted is not None,
             }
         }
     )["events"]

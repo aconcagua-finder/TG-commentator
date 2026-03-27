@@ -4,13 +4,23 @@
   <div class="app-page-head mb-3">
     <div>
       <h1 class="h3 mb-1">Статистика</h1>
-      <div class="text-muted">Период: {{ period }}, всего: {{ total }}</div>
+      <div class="text-muted">Период: {{ period }}, всего: {{ total }}{% if log_type %}, фильтр: {{ log_type }}{% endif %}</div>
     </div>
     <div class="app-actions">
-      <a class="btn {% if period == 'day' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=day">День</a>
-      <a class="btn {% if period == 'week' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=week">Неделя</a>
-      <a class="btn {% if period == 'month' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=month">Месяц</a>
-      <a class="btn btn-primary" href="/stats/export?period={{ period }}">Экспорт .xlsx</a>
+      {% set ltq = ('&log_type=' ~ log_type) if log_type else '' %}
+      <a class="btn {% if period == 'day' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=day{{ ltq }}">День</a>
+      <a class="btn {% if period == 'week' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=week{{ ltq }}">Неделя</a>
+      <a class="btn {% if period == 'month' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=month{{ ltq }}">Месяц</a>
+      <form class="d-inline-flex gap-2" method="get" action="/stats">
+        <input type="hidden" name="period" value="{{ period }}" />
+        <select class="form-select form-select-sm" name="log_type" aria-label="Фильтр по типу">
+          {% for key, label in log_type_options %}
+            <option value="{{ key }}" {% if key == log_type %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn btn-sm btn-outline-secondary" type="submit">Фильтр</button>
+      </form>
+      <a class="btn btn-primary" href="/stats/export?period={{ period }}{% if log_type %}&log_type={{ log_type }}{% endif %}">Экспорт .xlsx</a>
     </div>
   </div>
   <p class="text-muted">Это лог действий из `actions.sqlite` (комментарии/реакции/ответы/пропуски). Можно выгрузить в Excel.</p>
@@ -53,6 +63,8 @@
                   {% set lt_label = 'Мониторинг' %}
                 {% elif lt == 'forbidden' %}
                   {% set lt_label = 'Запрещено' %}
+                {% elif lt == 'spam_deleted' %}
+                  {% set lt_label = 'Антиспам' %}
                 {% else %}
                   {% set lt_label = lt %}
                 {% endif %}
@@ -116,10 +128,10 @@
     <div class="text-muted">Страница {{ page + 1 }} из {{ total_pages }}</div>
     <div class="app-actions">
       {% if page > 0 %}
-        <a class="btn btn-outline-secondary" href="/stats?period={{ period }}&page={{ page - 1 }}">Назад</a>
+        <a class="btn btn-outline-secondary" href="/stats?period={{ period }}&page={{ page - 1 }}{% if log_type %}&log_type={{ log_type }}{% endif %}">Назад</a>
       {% endif %}
       {% if page + 1 < total_pages %}
-        <a class="btn btn-outline-secondary" href="/stats?period={{ period }}&page={{ page + 1 }}">Вперёд</a>
+        <a class="btn btn-outline-secondary" href="/stats?period={{ period }}&page={{ page + 1 }}{% if log_type %}&log_type={{ log_type }}{% endif %}">Вперёд</a>
       {% endif %}
     </div>
   </div>

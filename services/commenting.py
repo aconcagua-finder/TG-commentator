@@ -82,6 +82,7 @@ async def process_new_post(
     post_process_cache: set,
     post_process_cache_order,
     post_process_cache_max: int,
+    spam_blocked_msgs: set | None = None,
     channel_last_post_time: dict,
     recent_generated_messages,
 ):
@@ -137,6 +138,17 @@ async def process_new_post(
             return
         processing_cache.add(unique_id)
         processing_added = True
+
+        if not is_manual and isinstance(spam_blocked_msgs, set) and msg_id in spam_blocked_msgs:
+            logger.info(f"🛑 Пост {msg_id} пропущен: антиспам (в треде был спам).")
+            log_comment_skip_to_db(
+                msg_id,
+                target_chat,
+                destination_chat_id_for_logs,
+                "антиспам: спам в треде",
+            )
+            _mark_processed(unique_id)
+            return
 
         raw_id = str(channel_id)
         norm_id = raw_id.replace('-100', '')

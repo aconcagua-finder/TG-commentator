@@ -126,6 +126,7 @@ async def process_reply_to_comment(
     reply_process_cache: set,
     pending_tasks: set,
     recent_generated_messages,
+    spam_blocked_msgs: set | None = None,
 ):
     """Decide whether to reply to a user comment and schedule the reply.
 
@@ -146,6 +147,15 @@ async def process_reply_to_comment(
     if msg_id in reply_process_cache:
         return
     reply_process_cache.add(msg_id)
+
+    if isinstance(spam_blocked_msgs, set):
+        try:
+            reply_to_id = int(getattr(event.message, "reply_to_msg_id", None) or 0)
+        except Exception:
+            reply_to_id = 0
+        if msg_id in spam_blocked_msgs or (reply_to_id and reply_to_id in spam_blocked_msgs):
+            return
+
     chat_id = event.chat_id
     sender_id = event.message.sender_id
     accounts_data = load_project_accounts(current_settings)

@@ -13,6 +13,7 @@ from admin_web.routes.discussions import router as discussions_router
 from admin_web.routes.message_actions import router as message_actions_router
 from admin_web.routes.monitors import router as monitors_router
 from admin_web.routes.notifications import router as notifications_router
+from admin_web.routes.antispam import router as antispam_router
 from admin_web.routes.personas import router as personas_router
 from admin_web.routes.proxies import router as proxies_router
 from admin_web.routes.reactions import router as reactions_router
@@ -33,6 +34,7 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(reactions_router)
     app.include_router(monitors_router)
     app.include_router(notifications_router)
+    app.include_router(antispam_router)
     app.include_router(personas_router)
     app.include_router(proxies_router)
     app.include_router(stats_router)

@@ -40,8 +40,19 @@ router = APIRouter()
 # Helper
 # ---------------------------------------------------------------------------
 
+LOG_TYPE_OPTIONS: list[tuple[str, str]] = [
+    ("", "Все"),
+    ("reaction", "Реакция"),
+    ("comment", "Комментарий"),
+    ("comment_reply", "Ответ"),
+    ("comment_failed", "Ошибка"),
+    ("comment_skip", "Пропуск"),
+    ("monitoring", "Мониторинг"),
+    ("forbidden", "Запрещено"),
+    ("spam_deleted", "Антиспам"),
+]
 
-def _get_logs_for_period(period: str, page: int, items_per_page: int = 20) -> Tuple[List[Any], int]:
+def _get_logs_for_period(period: str, page: int, items_per_page: int = 20, *, log_type: str = "") -> Tuple[List[Any], int]:
     if _is_postgres():
         if period == "day":
             period_filter = "timestamp::timestamptz >= NOW() - INTERVAL '1 day'"
@@ -59,16 +70,19 @@ def _get_logs_for_period(period: str, page: int, items_per_page: int = 20) -> Tu
             period_filter = "timestamp >= datetime('now', '-30 days', 'localtime')"
 
     offset = page * items_per_page
+    log_type_value = str(log_type or "").strip()
+    log_type_filter = " AND log_type = ?" if log_type_value else ""
+    params: tuple[Any, ...] = (log_type_value,) if log_type_value else ()
 
     with _db_connect() as conn:
         dedup_sub = f"""
             SELECT MIN(id) AS id
             FROM logs
-            WHERE {period_filter}
+            WHERE {period_filter}{log_type_filter}
             GROUP BY post_id, account_session_name, content
         """
 
-        total_items = conn.execute(f"SELECT COUNT(*) AS c FROM ({dedup_sub}) AS sub").fetchone()["c"]
+        total_items = conn.execute(f"SELECT COUNT(*) AS c FROM ({dedup_sub}) AS sub", params).fetchone()["c"]
 
         rows = conn.execute(
             f"""
@@ -77,7 +91,7 @@ def _get_logs_for_period(period: str, page: int, items_per_page: int = 20) -> Tu
             ORDER BY l.timestamp DESC
             LIMIT ? OFFSET ?
             """,
-            (items_per_page, offset),
+            params + (items_per_page, offset),
         ).fetchall()
 
     return rows, total_items
@@ -89,25 +103,34 @@ def _get_logs_for_period(period: str, page: int, items_per_page: int = 20) -> Tu
 
 
 @router.get("/stats", response_class=HTMLResponse)
-async def stats_page(request: Request, period: str = "day", page: int = 0):
+async def stats_page(request: Request, period: str = "day", page: int = 0, log_type: str = ""):
     if period not in {"day", "week", "month"}:
         period = "day"
-    rows, total = _get_logs_for_period(period, page)
+    rows, total = _get_logs_for_period(period, page, log_type=log_type)
 
     total_pages = max((total + 19) // 20, 1)
     page = max(min(page, total_pages - 1), 0)
 
     return templates.TemplateResponse(
         "stats.html",
-        _template_context(request, period=period, page=page, total=total, total_pages=total_pages, rows=rows),
+        _template_context(
+            request,
+            period=period,
+            page=page,
+            total=total,
+            total_pages=total_pages,
+            rows=rows,
+            log_type=str(log_type or "").strip(),
+            log_type_options=LOG_TYPE_OPTIONS,
+        ),
     )
 
 
 @router.get("/stats/export")
-async def stats_export(period: str = "day"):
+async def stats_export(period: str = "day", log_type: str = ""):
     if period not in {"day", "week", "month"}:
         period = "day"
-    rows, _ = _get_logs_for_period(period, 0, items_per_page=100000)
+    rows, _ = _get_logs_for_period(period, 0, items_per_page=100000, log_type=log_type)
 
     table_data: List[List[Any]] = []
     for row in rows:
@@ -120,6 +143,7 @@ async def stats_export(period: str = "day"):
             "comment_skip": "Пропуск",
             "monitoring": "Мониторинг",
             "forbidden": "Запрещено",
+            "spam_deleted": "Антиспам",
         }
         log_type = log_type_map.get(log_type_raw, log_type_raw or "—")
 
@@ -132,10 +156,12 @@ async def stats_export(period: str = "day"):
 
         post_id = row["post_id"]
         channel_username = row["channel_username"]
-        if channel_username:
+        source_channel_id = row["source_channel_id"]
+        post_link = ""
+        if channel_username and post_id:
             post_link = f"https://t.me/{channel_username}/{post_id}"
-        else:
-            chat_id_clean = str(row["source_channel_id"] or "").replace("-100", "")
+        elif source_channel_id and post_id:
+            chat_id_clean = str(source_channel_id or "").replace("-100", "")
             post_link = f"https://t.me/c/{chat_id_clean}/{post_id}"
 
         content = row["content"] or ""

@@ -20,6 +20,7 @@ TELEGRAM_BOT_EVENT_OPTIONS: tuple[tuple[str, str], ...] = (
     ("inbox_replies", "Реплаи на комментарии бота"),
     ("inbox_reactions", "Реакции на сообщения бота"),
     ("monitoring", "Срабатывания мониторинга каналов"),
+    ("spam_deleted", "Антиспам: удалён спам"),
 )
 
 TELEGRAM_BOT_EVENT_DEFAULTS: Dict[str, bool] = {
@@ -28,6 +29,7 @@ TELEGRAM_BOT_EVENT_DEFAULTS: Dict[str, bool] = {
     "inbox_replies": False,
     "inbox_reactions": False,
     "monitoring": True,
+    "spam_deleted": False,
 }
 
 logger = logging.getLogger(__name__)
@@ -200,6 +202,33 @@ def build_warning_notification(*, title: str, detail: str, session_name: str, ac
         escape_html(detail) if str(detail or "").strip() else "",
         f"<b>Аккаунт:</b> {escape_html(session_name or '—')}",
         f'🔗 <a href="{html.escape(action_url, quote=True)}">Открыть аккаунт</a>' if action_url else "",
+    )
+
+
+def build_spam_notification(log_entry: Any, target: Any) -> str:
+    entry = log_entry if isinstance(log_entry, dict) else {}
+    tgt = target if isinstance(target, dict) else {}
+    channel_name = str(tgt.get("chat_name") or "").strip() or "—"
+    channel_username = str(tgt.get("chat_username") or "").strip().lstrip("@")
+    where = f"{channel_name} (@{channel_username})" if channel_username else channel_name
+
+    sender_name = entry.get("sender_name")
+    sender_username = entry.get("sender_username")
+    method = str(entry.get("detection_method") or "—")
+    reason = ""
+    if method == "keyword":
+        reason = str(entry.get("matched_keyword") or "").strip()
+    elif method == "ai":
+        reason = str(entry.get("ai_reason") or "").strip()
+
+    text = str(entry.get("message_text") or "").strip()
+    return _join_notification_lines(
+        "<b>🧹 Антиспам: удалено</b>",
+        f"<b>Канал:</b> {escape_html(where)}",
+        f"<b>От:</b> {escape_html(_compose_person(sender_name, sender_username))}",
+        f"<b>Метод:</b> {escape_html(method)}",
+        f"<b>Причина:</b> {escape_html(reason or '—')}",
+        f"<b>Текст:</b> {escape_html(_truncate_text(text, limit=260) or '—')}",
     )
 
 

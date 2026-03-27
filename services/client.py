@@ -16,6 +16,7 @@ from services.account_utils import (
     _resolve_account_proxy,
     is_bot_awake,
 )
+from services.antispam import check_and_handle_spam
 from services.commenting import process_new_post
 from services.connection import (
     _connect_backoff_ready,
@@ -244,6 +245,34 @@ class CommentatorClient:
                 our_ids = get_all_our_user_ids(active_clients=active_clients, current_settings=current_settings)
             except Exception:
                 our_ids = set()
+
+            # -----------------------------------------------------------------
+            # Anti-spam: handle external user messages in linked discussion groups
+            # before any other processing (inbox logging / triggers / replies).
+            # -----------------------------------------------------------------
+            try:
+                if (
+                    sender_id
+                    and not event.out
+                    and not event.is_private
+                    and event.is_group
+                    and not is_channel_post
+                ):
+                    spam_blocked = s.get("spam_blocked_msgs")
+                    spam_blocked_order = s.get("spam_blocked_msgs_order")
+                    spam_blocked_max = s.get("spam_blocked_msgs_max")
+                    is_spam = await check_and_handle_spam(
+                        event,
+                        active_clients=active_clients,
+                        current_settings=current_settings,
+                        spam_blocked_msgs=spam_blocked if isinstance(spam_blocked, set) else None,
+                        spam_blocked_msgs_order=spam_blocked_order,
+                        spam_blocked_msgs_max=int(spam_blocked_max or 0) if spam_blocked_max is not None else 0,
+                    )
+                    if is_spam:
+                        return
+            except Exception:
+                pass
 
             if event.out:
                 try:
@@ -610,6 +639,7 @@ class CommentatorClient:
                             pending_tasks=s["pending_tasks"],
                             discussion_start_suppress_chat_ids=s["discussion_start_suppress_chat_ids"],
                             recent_generated_messages=s["recent_generated_messages"],
+                            spam_blocked_msgs=s.get("spam_blocked_msgs"),
                         )
 
             if found_target:
@@ -621,6 +651,7 @@ class CommentatorClient:
                         active_clients=active_clients,
                         current_settings=current_settings,
                         reply_process_cache=s["reply_process_cache"],
+                        spam_blocked_msgs=s.get("spam_blocked_msgs"),
                     ))
 
                     if (event.is_reply or event.is_private) and msg_id not in s["reply_process_cache"]:
@@ -658,6 +689,7 @@ class CommentatorClient:
                                 post_process_cache=s["post_process_cache"],
                                 post_process_cache_order=s["post_process_cache_order"],
                                 post_process_cache_max=s["post_process_cache_max"],
+                                spam_blocked_msgs=s.get("spam_blocked_msgs"),
                                 channel_last_post_time=s["channel_last_post_time"],
                                 recent_generated_messages=s["recent_generated_messages"],
                             ))
@@ -686,6 +718,7 @@ class CommentatorClient:
                         reply_process_cache=s["reply_process_cache"],
                         pending_tasks=s["pending_tasks"],
                         recent_generated_messages=s["recent_generated_messages"],
+                        spam_blocked_msgs=s.get("spam_blocked_msgs"),
                     ))
 
             if event.is_channel and not event.message.fwd_from:
@@ -809,6 +842,7 @@ async def manage_clients(api_id, api_hash, *, shared_state: dict):
                             post_process_cache=s["post_process_cache"],
                             post_process_cache_order=s["post_process_cache_order"],
                             post_process_cache_max=s["post_process_cache_max"],
+                            spam_blocked_msgs=s.get("spam_blocked_msgs"),
                             channel_last_post_time=s["channel_last_post_time"],
                             recent_generated_messages=s["recent_generated_messages"],
                         )

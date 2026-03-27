@@ -67,6 +67,9 @@ REPLY_PROCESS_CACHE = set()
 POST_PROCESS_CACHE = set()
 POST_PROCESS_CACHE_ORDER = collections.deque()
 POST_PROCESS_CACHE_MAX = 5000
+SPAM_BLOCKED_MSGS = set()
+SPAM_BLOCKED_MSGS_ORDER = collections.deque()
+SPAM_BLOCKED_MSGS_MAX = 10000
 DISCUSSION_START_CACHE = set()
 DISCUSSION_START_CACHE_ORDER = collections.deque()
 DISCUSSION_START_CACHE_MAX = 2000
@@ -106,6 +109,9 @@ def _build_shared_state():
         "post_process_cache": POST_PROCESS_CACHE,
         "post_process_cache_order": POST_PROCESS_CACHE_ORDER,
         "post_process_cache_max": POST_PROCESS_CACHE_MAX,
+        "spam_blocked_msgs": SPAM_BLOCKED_MSGS,
+        "spam_blocked_msgs_order": SPAM_BLOCKED_MSGS_ORDER,
+        "spam_blocked_msgs_max": SPAM_BLOCKED_MSGS_MAX,
         "channel_last_post_time": CHANNEL_LAST_POST_TIME,
         "monitor_channel_last_post_time": MONITOR_CHANNEL_LAST_POST_TIME,
         "recent_generated_messages": RECENT_GENERATED_MESSAGES,
@@ -118,7 +124,8 @@ def _make_process_new_post_fn():
     """Return a wrapper around process_new_post that injects shared global state."""
     async def _wrapper(event, target_chat, from_catch_up=False, is_manual=False):
         return await process_new_post(
-            event, target_chat,
+            event,
+            target_chat,
             from_catch_up=from_catch_up,
             is_manual=is_manual,
             active_clients=active_clients,
@@ -129,9 +136,11 @@ def _make_process_new_post_fn():
             post_process_cache=POST_PROCESS_CACHE,
             post_process_cache_order=POST_PROCESS_CACHE_ORDER,
             post_process_cache_max=POST_PROCESS_CACHE_MAX,
+            spam_blocked_msgs=SPAM_BLOCKED_MSGS,
             channel_last_post_time=CHANNEL_LAST_POST_TIME,
             recent_generated_messages=RECENT_GENERATED_MESSAGES,
         )
+
     return _wrapper
 
 

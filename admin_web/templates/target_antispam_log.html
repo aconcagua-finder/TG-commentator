@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Антиспам · Лог · {{ target.chat_name }}{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-start mb-2">
+    <div>
+      <h1 class="h3 mb-1">{{ target.chat_name }}</h1>
+      <div class="text-muted small">Лог антиспама (linked_chat_id={{ linked_chat_id or '—' }}).</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="/targets/{{ target.chat_id }}/antispam">Назад к настройкам</a>
+  </div>
+  {% include "target_tabs.html" %}
+
+  <div class="card">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle app-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Дата</th>
+              <th>Отправитель</th>
+              <th>Текст</th>
+              <th>Метод</th>
+              <th>Причина</th>
+              <th>Действие</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                <td class="mono small">{{ r.id }}</td>
+                <td class="mono small">{{ (r.created_at or '')|human_dt }}</td>
+                <td class="small">
+                  <div class="app-clamp-1" title="{{ (r.sender_name or '') ~ ' @' ~ (r.sender_username or '') }}">
+                    {{ r.sender_name or '—' }}
+                    {% if r.sender_username %}<span class="text-muted">@{{ r.sender_username }}</span>{% endif %}
+                  </div>
+                </td>
+                <td class="small">
+                  <div class="app-clamp-3" title="{{ r.message_text or '' }}">{{ r.message_text or '—' }}</div>
+                </td>
+                <td class="mono small">{{ r.detection_method or '—' }}</td>
+                <td class="small">
+                  {% if r.detection_method == 'keyword' %}
+                    <span class="mono">{{ r.matched_keyword or '—' }}</span>
+                  {% elif r.detection_method == 'ai' %}
+                    <span class="app-clamp-3" title="{{ r.ai_reason or '' }}">{{ r.ai_reason or '—' }}</span>
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td class="mono small">{{ r.action or '—' }}</td>
+              </tr>
+            {% endfor %}
+            {% if rows|length == 0 %}
+              <tr><td colspan="7" class="text-center text-muted py-4">Записей нет.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-page-head mt-3">
+    <div class="text-muted">Страница {{ page + 1 }} из {{ total_pages }}, всего: {{ total }}</div>
+    <div class="app-actions">
+      {% if page > 0 %}
+        <a class="btn btn-outline-secondary" href="/targets/{{ target.chat_id }}/antispam/log?page={{ page - 1 }}">Назад</a>
+      {% endif %}
+      {% if page + 1 < total_pages %}
+        <a class="btn btn-outline-secondary" href="/targets/{{ target.chat_id }}/antispam/log?page={{ page + 1 }}">Вперёд</a>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}
+

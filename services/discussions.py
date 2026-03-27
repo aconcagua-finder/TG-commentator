@@ -104,6 +104,7 @@ def schedule_discussion_run(
     pending_tasks: set,
     discussion_start_suppress_chat_ids: set,
     recent_generated_messages,
+    spam_blocked_msgs: set | None = None,
 ) -> None:
     """Schedule (create asyncio task for) a discussion session.
 
@@ -117,6 +118,8 @@ def schedule_discussion_run(
     try:
         chat_bare_id = int(chat_bare_id)
     except Exception:
+        return
+    if isinstance(spam_blocked_msgs, set) and int(seed_msg_id) in spam_blocked_msgs:
         return
 
     unique_key = f"discussion:{chat_bare_id}:{seed_msg_id}"
@@ -430,14 +433,16 @@ async def run_discussion_session(
                 if not operator_text:
                     logger.info(f"⏭ [discussion] сцена {scene_number}/{total_scenes} пропущена: пустая фраза оператора")
                     continue
-                if not operator_session:
+
+                scene_operator = str((scene or {}).get("operator_session_name") or "").strip() or operator_session
+                if not scene_operator:
                     logger.warning(
                         f"⚠️ [discussion] сцена {scene_number}/{total_scenes}: не задан operator_session_name — остановка"
                     )
                     break
 
                 prev_reply_to = int(reply_to_msg_id) if reply_to_msg_id else None
-                op_wrapper = active_clients.get(operator_session) if operator_session else None
+                op_wrapper = active_clients.get(scene_operator) if scene_operator else None
                 temp_client = None
                 op_client = None
                 if op_wrapper is not None and getattr(op_wrapper, "client", None) is not None:
@@ -447,7 +452,7 @@ async def run_discussion_session(
                 else:
                     telethon_config = _load_config_section('telethon_credentials')
                     api_id, api_hash = int(telethon_config['api_id']), telethon_config['api_hash']
-                    acc_conf = account_by_session.get(operator_session)
+                    acc_conf = account_by_session.get(scene_operator)
                     if not acc_conf:
                         raise KeyError("operator_account_not_found")
                     temp_client = await _connect_temp_client(acc_conf, api_id, api_hash)
@@ -492,7 +497,7 @@ async def run_discussion_session(
                         _db_add_discussion_message(
                             session_id=session_id_int,
                             speaker_type="operator",
-                            speaker_session_name=str(operator_session or "").strip() or None,
+                            speaker_session_name=str(scene_operator or "").strip() or None,
                             speaker_label="Оператор",
                             msg_id=int(op_msg_id),
                             reply_to_msg_id=int(prev_reply_to) if prev_reply_to else None,
