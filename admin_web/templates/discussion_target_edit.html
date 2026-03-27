@@ -134,18 +134,33 @@
 	            </label>
 	            <input class="form-control" name="title" value="{{ target.get('title','') }}" placeholder="Например: Похвалить сервис" />
 	          </div>
-	          <div class="col-12 col-md-4">
-	            <label class="form-label app-label">
-	              <span class="app-label-text">Оператор</span>
-	              {{ ui.tip("Аккаунт, с которого человек отправляет фразу‑старт. Только его сообщения могут запускать обсуждение.") }}
-            </label>
-            <select class="form-select" name="operator_session_name" required>
-              <option value="" disabled {% if not target.get('operator_session_name') %}selected{% endif %}>Выберите аккаунт…</option>
-              {% for a in accounts %}
-                <option value="{{ a.session_name }}" {% if a.session_name == target.get('operator_session_name') %}selected{% endif %}>{{ a.session_name }}</option>
-              {% endfor %}
-            </select>
-          </div>
+		          <div class="col-12 col-md-4">
+		            <label class="form-label app-label">
+		              <span class="app-label-text">Оператор</span>
+		              {{ ui.tip("Аккаунт, с которого человек отправляет фразу‑старт. Только его сообщения могут запускать обсуждение.") }}
+	            </label>
+	            {% set op_session = (target.get('operator_session_name') or '').strip() %}
+	            <div class="input-group">
+	              <select class="form-select" name="operator_session_name" required id="operator_session_name_select">
+	                <option value="" disabled {% if not op_session %}selected{% endif %}>Выберите аккаунт…</option>
+	                {% for a in accounts %}
+	                  <option value="{{ a.session_name }}" {% if a.session_name == op_session %}selected{% endif %}>{{ a.session_name }}</option>
+	                {% endfor %}
+	              </select>
+	              <a
+	                class="btn btn-outline-secondary app-icon-btn{% if not op_session %} disabled{% endif %}"
+	                id="operator_session_name_link"
+	                href="{% if op_session %}/accounts/{{ op_session }}{% else %}#{% endif %}"
+	                target="_blank"
+	                rel="noopener"
+	                aria-label="Открыть аккаунт оператора"
+	                title="Открыть аккаунт"
+	                {% if not op_session %}tabindex="-1" aria-disabled="true"{% endif %}
+	              >
+	                <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+	              </a>
+	            </div>
+	          </div>
 
           <div class="col-12 col-md-4">
             <label class="form-label app-label">
@@ -290,10 +305,13 @@
 			                    <div class="row g-2">
 			                      {% for a in accounts %}
 			                        <div class="col-12 col-md-4">
-			                          <div class="form-check">
-			                            <input class="form-check-input js-account-checkbox" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
-			                            <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
-			                          </div>
+				                          <div class="form-check">
+				                            <input class="form-check-input js-account-checkbox" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
+				                            <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
+				                            <a class="text-muted ms-2" href="/accounts/{{ a.session_name }}" target="_blank" rel="noopener" aria-label="Открыть аккаунт" title="Открыть аккаунт">
+				                              <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+				                            </a>
+				                          </div>
 			                          {% set full_name = (a.get('first_name','') ~ ' ' ~ a.get('last_name','')).strip() %}
 			                          {% if full_name or a.get('username') %}
 			                            <div class="text-muted small">
@@ -369,13 +387,41 @@
 		                            </div>
 
 		                            <div class="row g-2 mt-1">
-		                              <div class="col-12">
-		                                <label class="form-label app-label mb-1">
-		                                  <span class="app-label-text">Фраза оператора (сцена {{ loop.index + 1 }})</span>
-		                                  {{ ui.tip("Эта фраза будет отправлена в чат от аккаунта оператора после завершения предыдущей сцены и станет новой «мыслью» для обсуждения.") }}
-		                                </label>
-		                                <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…">{{ sc.get('operator_text','') }}</textarea>
-		                              </div>
+			                              <div class="col-12">
+			                                <label class="form-label app-label mb-1">
+			                                  <span class="app-label-text">Фраза оператора (сцена {{ loop.index + 1 }})</span>
+			                                  {{ ui.tip("Эта фраза будет отправлена в чат от аккаунта оператора после завершения предыдущей сцены и станет новой «мыслью» для обсуждения.") }}
+			                                </label>
+			                                <div class="row g-2">
+			                                  <div class="col-12 col-md-8">
+			                                    <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…">{{ sc.get('operator_text','') }}</textarea>
+			                                  </div>
+			                                  <div class="col-12 col-md-4">
+			                                    <label class="form-label app-label mb-1">
+			                                      <span class="app-label-text">Оператор сцены</span>
+			                                    </label>
+			                                    {% set sc_op = (sc.get('operator_session_name') or '').strip() %}
+			                                    <div class="input-group input-group-sm">
+			                                      <select class="form-select form-select-sm js-scene-operator-select" name="scene_operator_session_name">
+			                                        <option value="" {% if not sc_op %}selected{% endif %}>(как в цели)</option>
+			                                        {% for a in accounts %}
+			                                          <option value="{{ a.session_name }}" {% if a.session_name == sc_op %}selected{% endif %}>{{ a.session_name }}</option>
+			                                        {% endfor %}
+			                                      </select>
+			                                      <a
+			                                        class="btn btn-outline-secondary app-icon-btn js-scene-operator-link"
+			                                        href="#"
+			                                        target="_blank"
+			                                        rel="noopener"
+			                                        aria-label="Открыть аккаунт оператора сцены"
+			                                        title="Открыть аккаунт"
+			                                      >
+			                                        <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+			                                      </a>
+			                                    </div>
+			                                  </div>
+			                                </div>
+			                              </div>
 
 		                              <div class="col-12">
 		                                <label class="form-label app-label mb-1">
@@ -445,18 +491,21 @@
 		                                <div class="row g-2">
 		                                  {% for a in accounts %}
 		                                    <div class="col-12 col-md-4">
-		                                      <div class="form-check">
-		                                        <input
-		                                          class="form-check-input js-scene-account-checkbox"
-		                                          type="checkbox"
-		                                          data-scene-id="{{ sc.get('id','') }}"
-		                                          name="scene_assigned_accounts_{{ sc.get('id','') }}"
-		                                          value="{{ a.session_name }}"
-		                                          id="scene_{{ sc.get('id','') }}_acc_{{ a.session_name }}"
-		                                          {% if a.session_name in scene_selected %}checked{% endif %}
-		                                        />
-		                                        <label class="form-check-label mono" for="scene_{{ sc.get('id','') }}_acc_{{ a.session_name }}">{{ a.session_name }}</label>
-		                                      </div>
+			                                      <div class="form-check">
+			                                        <input
+			                                          class="form-check-input js-scene-account-checkbox"
+			                                          type="checkbox"
+			                                          data-scene-id="{{ sc.get('id','') }}"
+			                                          name="scene_assigned_accounts_{{ sc.get('id','') }}"
+			                                          value="{{ a.session_name }}"
+			                                          id="scene_{{ sc.get('id','') }}_acc_{{ a.session_name }}"
+			                                          {% if a.session_name in scene_selected %}checked{% endif %}
+			                                        />
+			                                        <label class="form-check-label mono" for="scene_{{ sc.get('id','') }}_acc_{{ a.session_name }}">{{ a.session_name }}</label>
+			                                        <a class="text-muted ms-2" href="/accounts/{{ a.session_name }}" target="_blank" rel="noopener" aria-label="Открыть аккаунт" title="Открыть аккаунт">
+			                                          <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+			                                        </a>
+			                                      </div>
 		                                    </div>
 		                                  {% endfor %}
 		                                </div>
@@ -486,12 +535,39 @@
 		                          <button class="btn btn-sm btn-outline-danger" type="button" onclick="window.__removeSceneRow(this)">Удалить</button>
 		                        </div>
 		                        <div class="row g-2 mt-1">
-		                          <div class="col-12">
-		                            <label class="form-label app-label mb-1">
-		                              <span class="app-label-text">Фраза оператора</span>
-		                            </label>
-		                            <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…"></textarea>
-		                          </div>
+			                          <div class="col-12">
+			                            <label class="form-label app-label mb-1">
+			                              <span class="app-label-text">Фраза оператора</span>
+			                            </label>
+			                            <div class="row g-2">
+			                              <div class="col-12 col-md-8">
+			                                <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…"></textarea>
+			                              </div>
+			                              <div class="col-12 col-md-4">
+			                                <label class="form-label app-label mb-1">
+			                                  <span class="app-label-text">Оператор сцены</span>
+			                                </label>
+			                                <div class="input-group input-group-sm">
+			                                  <select class="form-select form-select-sm js-scene-operator-select" name="scene_operator_session_name">
+			                                    <option value="" selected>(как в цели)</option>
+			                                    {% for a in accounts %}
+			                                      <option value="{{ a.session_name }}">{{ a.session_name }}</option>
+			                                    {% endfor %}
+			                                  </select>
+			                                  <a
+			                                    class="btn btn-outline-secondary app-icon-btn js-scene-operator-link"
+			                                    href="#"
+			                                    target="_blank"
+			                                    rel="noopener"
+			                                    aria-label="Открыть аккаунт оператора сцены"
+			                                    title="Открыть аккаунт"
+			                                  >
+			                                    <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+			                                  </a>
+			                                </div>
+			                              </div>
+			                            </div>
+			                          </div>
 		                          <div class="col-12">
 		                            <label class="form-label app-label mb-1">
 		                              <span class="app-label-text">Вектор сцены (опционально)</span>
@@ -539,18 +615,21 @@
 		                            <div class="row g-2">
 		                              {% for a in accounts %}
 		                                <div class="col-12 col-md-4">
-		                                  <div class="form-check">
-		                                    <input
-		                                      class="form-check-input js-scene-account-checkbox"
-		                                      type="checkbox"
-		                                      data-scene-id="__SCENE_ID__"
-		                                      data-scene-acc-template="1"
-		                                      name="scene_assigned_accounts___SCENE_ID__"
-		                                      value="{{ a.session_name }}"
-		                                      id="scene___SCENE_ID___acc_{{ a.session_name }}"
-		                                    />
-		                                    <label class="form-check-label mono" for="scene___SCENE_ID___acc_{{ a.session_name }}" data-scene-acc-label-template="1">{{ a.session_name }}</label>
-		                                  </div>
+			                                  <div class="form-check">
+			                                    <input
+			                                      class="form-check-input js-scene-account-checkbox"
+			                                      type="checkbox"
+			                                      data-scene-id="__SCENE_ID__"
+			                                      data-scene-acc-template="1"
+			                                      name="scene_assigned_accounts___SCENE_ID__"
+			                                      value="{{ a.session_name }}"
+			                                      id="scene___SCENE_ID___acc_{{ a.session_name }}"
+			                                    />
+			                                    <label class="form-check-label mono" for="scene___SCENE_ID___acc_{{ a.session_name }}" data-scene-acc-label-template="1">{{ a.session_name }}</label>
+			                                    <a class="text-muted ms-2" href="/accounts/{{ a.session_name }}" target="_blank" rel="noopener" aria-label="Открыть аккаунт" title="Открыть аккаунт">
+			                                      <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
+			                                    </a>
+			                                  </div>
 		                                </div>
 		                              {% endfor %}
 		                            </div>
@@ -650,11 +729,11 @@
 		    </div>
 		  </div>
 
-		  <script>
-		    (() => {
-		      window.__toggleDiscussionTitleEdit = (show) => {
-		        const box = document.getElementById("discussionTitleEdit");
-	        if (!box) return;
+			  <script>
+			    (() => {
+			      window.__toggleDiscussionTitleEdit = (show) => {
+			        const box = document.getElementById("discussionTitleEdit");
+		        if (!box) return;
         const wantShow = (show === undefined) ? box.classList.contains("d-none") : Boolean(show);
         box.classList.toggle("d-none", !wantShow);
         if (wantShow) {
@@ -666,15 +745,58 @@
 	        }
 	      };
 
-		      const scenesContainer = document.getElementById("scenes_container");
-		      const scenesTpl = document.getElementById("scene_row_tpl");
-		      const addSceneBtns = Array.from(document.querySelectorAll(".js-add-scene-btn"));
-		      const noScenesHint = document.getElementById("no_scenes_hint");
+			      const scenesContainer = document.getElementById("scenes_container");
+			      const scenesTpl = document.getElementById("scene_row_tpl");
+			      const addSceneBtns = Array.from(document.querySelectorAll(".js-add-scene-btn"));
+			      const noScenesHint = document.getElementById("no_scenes_hint");
 
-	      const genSceneId = () => {
-	        try {
-	          if (window.crypto && typeof window.crypto.randomUUID === "function") {
-	            return window.crypto.randomUUID().replaceAll("-", "");
+			      const operatorSelect = document.getElementById("operator_session_name_select");
+			      const operatorLink = document.getElementById("operator_session_name_link");
+
+			      const setAccountLink = (linkEl, sessionName) => {
+			        if (!linkEl) return;
+			        const sess = String(sessionName || "").trim();
+			        if (!sess) {
+			          linkEl.setAttribute("href", "#");
+			          linkEl.classList.add("disabled");
+			          linkEl.setAttribute("tabindex", "-1");
+			          linkEl.setAttribute("aria-disabled", "true");
+			          return;
+			        }
+			        linkEl.setAttribute("href", `/accounts/${encodeURIComponent(sess)}`);
+			        linkEl.classList.remove("disabled");
+			        linkEl.removeAttribute("tabindex");
+			        linkEl.removeAttribute("aria-disabled");
+			      };
+
+			      const getTargetOperatorSession = () => String(operatorSelect?.value || "").trim();
+
+			      const updateTargetOperatorLink = () => {
+			        setAccountLink(operatorLink, getTargetOperatorSession());
+			      };
+
+			      const updateSceneOperatorLink = (row) => {
+			        if (!row) return;
+			        const select = row.querySelector(".js-scene-operator-select");
+			        const link = row.querySelector(".js-scene-operator-link");
+			        const chosen = String(select?.value || "").trim();
+			        setAccountLink(link, chosen || getTargetOperatorSession());
+			      };
+
+			      const initSceneOperator = (row) => {
+			        if (!row) return;
+			        const select = row.querySelector(".js-scene-operator-select");
+			        if (select && !select.dataset.operatorLinkInit) {
+			          select.dataset.operatorLinkInit = "1";
+			          select.addEventListener("change", () => updateSceneOperatorLink(row));
+			        }
+			        updateSceneOperatorLink(row);
+			      };
+
+		      const genSceneId = () => {
+		        try {
+		          if (window.crypto && typeof window.crypto.randomUUID === "function") {
+		            return window.crypto.randomUUID().replaceAll("-", "");
 	          }
 	        } catch (e) {}
 	        return `${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
@@ -797,6 +919,7 @@
 		          applySceneIdToTemplateRow(row, sid);
 		          applyTargetSelectionToSceneRow(row);
 		          initSceneParticipants(row);
+		          initSceneOperator(row);
 		        }
 		        scenesContainer.appendChild(frag);
 		        updateSceneNumbers();
@@ -808,8 +931,21 @@
 		      }
 	      updateSceneNumbers();
 	      if (scenesContainer) {
-	        Array.from(scenesContainer.querySelectorAll("[data-scene-row]")).forEach((row) => initSceneParticipants(row));
+	        Array.from(scenesContainer.querySelectorAll("[data-scene-row]")).forEach((row) => {
+	          initSceneParticipants(row);
+	          initSceneOperator(row);
+	        });
 	      }
+
+	      if (operatorSelect) {
+	        operatorSelect.addEventListener("change", () => {
+	          updateTargetOperatorLink();
+	          if (scenesContainer) {
+	            Array.from(scenesContainer.querySelectorAll("[data-scene-row]")).forEach((row) => updateSceneOperatorLink(row));
+	          }
+	        });
+	      }
+	      updateTargetOperatorLink();
 
 	      const selectAll = document.getElementById("select_all_accounts");
 	      if (selectAll) {
