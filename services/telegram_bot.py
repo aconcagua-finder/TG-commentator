@@ -193,11 +193,13 @@ def build_monitoring_notification(*, chat_name: str, post_link: str) -> str:
     )
 
 
-def build_warning_notification(*, title: str, detail: str, session_name: str) -> str:
+def build_warning_notification(*, title: str, detail: str, session_name: str, action_url: str | None = None) -> str:
+    action_url = str(action_url or "").strip()
     return _join_notification_lines(
         f"<b>⚠️ {escape_html(title)}</b>",
         escape_html(detail) if str(detail or "").strip() else "",
         f"<b>Аккаунт:</b> {escape_html(session_name or '—')}",
+        f'🔗 <a href="{html.escape(action_url, quote=True)}">Открыть аккаунт</a>' if action_url else "",
     )
 
 

@@ -850,10 +850,27 @@ def _update_join_status(
 
 
 def _record_account_failure(
-    session_name: str, kind: str, *, last_error: str | None = None, last_target: str | None = None
+    session_name: str,
+    kind: str,
+    *,
+    last_error: str | None = None,
+    last_target: str | None = None,
+    context: dict | None = None,
 ) -> int:
     if not session_name or not kind:
         return 0
+    if isinstance(context, dict) and context:
+        payload: dict[str, Any] = {}
+        for key in ("chat_id", "chat_name", "chat_username", "post_id", "project_id"):
+            if key in context and context.get(key) is not None:
+                payload[key] = context.get(key)
+        if last_target and "chat_id" not in payload:
+            payload["chat_id"] = str(last_target)
+        if payload:
+            try:
+                last_target = json.dumps(payload, ensure_ascii=False)
+            except Exception:
+                pass
     now = time.time()
     with _db_connect() as conn:
         conn.execute(
@@ -1136,6 +1153,64 @@ def _collect_warnings_for_scope(
         if t.get("linked_chat_id"):
             target_by_id[str(t["linked_chat_id"])] = t
 
+    reaction_targets = settings.get("reaction_targets", []) or []
+    if project_id is not None:
+        reaction_targets = _filter_by_project(reaction_targets, project_id)
+    reaction_target_by_id: Dict[str, Dict[str, Any]] = {}
+    for t in reaction_targets:
+        if not isinstance(t, dict):
+            continue
+        if t.get("chat_id"):
+            reaction_target_by_id[str(t["chat_id"])] = t
+
+    discussion_targets = settings.get("discussion_targets", []) or []
+    if project_id is not None:
+        discussion_targets = _filter_by_project(discussion_targets, project_id)
+    discussion_target_by_id: Dict[str, Dict[str, Any]] = {}
+    for t in discussion_targets:
+        if not isinstance(t, dict):
+            continue
+        if t.get("chat_id"):
+            discussion_target_by_id[str(t["chat_id"])] = t
+        if t.get("linked_chat_id"):
+            discussion_target_by_id[str(t["linked_chat_id"])] = t
+
+    def _resolve_target_link(kind: str, chat_id: str) -> tuple[str | None, str | None]:
+        kind = str(kind or "").strip().lower()
+        chat_id = str(chat_id or "").strip()
+        if not chat_id:
+            return None, None
+
+        if kind in {"comment", "reply"}:
+            t = target_by_id.get(chat_id)
+            if t:
+                return f"/targets/{quote(str(t.get('chat_id')))}", str(t.get("chat_name") or t.get("chat_id") or "").strip()
+            return None, None
+
+        if kind == "reaction":
+            t = reaction_target_by_id.get(chat_id)
+            if t:
+                return f"/reaction-targets/{quote(str(t.get('chat_id')))}", str(t.get("chat_name") or t.get("chat_id") or "").strip()
+            return None, None
+
+        if kind == "discussion":
+            t = discussion_target_by_id.get(chat_id)
+            if t:
+                return f"/discussions/{quote(chat_id)}", str(t.get("chat_name") or t.get("chat_id") or "").strip()
+            return None, None
+
+        # Unknown kinds: attempt best-effort lookup.
+        t = target_by_id.get(chat_id)
+        if t:
+            return f"/targets/{quote(str(t.get('chat_id')))}", str(t.get("chat_name") or t.get("chat_id") or "").strip()
+        t = reaction_target_by_id.get(chat_id)
+        if t:
+            return f"/reaction-targets/{quote(str(t.get('chat_id')))}", str(t.get("chat_name") or t.get("chat_id") or "").strip()
+        t = discussion_target_by_id.get(chat_id)
+        if t:
+            return f"/discussions/{quote(chat_id)}", str(t.get("chat_name") or t.get("chat_id") or "").strip()
+        return None, None
+
     for acc in accounts:
         session_name = acc.get("session_name") or ""
         status = str(acc.get("status") or "").lower().strip()
@@ -1168,29 +1243,72 @@ def _collect_warnings_for_scope(
         count = f.get("count") or 0
         last_error = f.get("last_error") or ""
         last_attempt = f.get("last_attempt")
-        last_target = str(f.get("last_target") or "")
-        target = target_by_id.get(last_target)
-        target_url = None
-        target_label = None
-        if target:
-            target_url = f"/targets/{quote(str(target.get('chat_id')))}"
-            target_label = target.get("chat_name") or target.get("chat_id")
+        last_target_raw = str(f.get("last_target") or "")
+        last_target = last_target_raw
+        last_target_ctx: dict[str, Any] | None = None
+        if last_target_raw:
+            try:
+                parsed = json.loads(last_target_raw)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict):
+                last_target_ctx = parsed
+                maybe_chat_id = parsed.get("chat_id")
+                if maybe_chat_id is not None:
+                    last_target = str(maybe_chat_id)
+        target_url, target_label = _resolve_target_link(kind, last_target)
+
+        chat_name = ""
+        chat_username = ""
+        post_id: str | None = None
+        ctx_project_id: str | None = None
+        if isinstance(last_target_ctx, dict):
+            chat_name = str(last_target_ctx.get("chat_name") or "").strip()
+            chat_username = str(last_target_ctx.get("chat_username") or "").strip().lstrip("@")
+            if last_target_ctx.get("post_id") is not None:
+                post_id = str(last_target_ctx.get("post_id"))
+            ctx_project_id = str(last_target_ctx.get("project_id") or "").strip() or None
+
+        project_name: str | None = None
+        pid_effective = ctx_project_id or (str(project_id).strip() if project_id is not None else None)
+        if pid_effective:
+            for p in settings.get("projects", []) or []:
+                if isinstance(p, dict) and str(p.get("id") or "").strip() == pid_effective:
+                    project_name = str(p.get("name") or "").strip() or pid_effective
+                    break
+            if not project_name:
+                project_name = pid_effective
+
+        channel_line = None
+        if chat_name and chat_username:
+            channel_line = f"Канал: {chat_name} (@{chat_username})"
+        elif chat_name:
+            channel_line = f"Канал: {chat_name}"
+        elif chat_username:
+            channel_line = f"Канал: @{chat_username}"
+        elif target_label:
+            channel_line = f"Канал: {target_label}"
+
         kind_human = _humanize_failure_kind(kind)
-        ctx_human = _humanize_failure_context(kind, last_target)
+        ctx_human = _humanize_failure_context(kind, last_target_raw)
         warnings.append(
             {
                 "level": "warning",
                 "title": f"{session}: повторные ошибки ({kind_human})",
                 "detail_lines": [
+                    f"Проект: {project_name}" if project_name else None,
+                    channel_line,
                     f"Тип: {kind_human} ({kind})",
                     f"Повторов: {count}",
                     f"Последняя попытка: {_human_dt(last_attempt)}" if last_attempt else None,
                     f"Контекст: {ctx_human}" if ctx_human else None,
+                    f"Пост: {post_id}" if post_id else None,
                     f"Ошибка: {_humanize_failure_error(kind, last_error)}",
                 ],
                 "session_name": session,
                 "target_url": target_url,
-                "target_label": target_label,
+                "target_label": target_label
+                or (f"{chat_name} (@{chat_username})" if chat_name and chat_username else (chat_name or (f"@{chat_username}" if chat_username else None))),
                 "key": _warning_key_failure(session, kind),
                 "action": {
                     "label": "Открыть аккаунт",

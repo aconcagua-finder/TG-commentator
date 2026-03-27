@@ -107,5 +107,12 @@ async def process_trigger(
                 "reply",
                 last_error=str(e),
                 last_target=str(event.chat_id),
+                context={
+                    "chat_id": str(event.chat_id),
+                    "chat_name": found_target.get("chat_name") if isinstance(found_target, dict) else None,
+                    "chat_username": found_target.get("chat_username") if isinstance(found_target, dict) else None,
+                    "post_id": msg_id,
+                    "project_id": found_target.get("project_id") if isinstance(found_target, dict) else None,
+                },
             )
             reply_process_cache.discard(msg_id)

@@ -189,6 +189,13 @@ async def process_new_post_for_reaction(
                         "reaction",
                         last_error=str(e),
                         last_target=str(destination_chat_id_for_logs),
+                        context={
+                            "chat_id": str(destination_chat_id_for_logs),
+                            "chat_name": reaction_target.get("chat_name"),
+                            "chat_username": reaction_target.get("chat_username"),
+                            "post_id": original_post_id,
+                            "project_id": reaction_target.get("project_id"),
+                        },
                     )
     except asyncio.CancelledError:
         pass

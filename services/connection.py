@@ -5,6 +5,7 @@ soft timeout helper, account status management, join status helpers.
 """
 
 import asyncio
+import json
 import logging
 import random
 import time
@@ -246,10 +247,29 @@ def _is_account_assigned(target: dict, session_name: str) -> bool:
 # Account failure tracking (DB-backed)
 # ---------------------------------------------------------------------------
 
-def _record_account_failure(session_name: str, kind: str, *, last_error: str | None = None, last_target: str | None = None) -> int:
+def _record_account_failure(
+    session_name: str,
+    kind: str,
+    *,
+    last_error: str | None = None,
+    last_target: str | None = None,
+    context: dict | None = None,
+) -> int:
     if not session_name or not kind:
         return 0
     now = time.time()
+    if isinstance(context, dict) and context:
+        payload: dict[str, Any] = {}
+        for key in ("chat_id", "chat_name", "chat_username", "post_id", "project_id"):
+            if key in context and context.get(key) is not None:
+                payload[key] = context.get(key)
+        if last_target and "chat_id" not in payload:
+            payload["chat_id"] = str(last_target)
+        if payload:
+            try:
+                last_target = json.dumps(payload, ensure_ascii=False)
+            except Exception:
+                pass
     try:
         with _db_connect() as conn:
             conn.execute(

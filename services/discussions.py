@@ -542,6 +542,13 @@ async def run_discussion_session(
                             "discussion",
                             last_error="connect_failed",
                             last_target=str(chat_id),
+                            context={
+                                "chat_id": str(chat_id),
+                                "chat_name": target.get("chat_name"),
+                                "chat_username": target.get("chat_username"),
+                                "post_id": seed_msg_id,
+                                "project_id": target.get("project_id"),
+                            },
                         )
                         excluded_sessions.add(str(cand.session_name))
                         eligible_clients = [c for c in eligible_clients if c.session_name != cand.session_name]
@@ -611,6 +618,13 @@ async def run_discussion_session(
                         "discussion",
                         last_error=str(prompt_info or "generation_failed"),
                         last_target=str(chat_id),
+                        context={
+                            "chat_id": str(chat_id),
+                            "chat_name": target.get("chat_name"),
+                            "chat_username": target.get("chat_username"),
+                            "post_id": seed_msg_id,
+                            "project_id": target.get("project_id"),
+                        },
                     )
                     continue
 
@@ -632,6 +646,13 @@ async def run_discussion_session(
                         "discussion",
                         last_error="send_failed",
                         last_target=str(chat_id),
+                        context={
+                            "chat_id": str(chat_id),
+                            "chat_name": target.get("chat_name"),
+                            "chat_username": target.get("chat_username"),
+                            "post_id": seed_msg_id,
+                            "project_id": target.get("project_id"),
+                        },
                     )
                     excluded_sessions.add(str(client_wrapper.session_name))
                     eligible_clients = [c for c in eligible_clients if c.session_name != client_wrapper.session_name]

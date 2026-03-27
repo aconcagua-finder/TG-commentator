@@ -105,6 +105,13 @@ async def execute_reply_with_fallback(
                 "reply",
                 last_error=str(e),
                 last_target=str(chat_id),
+                context={
+                    "chat_id": str(chat_id),
+                    "chat_name": target_chat.get("chat_name"),
+                    "chat_username": target_chat.get("chat_username"),
+                    "post_id": reply_to_msg_id,
+                    "project_id": target_chat.get("project_id"),
+                },
             )
     finally:
         pending_tasks.discard(task)

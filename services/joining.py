@@ -234,6 +234,12 @@ async def ensure_account_joined(
                 "join",
                 last_error=str(last_error) if last_error else None,
                 last_target=str(target_id),
+                context={
+                    "chat_id": str(target_id),
+                    "chat_name": target_config.get("chat_name"),
+                    "chat_username": target_config.get("chat_username"),
+                    "project_id": target_config.get("project_id"),
+                },
             )
 
     if all_success:

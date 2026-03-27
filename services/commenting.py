@@ -663,6 +663,13 @@ async def process_new_post(
                         "comment",
                         last_error=str(e),
                         last_target=str(destination_chat_id_for_logs),
+                        context={
+                            "chat_id": str(destination_chat_id_for_logs),
+                            "chat_name": target_chat.get("chat_name"),
+                            "chat_username": target_chat.get("chat_username"),
+                            "post_id": msg_id,
+                            "project_id": target_chat.get("project_id"),
+                        },
                     )
 
         if any_comment_sent:
