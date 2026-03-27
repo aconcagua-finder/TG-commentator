@@ -39,7 +39,28 @@
                     <div class="text-muted small">@{{ t.get('chat_username') }}</div>
                   {% endif %}
                 </td>
-                <td class="mono small">{{ t.get('chat_id') }}<div class="text-muted">{{ t.get('linked_chat_id') }}</div></td>
+                <td class="mono small">
+                  {% set chat_id = '' ~ (t.get('chat_id') or '') %}
+                  {% set linked_id = '' ~ (t.get('linked_chat_id') or '') %}
+                  {% set linked_name = '' ~ (t.get('linked_chat_name') or '') %}
+                  {% set is_channel = linked_id and linked_id != chat_id %}
+                  <div class="mb-1">
+                    {% if is_channel %}
+                      <span class="badge text-bg-primary">Канал</span>
+                    {% else %}
+                      <span class="badge text-bg-secondary">Чат</span>
+                    {% endif %}
+                  </div>
+                  <div>{{ chat_id }}</div>
+                  {% if linked_id %}
+                    <div class="text-muted small">
+                      {{ linked_id }}
+                      {% if linked_name %}
+                        <span class="text-muted">({{ linked_name }})</span>
+                      {% endif %}
+                    </div>
+                  {% endif %}
+                </td>
                 <td>
                   <span class="badge text-bg-light border">{{ (t.get('ai_provider','default') or 'default')|upper }}</span>
                   {% if t.get('ai_enabled', True) %}

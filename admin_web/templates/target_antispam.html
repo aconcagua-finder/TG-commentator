@@ -4,7 +4,11 @@
   <div class="d-flex justify-content-between align-items-start mb-2">
     <div>
       <h1 class="h3 mb-1">{{ target.chat_name }}</h1>
-      <div class="text-muted small">Антиспам для группы обсуждений (linked_chat_id={{ linked_chat_id or '—' }}): ключевые слова → AI → блокировка ответов.</div>
+      <div class="text-muted small">
+        Антиспам для группы обсуждений
+        (linked_chat_id={{ linked_chat_id or '—' }}{% if target.get('linked_chat_name') %} ({{ target.get('linked_chat_name') }}){% endif %}):
+        ключевые слова → AI → блокировка ответов.
+      </div>
     </div>
     <a class="btn btn-outline-secondary" href="/targets">К списку</a>
   </div>
@@ -119,4 +123,3 @@
     </div>
   </div>
 {% endblock %}
-

@@ -5,8 +5,17 @@
   <div class="d-flex justify-content-between align-items-start mb-2">
     <div>
       <h1 class="h3 mb-1">{{ target.chat_name }}</h1>
-      <div class="text-muted small mono">{{ target.chat_id }} · linked={{ target.linked_chat_id }}</div>
-      <div class="text-muted small">`chat_id` — сам канал/чат, `linked` — чат комментариев (если подключен).</div>
+      {% set chat_id = '' ~ (target.chat_id or '') %}
+      {% set linked_id = '' ~ (target.linked_chat_id or '') %}
+      {% set linked_name = '' ~ (target.linked_chat_name or '') %}
+      {% set is_channel = (linked_id and linked_id != chat_id) or linked_name %}
+      <div class="text-muted small mono">
+        {% if is_channel %}
+          Канал: {{ chat_id }} ({{ target.chat_name }}) · Обсуждения: {{ linked_id or '—' }}{% if linked_name %} ({{ linked_name }}){% endif %}
+        {% else %}
+          Чат: {{ chat_id }}
+        {% endif %}
+      </div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="/targets">К списку</a>
