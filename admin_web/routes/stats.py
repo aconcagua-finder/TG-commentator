@@ -31,6 +31,7 @@ from admin_web.helpers import (
 )
 from admin_web.telethon_utils import _get_any_authorized_client
 from admin_web.templating import templates, _template_context
+from db.schema import _is_postgres
 
 router = APIRouter()
 
@@ -41,33 +42,39 @@ router = APIRouter()
 
 
 def _get_logs_for_period(period: str, page: int, items_per_page: int = 20) -> Tuple[List[Any], int]:
-    if period == "day":
-        period_filter = "timestamp >= datetime('now', '-1 day', 'localtime')"
-    elif period == "week":
-        period_filter = "timestamp >= datetime('now', '-7 days', 'localtime')"
+    if _is_postgres():
+        if period == "day":
+            period_filter = "timestamp::timestamptz >= NOW() - INTERVAL '1 day'"
+        elif period == "week":
+            period_filter = "timestamp::timestamptz >= NOW() - INTERVAL '7 days'"
+        else:
+            period_filter = "timestamp::timestamptz >= NOW() - INTERVAL '30 days'"
     else:
-        period_filter = "timestamp >= datetime('now', '-30 days', 'localtime')"
+        # SQLite
+        if period == "day":
+            period_filter = "timestamp >= datetime('now', '-1 day', 'localtime')"
+        elif period == "week":
+            period_filter = "timestamp >= datetime('now', '-7 days', 'localtime')"
+        else:
+            period_filter = "timestamp >= datetime('now', '-30 days', 'localtime')"
 
     offset = page * items_per_page
 
     with _db_connect() as conn:
-        total_items = conn.execute(
-            f"""
-            SELECT COUNT(*) AS c
-            FROM (
-                SELECT 1 FROM logs
-                WHERE {period_filter}
-                GROUP BY post_id, account_session_name, content
-            )
-            """
-        ).fetchone()["c"]
+        dedup_sub = f"""
+            SELECT MIN(id) AS id
+            FROM logs
+            WHERE {period_filter}
+            GROUP BY post_id, account_session_name, content
+        """
+
+        total_items = conn.execute(f"SELECT COUNT(*) AS c FROM ({dedup_sub}) AS sub").fetchone()["c"]
 
         rows = conn.execute(
             f"""
-            SELECT * FROM logs
-            WHERE {period_filter}
-            GROUP BY post_id, account_session_name, content
-            ORDER BY timestamp DESC
+            SELECT l.* FROM logs l
+            INNER JOIN ({dedup_sub}) AS sub ON l.id = sub.id
+            ORDER BY l.timestamp DESC
             LIMIT ? OFFSET ?
             """,
             (items_per_page, offset),
