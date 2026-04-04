@@ -98,7 +98,7 @@
                 <div class="app-clamp-1 small">{{ log.content or '—' }}</div>
                 <div class="text-muted small">{{ log.account_session_name or '' }} &middot; {{ log.destination_chat_id or '' }}</div>
               </div>
-              <div class="text-muted small text-nowrap">{{ log.created_at|human_dt }}</div>
+              <div class="text-muted small text-nowrap">{{ log.timestamp|human_dt }}</div>
             </div>
           {% endfor %}
         </div>

@@ -44,8 +44,8 @@ async def dashboard(request: Request):
         recent_logs = [
             dict(r)
             for r in conn.execute(
-                "SELECT created_at, account_session_name, destination_chat_id, content "
-                "FROM logs ORDER BY created_at DESC LIMIT 5"
+                "SELECT timestamp, account_session_name, destination_chat_id, content "
+                "FROM logs ORDER BY id DESC LIMIT 5"
             ).fetchall()
         ]
 
