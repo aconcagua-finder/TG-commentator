@@ -4,13 +4,13 @@ services:
     container_name: commentator_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-commentator}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-commentator}
-      POSTGRES_DB: ${POSTGRES_DB:-commentator}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-commentator}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -33,7 +33,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       APP_DATA_DIR: /app/data
-      DB_URL: postgres://${POSTGRES_USER:-commentator}:${POSTGRES_PASSWORD:-commentator}@postgres:5432/${POSTGRES_DB:-commentator}
+      DB_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
 
   admin_web:
     build: .
@@ -55,10 +55,10 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       APP_DATA_DIR: /app/data
-      DB_URL: postgres://${POSTGRES_USER:-commentator}:${POSTGRES_PASSWORD:-commentator}@postgres:5432/${POSTGRES_DB:-commentator}
-      ADMIN_WEB_USERNAME: ${ADMIN_WEB_USERNAME:-admin}
-      ADMIN_WEB_PASSWORD: ${ADMIN_WEB_PASSWORD:-admin}
-      ADMIN_WEB_SECRET: ${ADMIN_WEB_SECRET:-}
+      DB_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      ADMIN_WEB_USERNAME: ${ADMIN_WEB_USERNAME}
+      ADMIN_WEB_PASSWORD: ${ADMIN_WEB_PASSWORD}
+      ADMIN_WEB_SECRET: ${ADMIN_WEB_SECRET}
 
 volumes:
   pgdata:
