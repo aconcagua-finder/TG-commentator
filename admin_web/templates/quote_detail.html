@@ -18,10 +18,12 @@
         </div>
       {% endif %}
     </div>
-    <form method="post" action="/quotes/{{ item.id }}/delete" onsubmit="return confirm('Удалить запись?');">
-      <input type="hidden" name="return_to" value="{{ back_url or '/quotes' }}" />
-      <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Удалить</button>
-    </form>
+    <button class="btn btn-sm btn-outline-danger" type="button"
+      data-confirm-action="/quotes/{{ item.id }}/delete"
+      data-confirm-title="Удалить запись?"
+      data-confirm-body="Действие нельзя отменить."
+      data-confirm-label="Удалить"
+    ><i class="bi bi-trash me-1"></i>Удалить</button>
   </div>
 
   <div class="card mb-3">

@@ -10,20 +10,22 @@
   </div>
   {% include "targets_tabs.html" %}
   {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
-  <p class="text-muted">Здесь вы добавляете каналы/чаты, где бот будет комментировать новые посты. Для каждого чата можно настроить промпты, триггеры и сценарии.</p>
+  <p class="text-muted">Каналы и чаты, в которых бот автоматически комментирует новые посты. Для каждого чата настраиваются стиль ответов, фильтры и сценарии.</p>
   {% if targets|length == 0 %}
-    <div class="alert alert-info">Чтобы начать, добавьте первый чат: нажмите <b>«Добавить цель»</b>. Если есть исходный канал — откройте <b>«Поиск каналов»</b>.</div>
+    {% import "macros.html" as ui %}
+    {{ ui.empty_state("bi-chat-left-text", "Добавьте первый канал", "Укажите канал или чат, и бот начнёт автоматически комментировать новые посты. Для каждого чата можно настроить стиль, частоту и фильтры.", "/targets/new", "Добавить канал") }}
   {% endif %}
 
+  {% if targets|length > 0 %}
   <div class="card">
     <div class="card-body p-0">
       <div class="table-responsive">
-        <table class="table table-hover mb-0 align-middle app-table">
+        <table class="table table-hover mb-0 align-middle app-table app-table-responsive">
           <caption class="visually-hidden">Цели комментирования</caption>
           <thead>
             <tr>
               <th>Чат</th>
-              <th>ID</th>
+              <th class="d-none d-md-table-cell">Тип</th>
               <th>AI</th>
               <th>Аккаунты</th>
               <th></th>
@@ -31,19 +33,27 @@
           </thead>
           <tbody>
             {% for t in targets %}
+              {% set chat_id = '' ~ (t.get('chat_id') or '') %}
+              {% set linked_id = '' ~ (t.get('linked_chat_id') or '') %}
+              {% set is_channel = linked_id and linked_id != chat_id %}
               <tr>
-                <td>
+                <td data-label="Чат">
                   {% set chat_name = t.get('chat_name') or '—' %}
-                  <div class="app-clamp-1" title="{{ chat_name }}">{{ chat_name }}</div>
+                  <a href="/targets/{{ t.get('chat_id') }}" class="text-decoration-none text-body fw-semibold">
+                    <div class="app-clamp-1" title="{{ chat_name }}">{{ chat_name }}</div>
+                  </a>
                   {% if t.get('chat_username') %}
                     <div class="text-muted small">@{{ t.get('chat_username') }}</div>
                   {% endif %}
+                  <div class="d-md-none mt-1">
+                    {% if is_channel %}
+                      <span class="badge text-bg-primary">Канал</span>
+                    {% else %}
+                      <span class="badge text-bg-secondary">Чат</span>
+                    {% endif %}
+                  </div>
                 </td>
-                <td class="mono small">
-                  {% set chat_id = '' ~ (t.get('chat_id') or '') %}
-                  {% set linked_id = '' ~ (t.get('linked_chat_id') or '') %}
-                  {% set linked_name = '' ~ (t.get('linked_chat_name') or '') %}
-                  {% set is_channel = linked_id and linked_id != chat_id %}
+                <td data-label="Тип" class="d-none d-md-table-cell">
                   <div class="mb-1">
                     {% if is_channel %}
                       <span class="badge text-bg-primary">Канал</span>
@@ -51,25 +61,17 @@
                       <span class="badge text-bg-secondary">Чат</span>
                     {% endif %}
                   </div>
-                  <div>{{ chat_id }}</div>
-                  {% if linked_id %}
-                    <div class="text-muted small">
-                      {{ linked_id }}
-                      {% if linked_name %}
-                        <span class="text-muted">({{ linked_name }})</span>
-                      {% endif %}
-                    </div>
-                  {% endif %}
+                  <div class="mono small text-muted" title="{{ chat_id }}{% if linked_id %} · {{ linked_id }}{% endif %}">{{ chat_id }}</div>
                 </td>
-                <td>
+                <td data-label="AI">
                   <span class="badge text-bg-light border">{{ (t.get('ai_provider','default') or 'default')|upper }}</span>
                   {% if t.get('ai_enabled', True) %}
-                    <span class="badge text-bg-success">AI replies</span>
+                    <span class="badge text-bg-success">AI вкл</span>
                   {% else %}
-                    <span class="badge text-bg-secondary">AI off</span>
+                    <span class="badge text-bg-secondary">AI выкл</span>
                   {% endif %}
                 </td>
-                <td class="small">
+                <td data-label="Аккаунты" class="small">
                   {% set aa = t.get('assigned_accounts', []) %}
                   {% if aa and aa|length > 0 %}
                     <span class="badge text-bg-light border">{{ aa|length }}</span>
@@ -77,7 +79,7 @@
                     <span class="text-muted">не выбрано</span>
                   {% endif %}
                 </td>
-                <td class="text-end">
+                <td data-label="" class="text-end">
                   <a
                     class="btn btn-sm btn-outline-primary app-icon-btn"
                     href="/targets/{{ t.get('chat_id') }}"
@@ -91,12 +93,10 @@
                 </td>
               </tr>
             {% endfor %}
-            {% if targets|length == 0 %}
-              <tr><td colspan="5" class="text-center text-muted py-4">Пока пусто.</td></tr>
-            {% endif %}
           </tbody>
         </table>
       </div>
     </div>
   </div>
+  {% endif %}
 {% endblock %}

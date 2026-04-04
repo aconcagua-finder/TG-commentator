@@ -99,11 +99,12 @@
                         <i class="bi bi-pencil"></i>
                         <span class="visually-hidden">Редактировать</span>
                       </button>
-                      <form method="post" action="/messages/delete" onsubmit="return confirm('Удалить сообщение в Telegram?');">
+                      <form method="post" action="/messages/delete">
                         <input type="hidden" name="source" value="logs" />
                         <input type="hidden" name="record_id" value="{{ r.id }}" />
                         <input type="hidden" name="return_to" value="/stats?period={{ period }}&page={{ page }}" />
-                        <button class="btn btn-sm btn-outline-danger" type="submit" title="Удалить">
+                        <button class="btn btn-sm btn-outline-danger" type="submit" title="Удалить"
+                          onclick="return confirm('Удалить сообщение из Telegram? Это действие необратимо.');">
                           <i class="bi bi-trash"></i>
                           <span class="visually-hidden">Удалить</span>
                         </button>

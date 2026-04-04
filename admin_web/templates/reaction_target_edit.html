@@ -2,14 +2,18 @@
 {% block title %}{{ target.chat_name }} · Реакции{% endblock %}
 {% block content %}
   {% import "macros.html" as ui %}
+  {{ ui.breadcrumb([{"href": "/reaction-targets", "label": "Реакции"}, {"label": target.chat_name}]) }}
   <div class="d-flex justify-content-between align-items-start mb-3">
     <div>
       <h1 class="h3 mb-1">{{ target.chat_name }}</h1>
       <div class="text-muted small mono">{{ target.chat_id }} · linked={{ target.linked_chat_id }}</div>
     </div>
-    <form method="post" action="/reaction-targets/{{ target.chat_id }}/delete" onsubmit="return confirm('Удалить цель реакций?');">
-      <button class="btn btn-outline-danger" type="submit">Удалить</button>
-    </form>
+    <button class="btn btn-outline-danger" type="button"
+      data-confirm-action="/reaction-targets/{{ target.chat_id }}/delete"
+      data-confirm-title="Удалить канал из реакций?"
+      data-confirm-body="Бот перестанет ставить реакции на посты в этом канале."
+      data-confirm-label="Удалить"
+    >Удалить</button>
   </div>
 
   <div class="card">

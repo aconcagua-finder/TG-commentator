@@ -1,3 +1,4 @@
+{# ── Tooltip help icon ──────────────────────────────────────────── #}
 {% macro tip(text, placement="top") -%}
   <button
     type="button"
@@ -10,4 +11,166 @@
   >
     <i class="bi bi-question-circle" aria-hidden="true"></i>
   </button>
+{%- endmacro %}
+
+{# ── Inline form hint (visible, not tooltip) ──────────────────── #}
+{% macro form_hint(text) -%}
+  <div class="form-text">{{ text }}</div>
+{%- endmacro %}
+
+{# ── Breadcrumb navigation ────────────────────────────────────── #}
+{#  items: list of dicts with "label" and optional "href"          #}
+{#  Example: breadcrumb([{"href":"/targets","label":"Комментирование"},{"label":"channel_name"}]) #}
+{% macro breadcrumb(items) -%}
+  <nav aria-label="Навигация" class="mb-2">
+    <ol class="breadcrumb mb-0">
+      {% for item in items %}
+        {% if item.href and not loop.last %}
+          <li class="breadcrumb-item"><a href="{{ item.href }}">{{ item.label }}</a></li>
+        {% else %}
+          <li class="breadcrumb-item active" aria-current="page">{{ item.label }}</li>
+        {% endif %}
+      {% endfor %}
+    </ol>
+  </nav>
+{%- endmacro %}
+
+{# ── Unified page header ─────────────────────────────────────── #}
+{#  title:       page heading text                                 #}
+{#  subtitle:    optional muted description                        #}
+{#  breadcrumbs: optional list for breadcrumb() macro              #}
+{#  caller:      block for action buttons (use {% call %})         #}
+{% macro page_header(title, subtitle="", breadcrumbs=none) -%}
+  {% if breadcrumbs %}
+    {{ breadcrumb(breadcrumbs) }}
+  {% endif %}
+  <div class="app-page-head mb-3">
+    <div>
+      <h1 class="h3 mb-0">{{ title }}</h1>
+      {% if subtitle %}
+        <p class="text-body-secondary mb-0 mt-1">{{ subtitle }}</p>
+      {% endif %}
+    </div>
+    {% if caller %}
+      <div class="app-actions">
+        {{ caller() }}
+      </div>
+    {% endif %}
+  </div>
+{%- endmacro %}
+
+{# ── Empty state for lists ────────────────────────────────────── #}
+{% macro empty_state(icon, title, description="", action_href="", action_label="") -%}
+  <div class="app-empty-state text-center py-5">
+    <div class="app-empty-state-icon mb-3">
+      <i class="bi {{ icon }}" aria-hidden="true"></i>
+    </div>
+    <h2 class="h5 mb-2">{{ title }}</h2>
+    {% if description %}
+      <p class="text-body-secondary mb-3 mx-auto" style="max-width: 420px;">{{ description }}</p>
+    {% endif %}
+    {% if action_href and action_label %}
+      <a class="btn btn-primary" href="{{ action_href }}">
+        <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>{{ action_label }}
+      </a>
+    {% endif %}
+  </div>
+{%- endmacro %}
+
+{# ── Dashboard stat card ─────────────────────────────────────── #}
+{% macro stat_card(label, value, icon="", href="", color="primary") -%}
+  <div class="card card--interactive h-100">
+    {% if href %}<a href="{{ href }}" class="text-decoration-none text-body d-block">{% endif %}
+    <div class="card-body d-flex align-items-center gap-3">
+      {% if icon %}
+        <div class="app-stat-icon app-stat-icon--{{ color }}">
+          <i class="bi {{ icon }}" aria-hidden="true"></i>
+        </div>
+      {% endif %}
+      <div>
+        <div class="text-body-secondary small">{{ label }}</div>
+        <div class="h4 mb-0">{{ value }}</div>
+      </div>
+    </div>
+    {% if href %}</a>{% endif %}
+  </div>
+{%- endmacro %}
+
+{# ── Unified AI provider dropdown ─────────────────────────────── #}
+{% macro ai_provider_select(current_value, name="ai_provider") -%}
+  <select class="form-select" name="{{ name }}">
+    <option value="default" {% if current_value in ['default', 'DEFAULT', ''] %}selected{% endif %}>Глобальный</option>
+    <option value="gemini" {% if current_value in ['gemini', 'GEMINI'] %}selected{% endif %}>Gemini</option>
+    <option value="openai" {% if current_value in ['openai', 'OPENAI'] %}selected{% endif %}>OpenAI</option>
+    <option value="openrouter" {% if current_value in ['openrouter', 'OPENROUTER'] %}selected{% endif %}>OpenRouter</option>
+    <option value="deepseek" {% if current_value in ['deepseek', 'DEEPSEEK'] %}selected{% endif %}>DeepSeek</option>
+  </select>
+{%- endmacro %}
+
+{# ── Confirmation modal (replaces window.confirm) ─────────────── #}
+{#  Usage in template:                                              #}
+{#    {{ ui.confirm_modal("delTarget", "Удалить канал?",           #}
+{#       "Все настройки будут потеряны.",                           #}
+{#       "/targets/123/delete", "Удалить", "btn-danger") }}         #}
+{#  Trigger button: data-bs-toggle="modal" data-bs-target="#delTarget" #}
+{% macro confirm_modal(id, title, body, action_url, action_label="Удалить", action_class="btn-danger") -%}
+  <div class="modal fade" id="{{ id }}" tabindex="-1" aria-labelledby="{{ id }}Label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="{{ id }}Label">{{ title }}</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+        </div>
+        <div class="modal-body">
+          <p class="mb-0">{{ body }}</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+          <form method="post" action="{{ action_url }}" class="d-inline">
+            <button type="submit" class="btn {{ action_class }}">{{ action_label }}</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+{%- endmacro %}
+
+{# ── Localized status badge ───────────────────────────────────── #}
+{#  Maps raw status string to Russian label + Bootstrap color.      #}
+{#  type: "bot" | "account" | "proxy" | "session" | "join"         #}
+{% macro status_badge(status, type="account") -%}
+  {% set s = (status or '')|string|lower %}
+
+  {# -- Bot status -- #}
+  {% if type == "bot" %}
+    {% set label = {"running": "Работает", "stopped": "Остановлен"}.get(s, status) %}
+    {% set color = "success" if s == "running" else "secondary" %}
+
+  {# -- Account status -- #}
+  {% elif type == "account" %}
+    {% set label = {"active": "Активен", "banned": "Заблокирован", "limited": "Ограничен", "frozen": "Заморожен", "human_check": "Требуется проверка", "unauthorized": "Не авторизован", "unavailable": "Недоступен", "sleeping": "Пауза"}.get(s, status) %}
+    {% set color = "success" if s == "active" else ("danger" if s in ["banned", "unavailable"] else ("warning" if s in ["limited", "frozen", "human_check", "unauthorized"] else "secondary")) %}
+
+  {# -- Proxy status -- #}
+  {% elif type == "proxy" %}
+    {% set label = {"active": "Рабочий", "dead": "Нерабочий", "checking": "Проверяется"}.get(s, status) %}
+    {% set color = "success" if s == "active" else ("danger" if s == "dead" else "secondary") %}
+
+  {# -- Discussion session status -- #}
+  {% elif type == "session" %}
+    {% set label = {"running": "В процессе", "completed": "Завершено", "planned": "Запланировано", "failed": "Ошибка", "canceled": "Отменено"}.get(s, status) %}
+    {% set color = "primary" if s == "running" else ("success" if s == "completed" else ("danger" if s == "failed" else ("warning" if s == "planned" else "secondary"))) %}
+
+  {# -- Join status -- #}
+  {% elif type == "join" %}
+    {% set label = {"joined": "Вступил", "scheduled": "Запланировано", "pending": "Ожидание", "failed": "Ошибка"}.get(s, status) %}
+    {% set color = "success" if s == "joined" else ("warning" if s in ["scheduled", "pending"] else ("danger" if s == "failed" else "secondary")) %}
+
+  {# -- Fallback -- #}
+  {% else %}
+    {% set label = status %}
+    {% set color = "secondary" %}
+  {% endif %}
+
+  <span class="badge text-bg-{{ color }}">{{ label }}</span>
 {%- endmacro %}

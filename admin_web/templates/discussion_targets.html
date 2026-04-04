@@ -6,20 +6,26 @@
     <a class="btn btn-primary" href="/discussions/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
   </div>
   {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
-  <p class="text-muted">Модуль для чатов: оператор пишет сообщение с префиксом — выбранные аккаунты разыгрывают диалог по общему вектору и лимитам.</p>
+  <p class="text-muted">Создавайте управляемые дискуссии: вы пишете стартовое сообщение, а выбранные аккаунты продолжают обсуждение в заданном стиле.</p>
 
+  {% if targets|length == 0 %}
+    {% import "macros.html" as ui %}
+    {{ ui.empty_state("bi-chat-square-text", "Создайте сценарий обсуждения", "Оператор пишет стартовое сообщение, а выбранные аккаунты разыгрывают живую дискуссию по заданному вектору и лимитам.", "/discussions/new", "Создать обсуждение") }}
+  {% endif %}
+
+  {% if targets|length > 0 %}
   <div class="card">
     <div class="card-body p-0">
       <div class="table-responsive">
-        <table class="table table-hover mb-0 align-middle app-table">
+        <table class="table table-hover mb-0 align-middle app-table app-table-responsive">
           <caption class="visually-hidden">Цели обсуждений</caption>
           <thead>
             <tr>
               <th>Цель</th>
               <th>Оператор</th>
               <th>Статус</th>
-              <th>Триггер</th>
-              <th>Реплики</th>
+              <th class="d-none d-lg-table-cell">Триггер</th>
+              <th class="d-none d-lg-table-cell">Реплики</th>
               <th>Аккаунты</th>
               <th></th>
             </tr>
@@ -27,10 +33,12 @@
           <tbody>
             {% for t in targets %}
               <tr>
-                <td>
+                <td data-label="Цель">
                   {% set title = (t.get('title') or '').strip() %}
                   <div class="d-flex align-items-center gap-2">
-                    <div class="app-clamp-1 fw-semibold" title="{{ title or 'Без названия' }}">{{ title or 'Без названия' }}</div>
+                    <a href="/discussions/targets/{{ t.get('id') }}" class="text-decoration-none text-body">
+                      <div class="app-clamp-1 fw-semibold" title="{{ title or 'Без названия' }}">{{ title or 'Без названия' }}</div>
+                    </a>
                     <button
                       type="button"
                       class="btn btn-sm btn-outline-secondary app-icon-btn"
@@ -51,21 +59,11 @@
                   </form>
                   {% set chat_name = t.get('chat_name') or '—' %}
                   <div class="app-clamp-1 text-muted small" title="{{ chat_name }}">{{ chat_name }}</div>
-                  {% set chat_id = (t.get('chat_id') or '') %}
-                  {% set linked_id = (t.get('linked_chat_id') or '') %}
-                  {% set has_linked = linked_id and linked_id != chat_id %}
-                  {% if has_linked %}
-                    {% set linked_name = (t.get('linked_chat_name') or '') %}
-                    <div class="app-clamp-1 text-muted small" title="{{ linked_name or linked_id }}">Обсуждение: {{ linked_name or linked_id }}</div>
-                  {% endif %}
                   {% if t.get('chat_username') %}
                     <div class="text-muted small">@{{ t.get('chat_username') }}</div>
                   {% endif %}
-                  <div class="text-muted small mono">
-                    {{ chat_id }}{% if has_linked %} · linked={{ linked_id }}{% endif %}
-                  </div>
                 </td>
-                <td class="mono small">
+                <td data-label="Оператор" class="mono small">
                   {{ t.get('operator_session_name') or '—' }}
                   {% if t.get('enabled', True) %}
                     <div><span class="badge text-bg-success">вкл</span></div>
@@ -73,7 +71,7 @@
                     <div><span class="badge text-bg-secondary">выкл</span></div>
                   {% endif %}
                 </td>
-                <td class="small">
+                <td data-label="Статус" class="small">
                   {% set ls = t.get('last_session') %}
                   {% if ls %}
                     {% set st = (ls.get('status') or '') %}
@@ -90,11 +88,11 @@
                     {% endif %}
                     <span class="badge text-bg-{{ color }}" title="{{ st }}">{{ label }}</span>
                     {% if st == 'planned' and ls.get('schedule_at') %}
-                      <div class="text-muted small mono">next: {{ ls.get('schedule_at')|human_dt }}</div>
+                      <div class="text-muted small mono">след.: {{ ls.get('schedule_at')|human_dt }}</div>
                     {% elif st == 'running' and ls.get('started_at') %}
-                      <div class="text-muted small mono">start: {{ ls.get('started_at')|human_dt }}</div>
+                      <div class="text-muted small mono">начало: {{ ls.get('started_at')|human_dt }}</div>
                     {% elif ls.get('finished_at') %}
-                      <div class="text-muted small mono">end: {{ ls.get('finished_at')|human_dt }}</div>
+                      <div class="text-muted small mono">конец: {{ ls.get('finished_at')|human_dt }}</div>
                     {% endif %}
                     {% if ls.get('error') %}
                       <div class="text-danger small app-clamp-1" title="{{ ls.get('error') }}">{{ ls.get('error') }}</div>
@@ -103,13 +101,13 @@
                     <span class="text-muted">—</span>
                   {% endif %}
                 </td>
-                <td class="mono small">{{ t.get('start_prefix') or '∅' }}</td>
-                <td class="small">
+                <td data-label="Триггер" class="mono small d-none d-lg-table-cell">{{ t.get('start_prefix') or '∅' }}</td>
+                <td data-label="Реплики" class="small d-none d-lg-table-cell">
                   <span class="badge text-bg-light border">{{ t.get('turns_min', 0) }}–{{ t.get('turns_max', 0) }}</span>
                   <div class="text-muted small">задержка: {{ t.get('initial_delay_min', 0) }}–{{ t.get('initial_delay_max', 0) }}с</div>
                   <div class="text-muted small">пауза: {{ t.get('delay_between_min', 0) }}–{{ t.get('delay_between_max', 0) }}с</div>
                 </td>
-                <td class="small">
+                <td data-label="Аккаунты" class="small">
                   {% set aa = t.get('assigned_accounts', []) %}
                   {% if aa and aa|length > 0 %}
                     <span class="badge text-bg-light border">{{ aa|length }}</span>
@@ -117,7 +115,7 @@
                     <span class="text-muted">не выбрано</span>
                   {% endif %}
                 </td>
-                <td class="text-end">
+                <td data-label="" class="text-end">
                   <a
                     class="btn btn-sm btn-outline-primary app-icon-btn"
                     href="/discussions/targets/{{ t.get('id') }}"
@@ -131,14 +129,12 @@
                 </td>
               </tr>
             {% endfor %}
-            {% if targets|length == 0 %}
-              <tr><td colspan="7" class="text-center text-muted py-4">Пока пусто.</td></tr>
-            {% endif %}
           </tbody>
         </table>
       </div>
     </div>
   </div>
+  {% endif %}
   <script>
     (() => {
       window.__discussionRenameFromButton = (btn) => {

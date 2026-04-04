@@ -5,15 +5,17 @@
     <h1 class="h3 mb-0">Каналы мониторинга</h1>
     <a class="btn btn-primary" href="/monitor-targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
   </div>
-  <p class="text-muted">Опциональный модуль: читает новые посты в каналах и уведомляет вас, если пост подходит под заданный промпт.</p>
+  <p class="text-muted">Бот читает новые посты в указанных каналах и присылает уведомление, если содержание соответствует вашему запросу.</p>
   {% if targets|length == 0 %}
-    <div class="alert alert-info">Добавьте канал мониторинга и укажите промпт — бот будет присылать подходящие посты в заданный чат.</div>
+    {% import "macros.html" as ui %}
+    {{ ui.empty_state("bi-broadcast", "Настройте мониторинг каналов", "Бот будет читать новые посты и присылать уведомления, если содержание совпадает с вашим запросом. Работает как «радар» по нужной теме.", "/monitor-targets/new", "Добавить канал для мониторинга") }}
   {% endif %}
 
+  {% if targets|length > 0 %}
   <div class="card">
     <div class="card-body p-0">
       <div class="table-responsive">
-        <table class="table table-hover mb-0 align-middle app-table">
+        <table class="table table-hover mb-0 align-middle app-table app-table-responsive">
           <caption class="visually-hidden">Каналы мониторинга</caption>
           <thead>
             <tr>
@@ -26,13 +28,15 @@
           <tbody>
             {% for t in targets %}
               <tr>
-                <td>
-                  <div class="app-clamp-1" title="{{ t.get('chat_name') or '' }}">{{ t.get('chat_name') }}</div>
+                <td data-label="Канал">
+                  <a href="/monitor-targets/{{ t.get('chat_id') }}" class="text-decoration-none text-body fw-semibold">
+                    <div class="app-clamp-1" title="{{ t.get('chat_name') or '' }}">{{ t.get('chat_name') }}</div>
+                  </a>
                   <div class="text-muted small mono">{{ t.get('chat_id') }}</div>
                 </td>
-                <td class="mono small">{{ t.get('notification_chat_id') }}</td>
-                <td><span class="badge text-bg-light border">{{ (t.get('ai_provider','default') or 'default')|upper }}</span></td>
-                <td class="text-end">
+                <td data-label="Уведомления" class="mono small">{{ t.get('notification_chat_id') }}</td>
+                <td data-label="AI"><span class="badge text-bg-light border">{{ (t.get('ai_provider','default') or 'default')|upper }}</span></td>
+                <td data-label="" class="text-end">
                   <a
                     class="btn btn-sm btn-outline-primary app-icon-btn"
                     href="/monitor-targets/{{ t.get('chat_id') }}"
@@ -46,12 +50,10 @@
                 </td>
               </tr>
             {% endfor %}
-            {% if targets|length == 0 %}
-              <tr><td colspan="4" class="text-center text-muted py-4">Пока пусто.</td></tr>
-            {% endif %}
           </tbody>
         </table>
       </div>
     </div>
   </div>
+  {% endif %}
 {% endblock %}

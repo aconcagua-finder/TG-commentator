@@ -223,11 +223,15 @@
                       <input class="form-control form-control-sm" name="name" value="{{ p.get('name') }}" />
                       <button class="btn btn-sm btn-outline-secondary" type="submit">Переименовать</button>
                     </form>
-                    <form method="post" action="/projects/{{ p.get('id') }}/delete" onsubmit="return confirm('Удалить проект и все его каналы/аккаунты из настроек?');">
-                      <button class="btn btn-sm btn-outline-danger" type="submit" {% if p.get('id') == default_project_id %}disabled{% endif %}>
-                        Удалить
-                      </button>
-                    </form>
+                    <button class="btn btn-sm btn-outline-danger" type="button"
+                      data-confirm-action="/projects/{{ p.get('id') }}/delete"
+                      data-confirm-title="Удалить проект?"
+                      data-confirm-body="Все каналы, аккаунты и настройки, привязанные к этому проекту, будут удалены."
+                      data-confirm-label="Удалить"
+                      {% if p.get('id') == default_project_id %}disabled{% endif %}
+                    >
+                      Удалить
+                    </button>
                   </div>
                 </td>
               </tr>

@@ -127,18 +127,20 @@
                               <div class="text-muted small">{{ preset.prompt }}</div>
                             </div>
                             {% if not preset.get('builtin') %}
-                              <form method="post" action="/personas/presets/{{ category }}/{{ pid }}/delete" onsubmit="return confirm('Удалить пресет?');">
-                                <button
-                                  class="btn btn-sm btn-outline-danger app-icon-btn"
-                                  type="submit"
-                                  data-bs-toggle="tooltip"
-                                  data-bs-title="Удалить"
-                                  aria-label="Удалить"
-                                  title="Удалить"
-                                >
-                                  <i class="bi bi-trash" aria-hidden="true"></i>
-                                </button>
-                              </form>
+                              <button
+                                class="btn btn-sm btn-outline-danger app-icon-btn"
+                                type="button"
+                                data-confirm-action="/personas/presets/{{ category }}/{{ pid }}/delete"
+                                data-confirm-title="Удалить пресет?"
+                                data-confirm-body="Роли, которые его используют, сохранят текущие настройки."
+                                data-confirm-label="Удалить"
+                                data-bs-toggle="tooltip"
+                                data-bs-title="Удалить"
+                                aria-label="Удалить"
+                                title="Удалить"
+                              >
+                                <i class="bi bi-trash" aria-hidden="true"></i>
+                              </button>
                             {% else %}
                               <span class="badge text-bg-light border">системный</span>
                             {% endif %}
@@ -160,7 +162,8 @@
         <div class="card-body">
           <h2 class="h5">Список ролей</h2>
           {% if roles|length == 0 %}
-            <div class="text-muted">Пока нет ролей.</div>
+            {% import "macros.html" as ui %}
+            {{ ui.empty_state("bi-people", "Ролей пока нет", "Роли определяют характер, стиль и тон комментариев каждого аккаунта. Создайте первую роль из пресетов или нажмите «Случайно».") }}
           {% else %}
             <div class="list-group">
               {% for rid, role in roles %}
@@ -177,7 +180,9 @@
                         {% endif %}
                       </div>
                       <div class="text-muted small mono">{{ rid }}</div>
-                      <div class="text-muted small">пол: {{ role.get('gender','neutral') }} · эмодзи: {{ role.get('emoji_level','minimal') }}</div>
+                      {% set gender_ru = {"neutral": "нейтральный", "male": "мужской", "female": "женский"}.get(role.get('gender','neutral'), role.get('gender','neutral')) %}
+                      {% set emoji_ru = {"minimal": "минимум", "moderate": "умеренно", "abundant": "много"}.get(role.get('emoji_level','minimal'), role.get('emoji_level','minimal')) %}
+                      <div class="text-muted small">пол: {{ gender_ru }} · эмодзи: {{ emoji_ru }}</div>
                     </div>
                     <a
                       class="btn btn-sm btn-outline-primary app-icon-btn"

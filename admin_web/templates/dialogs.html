@@ -46,19 +46,20 @@
                 {% if t.unread %}
                   <span class="badge text-bg-danger rounded-pill flex-shrink-0">{{ t.unread }}</span>
                 {% endif %}
-                <form method="post" action="{{ t.delete_url }}" onsubmit="return confirm('Удалить эту переписку?');">
-                  <input type="hidden" name="return_to" value="{{ return_to }}" />
-                  <button
-                    class="btn btn-sm btn-outline-danger app-icon-btn"
-                    type="submit"
-                    data-bs-toggle="tooltip"
-                    data-bs-title="Удалить"
-                    aria-label="Удалить"
-                    title="Удалить"
-                  >
-                    <i class="bi bi-trash" aria-hidden="true"></i>
-                  </button>
-                </form>
+                <button
+                  class="btn btn-sm btn-outline-danger app-icon-btn"
+                  type="button"
+                  data-confirm-action="{{ t.delete_url }}"
+                  data-confirm-title="Удалить переписку?"
+                  data-confirm-body="Вся история сообщений в этом диалоге будет удалена."
+                  data-confirm-label="Удалить"
+                  data-bs-toggle="tooltip"
+                  data-bs-title="Удалить"
+                  aria-label="Удалить"
+                  title="Удалить"
+                >
+                  <i class="bi bi-trash" aria-hidden="true"></i>
+                </button>
               </div>
             </div>
           {% endfor %}

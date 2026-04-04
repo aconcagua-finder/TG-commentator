@@ -1,91 +1,108 @@
 {% extends "base.html" %}
+{% import "macros.html" as ui %}
 {% block title %}Дашборд · TG-комментатор{% endblock %}
 {% block content %}
-  <div class="app-page-head mb-4">
-    <div>
-      <h1 class="h3 mb-1">Дашборд</h1>
-      <div class="text-muted">Статус: <span class="badge text-bg-{{ 'success' if settings.status == 'running' else 'secondary' }}">{{ settings.status }}</span></div>
+  {# ── Status bar ── #}
+  {% set is_running = settings.status == 'running' %}
+  <div class="app-status-bar {{ 'app-status-bar--running' if is_running else 'app-status-bar--stopped' }} mb-4">
+    <div class="d-flex align-items-center gap-2">
+      {% if is_running %}
+        <i class="bi bi-check-circle-fill text-success" aria-hidden="true"></i>
+        <span class="fw-semibold">Бот работает</span>
+      {% else %}
+        <i class="bi bi-pause-circle text-body-secondary" aria-hidden="true"></i>
+        <span class="fw-semibold text-body-secondary">Бот остановлен</span>
+      {% endif %}
       {% if settings_err %}
-        <div class="text-danger small">ai_settings.json: {{ settings_err }}</div>
+        <span class="text-danger small ms-2">ai_settings.json: {{ settings_err }}</span>
       {% endif %}
       {% if accounts_err %}
-        <div class="text-danger small">accounts.json: {{ accounts_err }}</div>
+        <span class="text-danger small ms-2">accounts.json: {{ accounts_err }}</span>
       {% endif %}
     </div>
     <div class="app-actions">
-      {% if settings.status == 'running' %}
-        <form method="post" action="/status/stop"><button class="btn btn-outline-danger" type="submit"><i class="bi bi-stop-circle me-1"></i>Остановить</button></form>
+      {% if is_running %}
+        <form method="post" action="/status/stop"><button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-stop-circle me-1"></i>Остановить</button></form>
       {% else %}
-        <form method="post" action="/status/start"><button class="btn btn-success" type="submit"><i class="bi bi-play-circle me-1"></i>Запустить</button></form>
+        <form method="post" action="/status/start"><button class="btn btn-sm btn-success" type="submit"><i class="bi bi-play-circle me-1"></i>Запустить</button></form>
       {% endif %}
-      <a class="btn btn-outline-primary" href="/guide"><i class="bi bi-rocket-takeoff me-1"></i>Быстрый старт</a>
+      <a class="btn btn-sm btn-outline-primary" href="/guide"><i class="bi bi-rocket-takeoff me-1"></i>Быстрый старт</a>
     </div>
   </div>
 
+  {# ── Stat cards ── #}
   <div class="row g-3 mb-4">
-    <div class="col-12 col-md-3">
-      <div class="card">
-        <div class="card-body">
-          <div class="text-muted small">Аккаунты</div>
-          <div class="display-6">{{ accounts|length }}</div>
-        </div>
-      </div>
+    <div class="col-6 col-md-3">
+      {{ ui.stat_card("Аккаунты", accounts|length, "bi-people", "/accounts", "primary") }}
     </div>
-    <div class="col-12 col-md-3">
-      <div class="card">
-        <div class="card-body">
-          <div class="text-muted small">Комментирование</div>
-          <div class="display-6">{{ settings.targets|length }}</div>
-        </div>
-      </div>
+    <div class="col-6 col-md-3">
+      {{ ui.stat_card("Комментирование", settings.targets|length, "bi-chat-left-text", "/targets", "info") }}
     </div>
-    <div class="col-12 col-md-3">
-      <div class="card">
-        <div class="card-body">
-          <div class="text-muted small">Реакции</div>
-          <div class="display-6">{{ settings.reaction_targets|length }}</div>
-        </div>
-      </div>
+    <div class="col-6 col-md-3">
+      {{ ui.stat_card("Реакции", settings.reaction_targets|length, "bi-hand-thumbs-up", "/reaction-targets", "warning") }}
     </div>
-    <div class="col-12 col-md-3">
-      <div class="card">
-        <div class="card-body">
-          <div class="text-muted small">Мониторинг</div>
-          <div class="display-6">{{ settings.monitor_targets|length }}</div>
-        </div>
-      </div>
+    <div class="col-6 col-md-3">
+      {{ ui.stat_card("Мониторинг", settings.monitor_targets|length, "bi-broadcast", "/monitor-targets", "success") }}
     </div>
   </div>
 
+  {# ── Info cards ── #}
   <div class="row g-3">
     <div class="col-12 col-lg-6">
-      <div class="card">
+      <div class="card h-100">
         <div class="card-body">
-          <h2 class="h5">Прокси / Триггеры / Сценарии</h2>
-          <div class="d-flex flex-wrap gap-2">
-            <span class="badge text-bg-light">Прокси: {{ proxies_total }} (active: {{ proxies_active }})</span>
-            <span class="badge text-bg-light">Триггеры: {{ triggers_total }}</span>
-            <span class="badge text-bg-light">Сценарии: {{ scenarios_total }}</span>
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <span class="badge text-bg-light border">Прокси: {{ proxies_total }} (рабочих: {{ proxies_active }})</span>
+            <span class="badge text-bg-light border">Триггеры: {{ triggers_total }}</span>
+            <span class="badge text-bg-light border">Сценарии: {{ scenarios_total }}</span>
           </div>
-          <div class="app-actions mt-3">
-            <a class="btn btn-sm btn-outline-primary" href="/proxies">Открыть прокси</a>
-            <a class="btn btn-sm btn-outline-primary" href="/targets">Открыть цели</a>
+          {% if proxies_total > 0 %}
+            <div class="progress mb-3" style="height: 6px;" title="Рабочих прокси: {{ proxies_active }} из {{ proxies_total }}">
+              <div class="progress-bar bg-success" role="progressbar" style="width: {{ (proxies_active / proxies_total * 100) if proxies_total else 0 }}%;" aria-valuenow="{{ proxies_active }}" aria-valuemin="0" aria-valuemax="{{ proxies_total }}"></div>
+            </div>
+          {% endif %}
+          <div class="app-actions">
+            <a class="btn btn-sm btn-outline-primary" href="/proxies">Управление прокси</a>
+            <a class="btn btn-sm btn-outline-primary" href="/targets">Управление целями</a>
           </div>
         </div>
       </div>
     </div>
     <div class="col-12 col-lg-6">
-        <div class="card">
-          <div class="card-body">
-            <h2 class="h5">Ручной запуск по ссылке</h2>
-            <form method="post" action="/manual/run" class="app-inline-form">
+      <div class="card h-100">
+        <div class="card-body">
+          <h2 class="h6 mb-2">Ручной запуск по ссылке</h2>
+          <form method="post" action="/manual/run" class="app-inline-form">
             <label class="visually-hidden" for="manual_link">Ссылка на пост</label>
             <input class="form-control" id="manual_link" name="link" placeholder="https://t.me/channel/123" required />
-            <button class="btn btn-primary" type="submit">Добавить</button>
-            </form>
-            <div class="text-muted small mt-2">Добавляет задание в manual_queue, commentator.py подхватит автоматически.</div>
-          </div>
+            <button class="btn btn-primary" type="submit">Запустить</button>
+          </form>
+          <div class="form-text mt-2">Бот обработает указанный пост автоматически.</div>
         </div>
+      </div>
     </div>
   </div>
+
+  {# ── Recent activity ── #}
+  {% if recent_logs is defined and recent_logs %}
+    <div class="card mt-3">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h2 class="h6 mb-0">Последняя активность</h2>
+          <a class="btn btn-sm btn-outline-secondary" href="/stats">Вся статистика</a>
+        </div>
+        <div class="list-group list-group-flush">
+          {% for log in recent_logs %}
+            <div class="list-group-item px-0 d-flex justify-content-between align-items-start gap-2">
+              <div class="min-w-0">
+                <div class="app-clamp-1 small">{{ log.content or '—' }}</div>
+                <div class="text-muted small">{{ log.account_session_name or '' }} &middot; {{ log.destination_chat_id or '' }}</div>
+              </div>
+              <div class="text-muted small text-nowrap">{{ log.created_at|human_dt }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  {% endif %}
 {% endblock %}

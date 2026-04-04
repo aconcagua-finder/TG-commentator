@@ -10,10 +10,12 @@
       <h1 class="h4 mb-0 mt-2">{{ title }}</h1>
       <div class="text-muted small mono">{{ chat_id }}</div>
     </div>
-    <form method="post" action="/dialogs/{{ session_name }}/{{ chat_id }}/delete" onsubmit="return confirm('Удалить переписку целиком?');">
-      <input type="hidden" name="return_to" value="{{ back_url or '/dialogs' }}" />
-      <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Удалить переписку</button>
-    </form>
+    <button class="btn btn-sm btn-outline-danger" type="button"
+      data-confirm-action="/dialogs/{{ session_name }}/{{ chat_id }}/delete"
+      data-confirm-title="Удалить переписку целиком?"
+      data-confirm-body="Все сообщения в этом диалоге будут удалены. Действие необратимо."
+      data-confirm-label="Удалить"
+    ><i class="bi bi-trash me-1"></i>Удалить переписку</button>
   </div>
 
   <div class="card mb-3">
@@ -59,11 +61,12 @@
                       <i class="bi bi-pencil"></i>
                       <span class="visually-hidden">Редактировать</span>
                     </button>
-                    <form method="post" action="/messages/delete" onsubmit="return confirm('Удалить сообщение в Telegram?');">
+                    <form method="post" action="/messages/delete">
                       <input type="hidden" name="source" value="inbox" />
                       <input type="hidden" name="record_id" value="{{ m.id }}" />
                       <input type="hidden" name="return_to" value="/dialogs/{{ session_name }}/{{ chat_id }}" />
-                      <button class="btn btn-sm btn-outline-danger" type="submit" title="Удалить">
+                      <button class="btn btn-sm btn-outline-danger" type="submit" title="Удалить"
+                        onclick="return confirm('Удалить сообщение из Telegram? Это действие необратимо.');">
                         <i class="bi bi-trash"></i>
                         <span class="visually-hidden">Удалить</span>
                       </button>

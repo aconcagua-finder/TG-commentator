@@ -55,19 +55,20 @@
                 {% if it.link %}
                   <span class="text-muted small mono">↗</span>
                 {% endif %}
-                <form method="post" action="{{ it.delete_url }}" onsubmit="return confirm('Удалить запись?');">
-                  <input type="hidden" name="return_to" value="{{ return_to }}" />
-                  <button
-                    class="btn btn-sm btn-outline-danger app-icon-btn"
-                    type="submit"
-                    data-bs-toggle="tooltip"
-                    data-bs-title="Удалить"
-                    aria-label="Удалить"
-                    title="Удалить"
-                  >
-                    <i class="bi bi-trash" aria-hidden="true"></i>
-                  </button>
-                </form>
+                <button
+                  class="btn btn-sm btn-outline-danger app-icon-btn"
+                  type="button"
+                  data-confirm-action="{{ it.delete_url }}"
+                  data-confirm-title="Удалить запись?"
+                  data-confirm-body="Действие нельзя отменить."
+                  data-confirm-label="Удалить"
+                  data-bs-toggle="tooltip"
+                  data-bs-title="Удалить"
+                  aria-label="Удалить"
+                  title="Удалить"
+                >
+                  <i class="bi bi-trash" aria-hidden="true"></i>
+                </button>
               </div>
             </div>
           {% endfor %}

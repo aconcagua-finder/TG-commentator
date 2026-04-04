@@ -41,6 +41,13 @@ async def dashboard(request: Request):
         proxies_active = conn.execute("SELECT COUNT(*) AS c FROM proxies WHERE status='active'").fetchone()["c"]
         triggers_total = conn.execute("SELECT COUNT(*) AS c FROM triggers").fetchone()["c"]
         scenarios_total = conn.execute("SELECT COUNT(*) AS c FROM scenarios").fetchone()["c"]
+        recent_logs = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT created_at, account_session_name, destination_chat_id, content "
+                "FROM logs ORDER BY created_at DESC LIMIT 5"
+            ).fetchall()
+        ]
 
     return templates.TemplateResponse(
         "dashboard.html",
@@ -54,6 +61,7 @@ async def dashboard(request: Request):
             proxies_active=proxies_active,
             triggers_total=triggers_total,
             scenarios_total=scenarios_total,
+            recent_logs=recent_logs,
         ),
     )
 

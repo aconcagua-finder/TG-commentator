@@ -4,9 +4,13 @@
   {% import "macros.html" as ui %}
   <div class="app-page-head mb-3">
     <h1 class="h3 mb-0">Ручной запуск</h1>
-    <form method="post" action="/manual/clear" onsubmit="return confirm('Очистить очередь?');">
-      <button class="btn btn-outline-danger" type="submit">Очистить очередь</button>
-    </form>
+    <button class="btn btn-warning" type="button"
+      data-confirm-action="/manual/clear"
+      data-confirm-title="Очистить очередь?"
+      data-confirm-body="Все задачи в очереди будут удалены и не будут обработаны."
+      data-confirm-label="Очистить"
+      data-confirm-class="btn-warning"
+    >Очистить очередь</button>
   </div>
   <p class="text-muted">Добавьте ссылку на пост — задача попадёт в очередь `manual_queue`, а `commentator.py` обработает её (AI/сценарий/триггеры) даже если пост старый.</p>
 

@@ -1,11 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Роль · {{ role.name }}{% endblock %}
 {% block content %}
+  {% import "macros.html" as ui %}
+  {{ ui.breadcrumb([{"href": "/personas", "label": "Роли"}, {"label": role.name}]) }}
   <div class="d-flex justify-content-between align-items-start mb-3">
     <div>
       <h1 class="h3 mb-1">{{ role.name }}</h1>
       <div class="text-muted small mono">{{ role_id }}</div>
-      <div class="text-muted small">Пол: {{ role.get('gender','neutral') }} · Эмодзи: {{ role.get('emoji_level','minimal') }}</div>
+      {% set gender_ru = {"neutral": "нейтральный", "male": "мужской", "female": "женский"}.get(role.get('gender','neutral'), role.get('gender','neutral')) %}
+      {% set emoji_ru = {"minimal": "минимум", "moderate": "умеренно", "abundant": "много"}.get(role.get('emoji_level','minimal'), role.get('emoji_level','minimal')) %}
+      <div class="text-muted small">Пол: {{ gender_ru }} · Эмодзи: {{ emoji_ru }}</div>
     </div>
     <div class="d-flex gap-2">
       {% if role_id != default_role_id %}
@@ -18,9 +22,13 @@
       <form method="post" action="/personas/{{ role_id }}/duplicate">
         <button class="btn btn-outline-secondary" type="submit">Дублировать</button>
       </form>
-      <form method="post" action="/personas/{{ role_id }}/delete" onsubmit="return confirm('Удалить роль?');">
-        <button class="btn btn-outline-danger" type="submit" {% if role_id == default_role_id %}disabled{% endif %}>Удалить</button>
-      </form>
+      <button class="btn btn-outline-danger" type="button"
+        data-confirm-action="/personas/{{ role_id }}/delete"
+        data-confirm-title="Удалить роль?"
+        data-confirm-body="У аккаунтов с этой ролью она будет сброшена на стандартную."
+        data-confirm-label="Удалить"
+        {% if role_id == default_role_id %}disabled{% endif %}
+      >Удалить</button>
     </div>
   </div>
 

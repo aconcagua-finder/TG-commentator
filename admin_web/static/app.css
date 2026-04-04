@@ -345,7 +345,7 @@ body.app-busy-on {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .card:hover {
+  .card--interactive:hover {
     box-shadow: var(--app-shadow-hover);
   }
 }
@@ -510,4 +510,187 @@ body.app-busy-on {
   background-color: rgba(var(--bs-primary-rgb), 0.06);
   box-shadow: none;
   color: inherit;
+}
+
+/* ── Utility classes ─────────────────────────────────────────── */
+
+.app-pre-wrap {
+  white-space: pre-wrap;
+}
+
+.app-max-w-sm { max-width: 320px; }
+.app-max-w-md { max-width: 480px; }
+.app-max-w-lg { max-width: 640px; }
+.app-max-w-xl { max-width: 820px; }
+.min-w-0 { min-width: 0; }
+
+/* Compact preset buttons */
+.btn-xs {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.72rem;
+  border-radius: 0.4rem;
+  line-height: 1.4;
+}
+
+/* ── Breadcrumbs ─────────────────────────────────────────────── */
+
+.breadcrumb {
+  font-size: 0.85rem;
+}
+
+.breadcrumb-item + .breadcrumb-item::before {
+  content: "›";
+}
+
+/* ── Empty state ─────────────────────────────────────────────── */
+
+.app-empty-state {
+  padding: 3rem 1rem;
+}
+
+.app-empty-state-icon {
+  font-size: 2.5rem;
+  color: var(--bs-secondary-color);
+  opacity: 0.5;
+}
+
+/* ── Stat card icon ──────────────────────────────────────────── */
+
+.app-stat-icon {
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.15rem;
+  flex-shrink: 0;
+}
+
+.app-stat-icon--primary {
+  background: rgba(var(--app-brand-rgb), 0.12);
+  color: var(--app-brand);
+}
+
+.app-stat-icon--success {
+  background: rgba(25, 135, 84, 0.12);
+  color: #198754;
+}
+
+.app-stat-icon--warning {
+  background: rgba(255, 193, 7, 0.15);
+  color: #cc9a06;
+}
+
+.app-stat-icon--danger {
+  background: rgba(220, 53, 69, 0.12);
+  color: #dc3545;
+}
+
+.app-stat-icon--info {
+  background: rgba(var(--app-accent-rgb), 0.12);
+  color: var(--app-accent);
+}
+
+/* ── Sticky action bar (forms) ───────────────────────────────── */
+
+.app-sticky-actions {
+  position: sticky;
+  bottom: 0;
+  padding: 0.75rem 1rem;
+  background: var(--app-card-bg);
+  border-top: 1px solid var(--app-border-soft);
+  border-radius: 0 0 1rem 1rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ── Responsive table → card layout on mobile ────────────────── */
+
+@media (max-width: 767.98px) {
+  .app-table-responsive thead {
+    display: none;
+  }
+
+  .app-table-responsive,
+  .app-table-responsive tbody {
+    display: block;
+  }
+
+  .app-table-responsive tr {
+    display: block;
+    border: 1px solid var(--app-border-soft);
+    border-radius: 0.85rem;
+    margin-bottom: 0.75rem;
+    padding: 0.75rem;
+    background: var(--app-card-bg);
+    box-shadow: var(--app-shadow);
+  }
+
+  .app-table-responsive td {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.3rem 0;
+    border: none;
+  }
+
+  .app-table-responsive td::before {
+    content: attr(data-label);
+    font-weight: 600;
+    font-size: 0.78rem;
+    color: var(--bs-secondary-color);
+    flex-shrink: 0;
+    min-width: 6rem;
+  }
+
+  .app-table-responsive td:empty {
+    display: none;
+  }
+
+  .app-table-responsive td[data-label=""]::before {
+    display: none;
+  }
+}
+
+/* ── Status bar (dashboard) ──────────────────────────────────── */
+
+.app-status-bar {
+  border-radius: 0.85rem;
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.app-status-bar--running {
+  background: rgba(25, 135, 84, 0.1);
+  border: 1px solid rgba(25, 135, 84, 0.2);
+}
+
+.app-status-bar--stopped {
+  background: rgba(var(--app-surface-rgb), 0.65);
+  border: 1px solid var(--app-border-soft);
+}
+
+[data-bs-theme="dark"] .app-status-bar--running {
+  background: rgba(25, 135, 84, 0.18);
+  border-color: rgba(25, 135, 84, 0.3);
+}
+
+/* ── Table filter input ──────────────────────────────────────── */
+
+.app-table-filter {
+  max-width: 320px;
+}
+
+@media (max-width: 575.98px) {
+  .app-table-filter {
+    max-width: 100%;
+  }
 }

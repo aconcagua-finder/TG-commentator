@@ -4,15 +4,18 @@
   <div class="app-page-head mb-3">
     <div>
       <h1 class="h3 mb-1">Прокси</h1>
-      <div class="text-muted">Всего: {{ total }}, active: {{ active }}, dead: {{ dead }}</div>
+      <div class="text-muted">Всего: {{ total }}, рабочих: {{ active }}, нерабочих: {{ dead }}</div>
     </div>
     <div class="app-actions">
       <form method="post" action="/proxies/check-all">
         <button class="btn btn-primary" type="submit">Проверить все</button>
       </form>
-      <form method="post" action="/proxies/delete-dead" onsubmit="return confirm('Удалить все нерабочие прокси?');">
-        <button class="btn btn-outline-danger" type="submit">Удалить dead</button>
-      </form>
+      <button class="btn btn-outline-danger" type="button"
+        data-confirm-action="/proxies/delete-dead"
+        data-confirm-title="Удалить все нерабочие прокси?"
+        data-confirm-body="Прокси со статусом «нерабочий» будут удалены. Аккаунты, использующие их, останутся без прокси."
+        data-confirm-label="Удалить нерабочие"
+      >Удалить нерабочие</button>
     </div>
   </div>
   <p class="text-muted">Прокси хранятся в базе и назначаются на аккаунты (раздел «Аккаунты»). Удобно, если нужно распределять нагрузку или обходить ограничения.</p>
@@ -36,7 +39,7 @@
   <div class="card">
     <div class="card-body p-0">
       <div class="table-responsive">
-        <table class="table table-hover mb-0 align-middle app-table">
+        <table class="table table-hover mb-0 align-middle app-table app-table-responsive">
           <caption class="visually-hidden">Список прокси</caption>
           <thead>
             <tr>
@@ -51,18 +54,19 @@
           <tbody>
             {% for p in proxies %}
               <tr>
-                <td class="mono">{{ p.id }}</td>
-                <td>
+                <td data-label="ID" class="mono">{{ p.id }}</td>
+                <td data-label="Название">
                   <form id="proxy_name_form_{{ p.id }}" method="post" action="/proxies/{{ p.id }}/name">
                     <input class="form-control form-control-sm" name="name" value="{{ p.name or '' }}" placeholder="—" />
                   </form>
                 </td>
-                <td class="mono">{{ p.ip or '—' }}</td>
-                <td>{{ p.country or '—' }}</td>
-                <td>
-                  <span class="badge text-bg-{{ 'success' if p.status=='active' else 'secondary' }}">{{ p.status }}</span>
+                <td data-label="IP" class="mono">{{ p.ip or '—' }}</td>
+                <td data-label="Страна">{{ p.country or '—' }}</td>
+                <td data-label="Статус">
+                  {% set proxy_label = {"active": "Рабочий", "dead": "Нерабочий", "checking": "Проверяется"}.get((p.status or '')|lower, p.status) %}
+                  <span class="badge text-bg-{{ 'success' if p.status=='active' else ('danger' if p.status=='dead' else 'secondary') }}">{{ proxy_label }}</span>
                 </td>
-                <td class="mono small" title="{{ p.url }}">
+                <td data-label="URL" class="mono small" title="{{ p.url }}">
                   <div class="d-flex align-items-center gap-2 justify-content-between">
                     <span class="app-clamp-1 flex-grow-1">
                       {% if p.url|length > 34 %}{{ p.url[:34] }}…{% else %}{{ p.url }}{% endif %}
@@ -96,17 +100,16 @@
                           <i class="bi bi-search" aria-hidden="true"></i>
                         </button>
                       </form>
-                      <form
-                        method="post"
-                        action="/proxies/{{ p.id }}/delete"
-                        class="d-inline"
-                        onsubmit="return confirm('Удалить прокси?');"
+                      <button class="btn btn-sm btn-outline-danger app-icon-btn" type="button"
+                        data-confirm-action="/proxies/{{ p.id }}/delete"
+                        data-confirm-title="Удалить прокси?"
+                        data-confirm-body="Если он назначен аккаунтам, они останутся без прокси."
+                        data-confirm-label="Удалить"
+                        aria-label="Удалить прокси"
                         title="Удалить прокси"
                       >
-                        <button class="btn btn-sm btn-outline-danger app-icon-btn" type="submit" aria-label="Удалить прокси">
-                          <i class="bi bi-trash" aria-hidden="true"></i>
-                        </button>
-                      </form>
+                        <i class="bi bi-trash" aria-hidden="true"></i>
+                      </button>
                     </div>
                   </div>
                 </td>

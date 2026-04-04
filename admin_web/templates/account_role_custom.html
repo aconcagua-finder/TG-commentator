@@ -14,9 +14,12 @@
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="/accounts/{{ account.session_name }}">К аккаунту</a>
       {% if has_custom_role %}
-        <form method="post" action="/accounts/{{ account.session_name }}/role/custom/delete" onsubmit="return confirm('Удалить кастомную роль у аккаунта?');">
-          <button class="btn btn-outline-danger" type="submit">Удалить кастомную</button>
-        </form>
+        <button class="btn btn-outline-danger" type="button"
+          data-confirm-action="/accounts/{{ account.session_name }}/role/custom/delete"
+          data-confirm-title="Убрать индивидуальную роль?"
+          data-confirm-body="Аккаунту будет назначена стандартная роль."
+          data-confirm-label="Убрать"
+        >Удалить кастомную</button>
       {% endif %}
     </div>
   </div>

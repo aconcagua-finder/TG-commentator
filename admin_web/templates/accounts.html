@@ -4,7 +4,7 @@
   <div class="app-page-head mb-3">
     <h1 class="h3 mb-0">Аккаунты</h1>
     <div class="app-actions">
-      <a class="btn btn-outline-primary" href="/accounts/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+      <a class="btn btn-outline-primary" href="/accounts/new"><i class="bi bi-plus-circle me-1"></i>Добавить аккаунт</a>
       {% if account_checks_enabled %}
         <form method="post" action="/accounts/check" class="app-inline-form">
           <button class="btn btn-outline-secondary" type="submit">
@@ -16,37 +16,41 @@
       {% endif %}
     </div>
   </div>
-  <p class="text-muted mb-2">Это Telegram‑аккаунты (Telethon session), которыми будет выполняться комментирование/реакции/мониторинг. Минимум нужен 1 авторизованный аккаунт.</p>
+  <p class="text-muted mb-2">Telegram-аккаунты, от имени которых бот комментирует, ставит реакции и мониторит каналы. Нужен минимум один авторизованный аккаунт.</p>
   {% if accounts_err %}<div class="alert alert-danger">accounts.json: {{ accounts_err }}</div>{% endif %}
   {% if accounts|length == 0 %}
-    <div class="alert alert-info">Начните с добавления аккаунта: нажмите <b>«Добавить»</b> (можно через session string или вход по телефону).</div>
+    {% import "macros.html" as ui %}
+    {{ ui.empty_state("bi-person-plus", "Добавьте Telegram-аккаунт", "Нужен хотя бы один авторизованный аккаунт, чтобы бот мог комментировать, ставить реакции и мониторить каналы.", "/accounts/new", "Добавить аккаунт") }}
   {% endif %}
 
+  {% if accounts|length > 0 %}
   <div class="card">
     <div class="card-body p-0">
       <div class="table-responsive">
-        <table class="table table-hover mb-0 align-middle app-table">
+        <table class="table table-hover mb-0 align-middle app-table app-table-responsive">
           <caption class="visually-hidden">Список аккаунтов Telegram</caption>
           <thead>
             <tr>
               <th>Session</th>
-                <th>Юзер</th>
-                <th>Статус</th>
-                <th>Роль</th>
-                <th>Прокси</th>
-                <th>Добавлен</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for a in accounts %}
+              <th>Юзер</th>
+              <th>Статус</th>
+              <th>Роль</th>
+              <th>Прокси</th>
+              <th class="d-none d-lg-table-cell">Добавлен</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in accounts %}
               <tr>
-                <td class="mono">
-                  <span class="d-inline-block align-top app-clamp-1" style="max-width: 240px;" title="{{ a.get('session_name') }}">
-                    {{ a.get('session_name') }}
-                  </span>
+                <td data-label="Session" class="mono">
+                  <a href="/accounts/{{ a.get('session_name') }}" class="text-decoration-none text-body">
+                    <span class="d-inline-block align-top app-clamp-1 app-max-w-sm" title="{{ a.get('session_name') }}">
+                      {{ a.get('session_name') }}
+                    </span>
+                  </a>
                 </td>
-                <td>
+                <td data-label="Юзер">
                   {% set full_name = (a.get('first_name','') ~ ' ' ~ a.get('last_name','')).strip() %}
                   {% if full_name %}
                     <div class="app-clamp-1" title="{{ full_name }}">{{ full_name }}</div>
@@ -57,16 +61,17 @@
                     <div class="text-muted small">@{{ a.get('username') }}</div>
                   {% endif %}
                 </td>
-                <td>
+                <td data-label="Статус">
                   {% set st = a.get('status','') %}
                   {% set st_lower = st|string|lower %}
                   {% set st_badge = 'success' if st_lower=='active' else ('danger' if st_lower in ['banned','unavailable'] else ('warning' if st_lower in ['limited','frozen','human_check','unauthorized'] else 'secondary')) %}
-                  <span class="badge text-bg-{{ st_badge }}">{{ st }}</span>
+                  {% set st_ru = {"active": "Активен", "banned": "Заблокирован", "limited": "Ограничен", "frozen": "Заморожен", "human_check": "Требуется проверка", "unauthorized": "Не авторизован", "unavailable": "Недоступен", "sleeping": "Пауза"}.get(st_lower, st) %}
+                  <span class="badge text-bg-{{ st_badge }}">{{ st_ru }}</span>
                   {% if a.get('last_checked') %}
                     <div class="text-muted small">{{ a.get('last_checked')|human_dt }}</div>
                   {% endif %}
                 </td>
-                <td>
+                <td data-label="Роль">
                   {% set rid = a.get('role_id') %}
                   {% if rid and role_names.get(rid) %}
                     <span class="badge text-bg-light border">{{ role_names.get(rid) }}</span>
@@ -74,12 +79,12 @@
                     <span class="text-muted">—</span>
                   {% endif %}
                 </td>
-                <td class="small">
+                <td data-label="Прокси" class="small">
                   {% set purl = a.get('proxy_url') %}
                   {% if purl %}
                     {% set pname = proxy_names.get(purl) %}
                     {% if pname %}
-                      <span class="app-clamp-1 d-inline-block align-top" style="max-width: 220px;" title="{{ purl }}">{{ pname }}</span>
+                      <span class="app-clamp-1 d-inline-block align-top app-max-w-sm" title="{{ purl }}">{{ pname }}</span>
                     {% else %}
                       <span class="mono" title="{{ purl }}">
                         {% if purl|length > 26 %}{{ purl[:26] }}…{% else %}{{ purl }}{% endif %}
@@ -89,8 +94,8 @@
                     <span class="text-muted">—</span>
                   {% endif %}
                 </td>
-                <td class="small">{{ a.get('date_added')|human_dt }}</td>
-                <td class="text-end">
+                <td data-label="Добавлен" class="small d-none d-lg-table-cell">{{ a.get('date_added')|human_dt }}</td>
+                <td data-label="" class="text-end">
                   <a
                     class="btn btn-sm btn-outline-primary app-icon-btn"
                     href="/accounts/{{ a.get('session_name') }}"
@@ -104,12 +109,10 @@
                 </td>
               </tr>
             {% endfor %}
-            {% if accounts|length == 0 %}
-              <tr><td colspan="7" class="text-center text-muted py-4">Пока пусто.</td></tr>
-            {% endif %}
           </tbody>
         </table>
       </div>
     </div>
   </div>
+  {% endif %}
 {% endblock %}

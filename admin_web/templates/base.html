@@ -33,7 +33,7 @@
       ]},
 	      {"id": "ai", "title": "AI и контент", "items": [
 	        {"href": "/settings/ai", "label": "AI и ключи", "icon": "bi-cpu", "active_prefix": "/settings/ai"},
-	        {"href": "/settings/humanization", "label": "Общие параметры", "icon": "bi-person-badge", "active_prefix": "/settings/humanization"},
+	        {"href": "/settings/humanization", "label": "Параметры генерации", "icon": "bi-person-badge", "active_prefix": "/settings/humanization"},
 	        {"href": "/personas", "label": "Роли", "icon": "bi-people", "active_prefix": "/personas"},
 	        {"href": "/settings/blacklist", "label": "Чёрный список", "icon": "bi-slash-circle", "active_prefix": "/settings/blacklist"}
 	      ]},
@@ -135,33 +135,36 @@
           <span class="app-brand-icon" aria-hidden="true"><i class="bi bi-stars"></i></span>
           <span>TG-комментатор</span>
         </a>
-        <div class="d-flex gap-2 align-items-center flex-wrap justify-content-end">
+        <div class="d-flex gap-2 align-items-center justify-content-end">
+          {# Quick-links: hidden on mobile (duplicated in sidebar) #}
           {% if user %}
-            <a class="btn btn-sm btn-outline-secondary position-relative" href="/dialogs" title="Диалоги">
-              <i class="bi bi-chat-dots" aria-hidden="true"></i>
-              {% if inbox_counts and inbox_counts.get('dialogs', 0) %}
-                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">{{ inbox_counts.get('dialogs') }}</span>
-              {% endif %}
-              <span class="visually-hidden">Диалоги</span>
-            </a>
-            <a class="btn btn-sm btn-outline-secondary position-relative" href="/quotes" title="Цитирование">
-              <i class="bi bi-reply-all" aria-hidden="true"></i>
-              {% if inbox_counts and inbox_counts.get('quotes', 0) %}
-                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">{{ inbox_counts.get('quotes') }}</span>
-              {% endif %}
-              <span class="visually-hidden">Цитирование</span>
-            </a>
-            <a class="btn btn-sm btn-outline-secondary position-relative" href="/warnings" title="Предупреждения">
-              <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
-              {% if warnings_count and warnings_count > 0 %}
-                <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">{{ warnings_count }}</span>
-              {% endif %}
-              <span class="visually-hidden">Предупреждения</span>
-            </a>
-            <a class="btn btn-sm btn-outline-secondary" href="/stats" title="Статистика">
-              <i class="bi bi-graph-up" aria-hidden="true"></i>
-              <span class="visually-hidden">Статистика</span>
-            </a>
+            <div class="d-none d-md-flex gap-2 align-items-center">
+              <a class="btn btn-sm btn-outline-secondary position-relative" href="/dialogs" title="Диалоги">
+                <i class="bi bi-chat-dots" aria-hidden="true"></i>
+                {% if inbox_counts and inbox_counts.get('dialogs', 0) %}
+                  <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">{{ inbox_counts.get('dialogs') }}</span>
+                {% endif %}
+                <span class="visually-hidden">Диалоги</span>
+              </a>
+              <a class="btn btn-sm btn-outline-secondary position-relative" href="/quotes" title="Цитирование">
+                <i class="bi bi-reply-all" aria-hidden="true"></i>
+                {% if inbox_counts and inbox_counts.get('quotes', 0) %}
+                  <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">{{ inbox_counts.get('quotes') }}</span>
+                {% endif %}
+                <span class="visually-hidden">Цитирование</span>
+              </a>
+              <a class="btn btn-sm btn-outline-secondary position-relative" href="/warnings" title="Предупреждения">
+                <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
+                {% if warnings_count and warnings_count > 0 %}
+                  <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger">{{ warnings_count }}</span>
+                {% endif %}
+                <span class="visually-hidden">Предупреждения</span>
+              </a>
+              <a class="btn btn-sm btn-outline-secondary" href="/stats" title="Статистика">
+                <i class="bi bi-graph-up" aria-hidden="true"></i>
+                <span class="visually-hidden">Статистика</span>
+              </a>
+            </div>
           {% endif %}
           {% if user %}
             <div class="dropdown">
@@ -171,8 +174,8 @@
                 data-bs-toggle="dropdown"
                 aria-expanded="false"
               >
-                <i class="bi bi-folder2-open me-1" aria-hidden="true"></i>
-                {{ active_project.get('name', 'Проект') }}
+                <i class="bi bi-folder2-open" aria-hidden="true"></i>
+                <span class="d-none d-md-inline ms-1">{{ active_project.get('name', 'Проект') }}</span>
               </button>
               <ul class="dropdown-menu dropdown-menu-end">
                 <li><h6 class="dropdown-header">Проекты</h6></li>
@@ -188,7 +191,7 @@
                           {% if p.get('id') == active_project_id %}
                             <i class="bi bi-check2" aria-hidden="true"></i>
                           {% else %}
-                            <span class="opacity-0">✓</span>
+                            <span class="opacity-0">&#10003;</span>
                           {% endif %}
                         </span>
                         <span>{{ p.get('name') }}</span>
@@ -202,7 +205,7 @@
             </div>
           {% endif %}
           {% if user %}
-            <span class="text-body-secondary small d-none d-lg-inline">Пользователь: {{ user.username }}</span>
+            <span class="text-body-secondary small d-none d-lg-inline">{{ user.username }}</span>
           {% endif %}
           <button class="btn btn-sm btn-outline-secondary" type="button" id="themeToggle">
             <i class="bi bi-moon-stars" aria-hidden="true"></i>
@@ -210,7 +213,11 @@
           </button>
           {% if user %}
             <form method="post" action="/logout">
-              <button class="btn btn-sm btn-outline-secondary" type="submit">Выйти</button>
+              <button class="btn btn-sm btn-outline-secondary" type="submit" title="Выйти">
+                <i class="bi bi-box-arrow-right d-md-none" aria-hidden="true"></i>
+                <span class="d-none d-md-inline">Выйти</span>
+                <span class="visually-hidden d-md-none">Выйти</span>
+              </button>
             </form>
           {% endif %}
         </div>
@@ -229,7 +236,7 @@
             aria-live="assertive"
             aria-atomic="true"
             data-bs-autohide="{{ 'false' if is_error else 'true' }}"
-            data-bs-delay="{{ 2600 if not is_error else 0 }}"
+            data-bs-delay="{{ 4000 if not is_error else 0 }}"
           >
             <div class="d-flex">
               <div class="toast-body">{{ f.message }}</div>
@@ -277,6 +284,27 @@
         <div>
           <div class="fw-semibold">Обрабатываю запрос…</div>
           <div class="text-muted small">Это может занять до 30 секунд. Пожалуйста, подождите.</div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Universal confirmation modal ── #}
+    <div class="modal fade" id="appConfirmModal" tabindex="-1" aria-labelledby="appConfirmModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="appConfirmModalLabel"></h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+          </div>
+          <div class="modal-body">
+            <p class="mb-0" id="appConfirmModalBody"></p>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+            <form id="appConfirmModalForm" method="post" action="" class="d-inline">
+              <button type="submit" class="btn btn-danger" id="appConfirmModalAction">Удалить</button>
+            </form>
+          </div>
         </div>
       </div>
     </div>
@@ -512,6 +540,43 @@
 
       document.querySelectorAll(".toast").forEach((el) => {
         bootstrap.Toast.getOrCreateInstance(el).show();
+      });
+
+      // Confirmation modal: <button data-confirm-action="/url" data-confirm-title="Title" data-confirm-body="Body" data-confirm-label="Action" data-confirm-class="btn-danger">
+      (() => {
+        const modal = document.getElementById("appConfirmModal");
+        if (!modal) return;
+        const bsModal = bootstrap.Modal.getOrCreateInstance(modal);
+        document.addEventListener("click", (ev) => {
+          const btn = ev.target.closest("[data-confirm-action]");
+          if (!btn) return;
+          ev.preventDefault();
+          document.getElementById("appConfirmModalLabel").textContent = btn.getAttribute("data-confirm-title") || "Подтверждение";
+          document.getElementById("appConfirmModalBody").textContent = btn.getAttribute("data-confirm-body") || "";
+          const form = document.getElementById("appConfirmModalForm");
+          form.action = btn.getAttribute("data-confirm-action") || "";
+          const actionBtn = document.getElementById("appConfirmModalAction");
+          actionBtn.textContent = btn.getAttribute("data-confirm-label") || "Удалить";
+          actionBtn.className = "btn " + (btn.getAttribute("data-confirm-class") || "btn-danger");
+          bsModal.show();
+        });
+      })();
+
+      // Table filter: <input data-table-filter="#tableId"> filters rows by text
+      document.querySelectorAll("[data-table-filter]").forEach((input) => {
+        const tableSelector = input.getAttribute("data-table-filter");
+        const table = tableSelector ? document.querySelector(tableSelector) : null;
+        if (!table) return;
+        const tbody = table.querySelector("tbody");
+        if (!tbody) return;
+        input.addEventListener("input", () => {
+          const q = (input.value || "").toLowerCase().trim();
+          tbody.querySelectorAll("tr").forEach((tr) => {
+            if (!q) { tr.style.display = ""; return; }
+            const text = (tr.textContent || "").toLowerCase();
+            tr.style.display = text.includes(q) ? "" : "none";
+          });
+        });
       });
     </script>
   </body>

@@ -1,6 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ account.session_name }} · Аккаунт{% endblock %}
 {% block content %}
+  {% import "macros.html" as ui %}
+  {{ ui.breadcrumb([{"href": "/accounts", "label": "Аккаунты"}, {"label": account.session_name}]) }}
   <div class="d-flex justify-content-between align-items-center mb-3">
     <div>
       <h1 class="h3 mb-1">Аккаунт: <span class="mono">{{ account.session_name }}</span></h1>
@@ -9,7 +11,8 @@
         {% set st = account.get('status','') %}
         {% set st_lower = st|string|lower %}
         {% set st_badge = 'success' if st_lower=='active' else ('danger' if st_lower in ['banned','unavailable'] else ('warning' if st_lower in ['limited','frozen','human_check','unauthorized'] else 'secondary')) %}
-        · <span class="badge text-bg-{{ st_badge }}">{{ st }}</span>
+        {% set st_ru = {"active": "Активен", "banned": "Заблокирован", "limited": "Ограничен", "frozen": "Заморожен", "human_check": "Требуется проверка", "unauthorized": "Не авторизован", "unavailable": "Недоступен", "sleeping": "Пауза"}.get(st_lower, st) %}
+        · <span class="badge text-bg-{{ st_badge }}">{{ st_ru }}</span>
         {% if account.get('last_checked') %}
           <span class="text-muted small ms-1">проверен: {{ account.get('last_checked')|human_dt }}</span>
         {% endif %}
@@ -24,9 +27,12 @@
           <button class="btn btn-outline-secondary" type="submit"><i class="bi bi-shield-check me-1"></i>Проверить</button>
         </form>
       {% endif %}
-      <form method="post" action="/accounts/{{ account.session_name }}/delete" onsubmit="return confirm('Удалить аккаунт?');">
-        <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash me-1"></i>Удалить</button>
-      </form>
+      <button class="btn btn-outline-danger" type="button"
+        data-confirm-action="/accounts/{{ account.session_name }}/delete"
+        data-confirm-title="Удалить аккаунт?"
+        data-confirm-body="Сессия будет удалена из конфигурации. Сам Telegram-аккаунт останется, но бот перестанет его использовать."
+        data-confirm-label="Удалить"
+      ><i class="bi bi-trash me-1"></i>Удалить</button>
     </div>
   </div>
 
@@ -183,7 +189,7 @@
                                 <div class="text-muted small">
                                   {% if tuser %}@{{ tuser }} · {% endif %}
                                   <span class="mono">{{ chat_id }}</span>
-                                  {% if linked_id %} · linked: <span class="mono">{{ linked_id }}</span>{% endif %}
+                                  {% if linked_id %} · обсуждение: <span class="mono">{{ linked_id }}</span>{% endif %}
                                 </div>
                                 <div class="small mt-2">
                                   {% if st_main or st_linked %}
@@ -191,12 +197,14 @@
                                       {% if st_main %}
                                         {% set sm = st_main.get('status','') %}
                                         {% set sm_badge = 'success' if sm=='joined' else ('warning' if sm=='failed' else 'secondary') %}
-                                        <span class="badge text-bg-{{ sm_badge }}">main: {{ sm }}</span>
+                                        {% set sm_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка"}.get(sm, sm) %}
+                                        <span class="badge text-bg-{{ sm_badge }}">основной: {{ sm_label }}</span>
                                       {% endif %}
                                       {% if st_linked %}
                                         {% set sl = st_linked.get('status','') %}
                                         {% set sl_badge = 'success' if sl=='joined' else ('warning' if sl=='failed' else 'secondary') %}
-                                        <span class="badge text-bg-{{ sl_badge }}">linked: {{ sl }}</span>
+                                        {% set sl_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка"}.get(sl, sl) %}
+                                        <span class="badge text-bg-{{ sl_badge }}">обсуждение: {{ sl_label }}</span>
                                       {% endif %}
                                     </div>
                                     {% if st_main and st_main.get('status') != 'joined' and st_main.get('last_error') %}

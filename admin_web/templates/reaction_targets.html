@@ -5,15 +5,17 @@
     <h1 class="h3 mb-0">Цели реакций</h1>
     <a class="btn btn-primary" href="/reaction-targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
   </div>
-  <p class="text-muted">Опциональный модуль: ставит эмодзи‑реакции на новые посты в выбранных чатах по вероятности и лимитам.</p>
+  <p class="text-muted">Автоматические эмодзи-реакции на новые посты. Для каждого канала можно задать набор эмодзи и вероятность реакции.</p>
   {% if targets|length == 0 %}
-    <div class="alert alert-info">Если хотите добавить «лайки», создайте цель реакций и укажите список эмодзи.</div>
+    {% import "macros.html" as ui %}
+    {{ ui.empty_state("bi-emoji-smile", "Настройте авто-реакции", "Бот будет автоматически ставить эмодзи-реакции на новые посты в выбранных каналах. Укажите набор эмодзи и вероятность.", "/reaction-targets/new", "Добавить канал для реакций") }}
   {% endif %}
 
+  {% if targets|length > 0 %}
   <div class="card">
     <div class="card-body p-0">
       <div class="table-responsive">
-        <table class="table table-hover mb-0 align-middle app-table">
+        <table class="table table-hover mb-0 align-middle app-table app-table-responsive">
           <caption class="visually-hidden">Цели реакций</caption>
           <thead>
             <tr>
@@ -26,13 +28,15 @@
           <tbody>
             {% for t in targets %}
               <tr>
-                <td>
-                  <div class="app-clamp-1" title="{{ t.get('chat_name') or '' }}">{{ t.get('chat_name') }}</div>
+                <td data-label="Чат">
+                  <a href="/reaction-targets/{{ t.get('chat_id') }}" class="text-decoration-none text-body fw-semibold">
+                    <div class="app-clamp-1" title="{{ t.get('chat_name') or '' }}">{{ t.get('chat_name') }}</div>
+                  </a>
                   <div class="text-muted small mono">{{ t.get('chat_id') }}</div>
                 </td>
-                <td class="mono">{{ ' '.join(t.get('reactions', [])) }}</td>
-                <td><span class="badge text-bg-light border">{{ t.get('reaction_chance',80) }}%</span></td>
-                <td class="text-end">
+                <td data-label="Реакции" class="mono">{{ ' '.join(t.get('reactions', [])) }}</td>
+                <td data-label="Шанс"><span class="badge text-bg-light border">{{ t.get('reaction_chance',80) }}%</span></td>
+                <td data-label="" class="text-end">
                   <a
                     class="btn btn-sm btn-outline-primary app-icon-btn"
                     href="/reaction-targets/{{ t.get('chat_id') }}"
@@ -46,12 +50,10 @@
                 </td>
               </tr>
             {% endfor %}
-            {% if targets|length == 0 %}
-              <tr><td colspan="4" class="text-center text-muted py-4">Пока пусто.</td></tr>
-            {% endif %}
           </tbody>
         </table>
       </div>
     </div>
   </div>
+  {% endif %}
 {% endblock %}

@@ -1,14 +1,19 @@
 {% extends "base.html" %}
 {% block title %}{{ target.chat_name }} · Мониторинг{% endblock %}
 {% block content %}
+  {% import "macros.html" as ui %}
+  {{ ui.breadcrumb([{"href": "/monitor-targets", "label": "Мониторинг"}, {"label": target.chat_name}]) }}
   <div class="d-flex justify-content-between align-items-start mb-3">
     <div>
       <h1 class="h3 mb-1">{{ target.chat_name }}</h1>
       <div class="text-muted small mono">{{ target.chat_id }}</div>
     </div>
-    <form method="post" action="/monitor-targets/{{ target.chat_id }}/delete" onsubmit="return confirm('Удалить канал мониторинга?');">
-      <button class="btn btn-outline-danger" type="submit">Удалить</button>
-    </form>
+    <button class="btn btn-outline-danger" type="button"
+      data-confirm-action="/monitor-targets/{{ target.chat_id }}/delete"
+      data-confirm-title="Удалить канал из мониторинга?"
+      data-confirm-body="Бот перестанет отслеживать посты и отправлять уведомления."
+      data-confirm-label="Удалить"
+    >Удалить</button>
   </div>
 
   <div class="card">

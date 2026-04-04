@@ -2,6 +2,7 @@
 {% block title %}{{ target.chat_name }} · Обсуждения{% endblock %}
 {% block content %}
   {% import "macros.html" as ui %}
+  {{ ui.breadcrumb([{"href": "/discussions", "label": "Обсуждения"}, {"label": (target.get('title','') or target.get('chat_name',''))|truncate(40)}]) }}
   <div class="d-flex justify-content-between align-items-start mb-3">
     <div>
       {% set title = (target.get('title','') or '').strip() %}
@@ -68,9 +69,12 @@
           <i class="bi bi-arrow-clockwise me-1" aria-hidden="true"></i>Обновить чат
         </button>
       </form>
-      <form method="post" action="/discussions/targets/{{ target.id }}/delete" onsubmit="return confirm('Удалить цель обсуждений?');">
-        <button class="btn btn-outline-danger" type="submit">Удалить</button>
-      </form>
+      <button class="btn btn-outline-danger" type="button"
+        data-confirm-action="/discussions/targets/{{ target.id }}/delete"
+        data-confirm-title="Удалить сценарий обсуждения?"
+        data-confirm-body="Все настройки сцен и лимитов будут удалены. Если обсуждение сейчас идёт, оно будет остановлено."
+        data-confirm-label="Удалить"
+      >Удалить</button>
     </div>
   </div>
 
@@ -325,11 +329,13 @@
 			                            <div class="small mt-1">
 			                              {% if st_main %}
 			                                {% set sm = st_main.get('status','') %}
-			                                <span class="badge text-bg-{{ 'success' if sm=='joined' else 'warning' }}">{{ 'main: ' ~ sm }}</span>
+			                                {% set sm_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка"}.get(sm, sm) %}
+                                <span class="badge text-bg-{{ 'success' if sm=='joined' else 'warning' }}">основной: {{ sm_label }}</span>
 			                              {% endif %}
 			                              {% if st_linked %}
 			                                {% set sl = st_linked.get('status','') %}
-			                                <span class="badge text-bg-{{ 'success' if sl=='joined' else 'warning' }}">{{ 'linked: ' ~ sl }}</span>
+			                                {% set sl_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка"}.get(sl, sl) %}
+			                                <span class="badge text-bg-{{ 'success' if sl=='joined' else 'warning' }}">обсуждение: {{ sl_label }}</span>
 			                              {% endif %}
 			                            </div>
 			                          {% endif %}
@@ -694,9 +700,10 @@
 		                <tr>
 		                  <td class="mono">#{{ s.id }}</td>
 		                  <td>
-		                    <span class="badge text-bg-{{ color }}">{{ st or '—' }}</span>
+		                    {% set st_label = {"running": "В процессе", "completed": "Завершено", "planned": "Запланировано", "failed": "Ошибка", "canceled": "Отменено"}.get(st, st or '—') %}
+		                    <span class="badge text-bg-{{ color }}">{{ st_label }}</span>
 		                    {% if st == 'planned' and s.schedule_at %}
-		                      <div class="text-muted small">next: <span class="mono">{{ s.schedule_at|human_dt }}</span></div>
+		                      <div class="text-muted small">след.: <span class="mono">{{ s.schedule_at|human_dt }}</span></div>
 		                    {% endif %}
 		                    {% if s.error and st in ['failed'] %}
 		                      <div class="text-danger small">{{ s.error }}</div>
