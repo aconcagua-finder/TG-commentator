@@ -469,14 +469,14 @@ async def account_new_phone_code(request: Request, token: str, code: str = Form(
 
 
 @router.post("/accounts/new/phone/{token}/password", response_class=HTMLResponse)
-async def account_new_phone_password(request: Request, token: str, password: str = Form(...)):
+async def account_new_phone_password(request: Request, token: str, tfa_password: str = Form(...)):
     st = PHONE_LOGINS.get(token)
     if not st:
         _flash(request, "danger", "Сессия входа устарела. Начните заново.")
         return _redirect("/accounts/new")
 
     try:
-        await st.client.sign_in(password=password.strip())
+        await st.client.sign_in(password=tfa_password.strip())
     except PasswordHashInvalidError:
         _flash(request, "danger", "Неверный пароль 2FA. Попробуйте снова.")
         return templates.TemplateResponse(
