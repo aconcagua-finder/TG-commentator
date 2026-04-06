@@ -14,9 +14,9 @@
         } catch (_) {}
       })();
     </script>
-    <link href="{{ url_for('static', path='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet" />
-    <link href="{{ url_for('static', path='vendor/bootstrap-icons/bootstrap-icons.css') }}" rel="stylesheet" />
-    <link href="{{ url_for('static', path='app.css') }}?v={{ static_version }}" rel="stylesheet" />
+    <link href="/static/vendor/bootstrap/bootstrap.min.css" rel="stylesheet" />
+    <link href="/static/vendor/bootstrap-icons/bootstrap-icons.css" rel="stylesheet" />
+    <link href="/static/app.css?v={{ static_version }}" rel="stylesheet" />
   </head>
   <body class="app-body">
     <a class="skip-link visually-hidden-focusable position-absolute top-0 start-0 m-2 px-3 py-2 bg-body border rounded" href="#main-content">Перейти к содержимому</a>
@@ -309,8 +309,8 @@
       </div>
     </div>
 
-    <script src="{{ url_for('static', path='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
-    <script src="{{ url_for('static', path='message_actions.js') }}?v={{ static_version }}"></script>
+    <script src="/static/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+    <script src="/static/message_actions.js?v={{ static_version }}"></script>
     <script>
       // Keep CSS nav height in sync for sticky layout (sidebar/toasts offsets)
       (() => {

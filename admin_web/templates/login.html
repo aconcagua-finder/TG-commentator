@@ -14,9 +14,9 @@
         } catch (_) {}
       })();
     </script>
-    <link href="{{ url_for('static', path='vendor/bootstrap/bootstrap.min.css') }}" rel="stylesheet" />
-    <link href="{{ url_for('static', path='vendor/bootstrap-icons/bootstrap-icons.css') }}" rel="stylesheet" />
-    <link href="{{ url_for('static', path='app.css') }}" rel="stylesheet" />
+    <link href="/static/vendor/bootstrap/bootstrap.min.css" rel="stylesheet" />
+    <link href="/static/vendor/bootstrap-icons/bootstrap-icons.css" rel="stylesheet" />
+    <link href="/static/app.css?v={{ static_version }}" rel="stylesheet" />
   </head>
   <body class="app-body">
     {% if flashes %}
@@ -76,7 +76,7 @@
       </div>
     </div>
 
-    <script src="{{ url_for('static', path='vendor/bootstrap/bootstrap.bundle.min.js') }}"></script>
+    <script src="/static/vendor/bootstrap/bootstrap.bundle.min.js"></script>
     <script>
       document.querySelectorAll(".toast").forEach((el) => {
         bootstrap.Toast.getOrCreateInstance(el).show();
