@@ -41,7 +41,6 @@
             {% set action = w.get('action') %}
             {% if action.get('method') == 'post' %}
               <form method="post" action="{{ action.get('url') }}">
-                <input type="hidden" name="auto_pause" value="1" />
                 <button class="btn btn-sm btn-outline-primary" type="submit">{{ action.get('label','Открыть') }}</button>
               </form>
             {% else %}

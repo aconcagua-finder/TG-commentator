@@ -24,7 +24,6 @@ from admin_web.helpers import (
     _load_accounts,
     _load_join_status,
     _load_settings,
-    _parse_bool,
     _parse_int_field,
     _project_id_for,
     _record_account_failure,
@@ -80,14 +79,13 @@ async def targets_new_page(request: Request, chat_input: str = ""):
 
 
 @router.get("/targets/search", response_class=HTMLResponse)
-async def targets_search_page(request: Request, source: str = "", auto_pause: str = "1"):
+async def targets_search_page(request: Request, source: str = ""):
     results: List[Dict[str, Any]] = []
     error: str | None = None
 
     source = source.strip()
-    auto_pause_flag = _parse_bool(auto_pause, default=True)
     if source:
-        async with _auto_pause_commentator(request, auto_pause=auto_pause_flag, reason="Поиск каналов"):
+        async with _auto_pause_commentator(request, reason="Поиск каналов"):
             try:
                 client = await _get_any_authorized_client()
                 try:
@@ -144,14 +142,12 @@ async def targets_new_submit(
     media_min_meaningful_words: str = Form("6"),
     skip_promotional_posts: Optional[str] = Form(None),
     skip_short_media_posts: Optional[str] = Form(None),
-    auto_pause: Optional[str] = Form(None),
 ):
     settings, _ = _load_settings()
     project_id = _active_project_id(settings)
 
     chat_input = chat_input.strip()
-    auto_pause_flag = _parse_bool(auto_pause, default=True)
-    async with _auto_pause_commentator(request, auto_pause=auto_pause_flag, reason="Проверка/вступление в чат"):
+    async with _auto_pause_commentator(request, reason="Проверка/вступление в чат"):
         try:
             chat_info = await _derive_target_chat_info(chat_input)
         except HTTPException as e:
@@ -459,7 +455,6 @@ async def target_join_attempt(
     chat_id: str,
     session_name: str = Form(""),
     target_id: str = Form(""),
-    auto_pause: Optional[str] = Form(None),
 ):
     settings, _ = _load_settings()
     project_id = _active_project_id(settings)
@@ -480,7 +475,6 @@ async def target_join_attempt(
         _flash(request, "warning", "Нет выбранных аккаунтов для вступления.")
         return _redirect(f"/targets/{quote(chat_id)}")
 
-    auto_pause_flag = _parse_bool(auto_pause, default=True)
     api_id_default, api_hash_default = _telethon_credentials()
     target_ids: List[str] = []
     if target_id:
@@ -495,7 +489,7 @@ async def target_join_attempt(
     total_failed = 0
     had_lock = False
 
-    async with _auto_pause_commentator(request, auto_pause=auto_pause_flag, reason="Вступление в чат"):
+    async with _auto_pause_commentator(request, reason="Вступление в чат"):
         await _refresh_target_access_hashes(target, settings)
         for acc in accounts:
             account_success = True

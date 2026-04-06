@@ -149,7 +149,6 @@
           <p class="text-muted small mb-2">Выберите, где этот аккаунт будет использоваться. «Вступить» доступно для целей комментирования.</p>
 
           <form method="post" action="/accounts/{{ account.session_name }}/targets" id="accountTargetsForm">
-            <input type="hidden" name="auto_pause" value="1" />
             <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
               <input class="form-control form-control-sm" type="search" id="accountTargetsFilter" placeholder="Поиск по названию или @username" style="max-width: 420px;" />
               <button class="btn btn-sm btn-primary" type="submit">Сохранить</button>

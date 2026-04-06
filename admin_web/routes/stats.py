@@ -254,7 +254,6 @@ async def manual_page(request: Request):
 async def manual_run(
     request: Request,
     link: str = Form(...),
-    auto_pause: Optional[str] = Form(None),
     override_vector_prompt: str = Form(""),
     override_accounts_per_post_min: str = Form(""),
     override_accounts_per_post_max: str = Form(""),
@@ -328,10 +327,8 @@ async def manual_run(
 
     pending_username_update: Tuple[Dict[str, Any], str, str] | None = None
     if not found_target and not is_private_link:
-        auto_pause_flag = _parse_bool(auto_pause, default=True)
         async with _auto_pause_commentator(
             request,
-            auto_pause=auto_pause_flag,
             reason="Поиск канала по ссылке",
         ):
             try:

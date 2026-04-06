@@ -167,7 +167,6 @@ async def discussions_new_submit(
     slow_join_interval_mins: str = Form("0"),
     select_all: Optional[str] = Form(None),
     assigned_accounts: Optional[List[str]] = Form(None),
-    auto_pause: Optional[str] = Form(None),
 ):
     settings, _ = _load_settings()
     project_id = _active_project_id(settings)
@@ -214,9 +213,8 @@ async def discussions_new_submit(
             "linked_chat_access_hash": matched_target.get("linked_chat_access_hash"),
         }
     else:
-        auto_pause_flag = _parse_bool(auto_pause, default=True)
         async with _auto_pause_commentator(
-            request, auto_pause=auto_pause_flag, reason="Проверка/вступление в чат (обсуждения)"
+            request, reason="Проверка/вступление в чат (обсуждения)"
         ):
             try:
                 base = await _derive_target_chat_info(chat_input)
@@ -461,7 +459,6 @@ async def discussions_new_submit(
             request,
             str(new_target.get("id")),
             seed_text=seed_text,
-            auto_pause=auto_pause,
         )
     return _redirect(f"/discussions/targets/{quote(str(new_target.get('id')))}")
 
@@ -928,7 +925,6 @@ async def discussion_target_rename(
 async def discussion_target_refresh_chat_info(
     request: Request,
     target_id: str,
-    auto_pause: Optional[str] = Form(None),
 ):
     settings, _ = _load_settings()
     project_id = _active_project_id(settings)
@@ -943,9 +939,8 @@ async def discussion_target_refresh_chat_info(
         _flash(request, "danger", "Не удалось определить чат для обновления (chat_id/chat_username пустые).")
         return _redirect(f"/discussions/targets/{quote(str(target.get('id') or target_id))}")
 
-    auto_pause_flag = _parse_bool(auto_pause, default=True)
     async with _auto_pause_commentator(
-        request, auto_pause=auto_pause_flag, reason="Обновление информации о чате (обсуждения)"
+        request, reason="Обновление информации о чате (обсуждения)"
     ):
         try:
             base = await _derive_target_chat_info(chat_input)
@@ -979,7 +974,6 @@ async def discussion_target_join_attempt(
     target_id: str,
     session_name: str = Form(""),
     join_target_id: str = Form(""),
-    auto_pause: Optional[str] = Form(None),
 ):
     settings, _ = _load_settings()
     project_id = _active_project_id(settings)
@@ -1000,7 +994,6 @@ async def discussion_target_join_attempt(
         _flash(request, "warning", "Нет выбранных аккаунтов для вступления.")
         return _redirect(f"/discussions/targets/{quote(str(target.get('id') or target_id))}")
 
-    auto_pause_flag = _parse_bool(auto_pause, default=True)
     api_id_default, api_hash_default = _telethon_credentials()
     target_ids: List[str] = []
     if join_target_id:
@@ -1015,7 +1008,7 @@ async def discussion_target_join_attempt(
     total_failed = 0
     had_lock = False
 
-    async with _auto_pause_commentator(request, auto_pause=auto_pause_flag, reason="Вступление в чат (обсуждения)"):
+    async with _auto_pause_commentator(request, reason="Вступление в чат (обсуждения)"):
         await _refresh_target_access_hashes(target, settings)
         for acc in accounts:
             account_success = True
@@ -1148,7 +1141,6 @@ async def discussion_target_start(
     request: Request,
     target_id: str,
     seed_text: str = Form(...),
-    auto_pause: Optional[str] = Form(None),
 ):
     seed_text = (seed_text or "").strip()
     if not seed_text:

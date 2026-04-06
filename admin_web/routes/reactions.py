@@ -18,7 +18,6 @@ from admin_web.helpers import (
     _flash,
     _load_accounts,
     _load_settings,
-    _parse_bool,
     _parse_int_field,
     _redirect,
     _save_settings,
@@ -63,14 +62,12 @@ async def reaction_targets_new_submit(
     delay_between_reactions: str = Form("5"),
     daily_reaction_limit: str = Form("999"),
     slow_join_interval_mins: str = Form("0"),
-    auto_pause: Optional[str] = Form(None),
 ):
     settings, _ = _load_settings()
     project_id = _active_project_id(settings)
 
     chat_input = chat_input.strip()
-    auto_pause_flag = _parse_bool(auto_pause, default=True)
-    async with _auto_pause_commentator(request, auto_pause=auto_pause_flag, reason="Проверка/вступление в чат (реакции)"):
+    async with _auto_pause_commentator(request, reason="Проверка/вступление в чат (реакции)"):
         try:
             base = await _derive_target_chat_info(chat_input)
         except HTTPException as e:

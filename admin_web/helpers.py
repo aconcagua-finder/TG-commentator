@@ -1482,32 +1482,19 @@ def _human_dt(value: Any) -> str:
 async def _auto_pause_commentator(
     request: Request,
     *,
-    auto_pause: bool,
-    reason: str,
+    reason: str = "",
     wait_seconds: float = 3.0,
+    auto_pause: bool = True,  # kept for backward compat, ignored
 ):
     settings, _ = _load_settings()
     was_running = settings.get("status") == "running"
     paused = False
 
-    if was_running and auto_pause:
+    if was_running:
         settings["status"] = "stopped"
         _save_settings(settings)
         paused = True
-        _flash(
-            request,
-            "warning",
-            f"Комментатор временно остановлен для операции: {reason}. "
-            "Комментирование/реакции будут на паузе несколько секунд.",
-        )
         await asyncio.sleep(wait_seconds)
-    elif was_running and not auto_pause:
-        _flash(
-            request,
-            "warning",
-            "Комментатор сейчас работает. Для этой операции лучше временно остановить его, "
-            "иначе возможны ошибки доступа к сессии.",
-        )
 
     try:
         yield paused
@@ -1516,7 +1503,6 @@ async def _auto_pause_commentator(
             settings, _ = _load_settings()
             settings["status"] = "running"
             _save_settings(settings)
-            _flash(request, "success", "Комментатор снова запущен.")
 
 
 # ---------------------------------------------------------------------------

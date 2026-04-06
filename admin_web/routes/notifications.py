@@ -124,7 +124,6 @@ async def _resolve_notification_chat_target(request: Request, raw_chat_target: s
 
     async with _auto_pause_commentator(
         request,
-        auto_pause=True,
         reason="Определение чата уведомлений",
     ):
         client = await _get_any_authorized_client()

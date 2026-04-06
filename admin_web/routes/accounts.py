@@ -51,7 +51,6 @@ from admin_web.helpers import (
     _sorted_role_items,
     _ensure_accounts_date_added,
     _ensure_accounts_roles_saved,
-    _parse_bool,
     _parse_int,
     _parse_int_field,
     _flash,
@@ -111,7 +110,7 @@ async def accounts_page(request: Request):
 
 
 @router.post("/accounts/check")
-async def accounts_check(request: Request, auto_pause: Optional[str] = Form(None)):
+async def accounts_check(request: Request):
     if not ACCOUNT_CHECKS_ENABLED:
         _flash(request, "warning", "Проверки аккаунтов отключены.")
         return _redirect("/accounts")
@@ -122,12 +121,11 @@ async def accounts_check(request: Request, auto_pause: Optional[str] = Form(None
         _flash(request, "warning", "Нет аккаунтов для проверки.")
         return _redirect("/accounts")
 
-    auto_pause = _parse_bool(auto_pause, default=True)
     api_id_default, api_hash_default = _telethon_credentials()
     status_counts: Dict[str, int] = {}
     errors = 0
 
-    async with _auto_pause_commentator(request, auto_pause=auto_pause, reason="Проверка аккаунтов"):
+    async with _auto_pause_commentator(request, reason="Проверка аккаунтов"):
         for acc in accounts:
             if _project_id_for(acc) != project_id:
                 continue
