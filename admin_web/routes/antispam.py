@@ -276,6 +276,7 @@ async def antispam_target_edit_save(
     ai_prompt: str = Form(""),
     ai_model: str = Form("gpt-4.1-nano"),
     notify_telegram: str | None = Form(None),
+    bot_token: str = Form(""),
     select_all: Optional[str] = Form(None),
     assigned_accounts: Optional[List[str]] = Form(None),
 ):
@@ -297,7 +298,10 @@ async def antispam_target_edit_save(
         notify_telegram=1 if _parse_bool(notify_telegram, default=False) else 0,
     )
 
-    # Update assigned accounts in settings.json.
+    # Bot token for deletion via Bot API.
+    target["bot_token"] = str(bot_token or "").strip()
+
+    # Update assigned accounts in settings.json (used when bot_token is empty).
     accounts, _ = _load_accounts()
     allowed_sessions = [
         a.get("session_name")

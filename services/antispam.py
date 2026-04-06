@@ -12,6 +12,7 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 import openai
 
 from services.dialogue import get_all_our_user_ids
@@ -21,6 +22,32 @@ logger = logging.getLogger(__name__)
 
 # Cache: chat_id -> session_name that successfully deleted last time
 _delete_success_cache: dict[int, str] = {}
+
+
+async def _delete_message_via_bot(
+    bot_token: str,
+    chat_id: int,
+    msg_id: int,
+) -> bool:
+    """Delete a message using Telegram Bot API (deleteMessage)."""
+    token = str(bot_token or "").strip()
+    if not token:
+        return False
+    url = f"https://api.telegram.org/bot{token}/deleteMessage"
+    payload = {"chat_id": chat_id, "message_id": msg_id}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+        data = resp.json() if resp.is_success else {}
+        if isinstance(data, dict) and data.get("ok") is True:
+            return True
+        logger.warning(
+            "antispam: Bot API deleteMessage failed: chat=%s msg=%s status=%s resp=%s",
+            chat_id, msg_id, resp.status_code, resp.text[:200],
+        )
+    except Exception as exc:
+        logger.warning("antispam: Bot API deleteMessage exception: %s", exc)
+    return False
 
 
 def _db_connect():
@@ -448,25 +475,34 @@ async def check_and_handle_spam(
                     old = spam_blocked_msgs_order.popleft()
                     spam_blocked_msgs.discard(old)
 
-    # Resolve antispam target to get assigned_accounts.
+    # Resolve antispam target to get bot_token / assigned_accounts.
     antispam_target = None
-    allowed_sessions: list[str] | None = None
     try:
         for at in (current_settings.get("antispam_targets") or []):
             if str(at.get("chat_id") or "").strip() == chat_id_str:
                 antispam_target = at
-                allowed_sessions = at.get("assigned_accounts") or None
                 break
     except Exception:
         pass
 
-    # Delete using assigned accounts (or any active client as fallback).
-    deleted, operator_session_name = await _delete_message_any(
-        chat_id_int,
-        msg_id_int,
-        active_clients=active_clients,
-        allowed_sessions=allowed_sessions,
-    )
+    # Delete: bot_token → Bot API, otherwise → user-accounts.
+    deleted = False
+    operator_session_name: str | None = None
+    bot_token = str((antispam_target or {}).get("bot_token") or "").strip()
+
+    if bot_token:
+        deleted = await _delete_message_via_bot(bot_token, chat_id_int, msg_id_int)
+        if deleted:
+            operator_session_name = "bot"
+    else:
+        allowed_sessions = (antispam_target or {}).get("assigned_accounts") or None
+        deleted, operator_session_name = await _delete_message_any(
+            chat_id_int,
+            msg_id_int,
+            active_clients=active_clients,
+            allowed_sessions=allowed_sessions,
+        )
+
     action = "deleted" if deleted else "failed_to_delete"
 
     sender_name = ""
