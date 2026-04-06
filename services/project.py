@@ -126,6 +126,12 @@ def get_project_monitor_targets(settings=None):
     return _filter_project_items((s or {}).get("monitor_targets", []) or [], pid)
 
 
+def get_project_antispam_targets(settings=None):
+    s = settings if isinstance(settings, dict) else {}
+    pid = _active_project_id(s)
+    return _filter_project_items((s or {}).get("antispam_targets", []) or [], pid)
+
+
 def get_project_manual_queue(settings=None):
     s = settings if isinstance(settings, dict) else {}
     pid = _active_project_id(s)

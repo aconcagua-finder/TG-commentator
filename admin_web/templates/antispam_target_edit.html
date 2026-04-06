@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}{{ target.chat_name }} · Антиспам{% endblock %}
+{% block content %}
+  {% import "macros.html" as ui %}
+  {{ ui.breadcrumb([{"href": "/antispam-targets", "label": "Антиспам"}, {"label": target.chat_name}]) }}
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h1 class="h3 mb-1">{{ target.chat_name }}</h1>
+      <div class="text-muted small mono">{{ target.chat_id }}</div>
+    </div>
+    <button class="btn btn-outline-danger" type="button"
+      data-confirm-action="/antispam-targets/{{ target.chat_id }}/delete"
+      data-confirm-title="Удалить чат из антиспама?"
+      data-confirm-body="Бот перестанет отслеживать спам в этом чате."
+      data-confirm-label="Удалить"
+    >Удалить</button>
+  </div>
+
+  <form method="post" action="/antispam-targets/{{ target.chat_id }}">
+    <div class="row g-3">
+      <div class="col-12 col-lg-6">
+        <div class="card">
+          <div class="card-body">
+            <h2 class="h5">Правила</h2>
+
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch" name="enabled" id="antispam_enabled" {% if rule.enabled %}checked{% endif %} />
+              <label class="form-check-label" for="antispam_enabled">Включить антиспам</label>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="keywords_text">Ключевые слова (по одному на строку)</label>
+              <textarea class="form-control mono" name="keywords_text" id="keywords_text" rows="8" placeholder="крипто&#10;казино&#10;сигналы">{{ keywords_text }}</textarea>
+              <div class="form-text">Если найдено совпадение (подстрока, без учёта регистра) — сообщение удаляется без AI.</div>
+            </div>
+
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch" name="ai_enabled" id="antispam_ai_enabled" {% if rule.ai_enabled %}checked{% endif %} />
+              <label class="form-check-label" for="antispam_ai_enabled">AI-верификация</label>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="ai_prompt">Описание спама для AI (опционально)</label>
+              <textarea class="form-control" name="ai_prompt" id="ai_prompt" rows="4" placeholder="Считай спамом любые предложения заработка/инвестиций/казино, приглашения в каналы, промокоды и ссылки.">{{ rule.ai_prompt }}</textarea>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="ai_model">Модель</label>
+              <select class="form-select" name="ai_model" id="ai_model">
+                <option value="gpt-4.1-nano" {% if rule.ai_model == 'gpt-4.1-nano' %}selected{% endif %}>gpt-4.1-nano</option>
+                <option value="gpt-4.1-mini" {% if rule.ai_model == 'gpt-4.1-mini' %}selected{% endif %}>gpt-4.1-mini</option>
+              </select>
+              <div class="form-text">AI используется только если не сработали ключевые слова.</div>
+            </div>
+
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch" name="notify_telegram" id="antispam_notify" {% if rule.notify_telegram %}checked{% endif %} />
+              <label class="form-check-label" for="antispam_notify">Уведомлять в Telegram-бот</label>
+              <div class="form-text">Требует настроенных уведомлений проекта и включённого события «Антиспам: удалён спам».</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mt-3">
+          <div class="card-body">
+            <h2 class="h6 mb-2">Аккаунты-модераторы</h2>
+            <div class="form-text mb-2">Только эти аккаунты будут использоваться для удаления спам-сообщений.</div>
+            {% set assigned = target.get('assigned_accounts', []) %}
+            {% set all_selected = assigned and accounts and (assigned|length == accounts|length) %}
+            <div class="d-flex align-items-center gap-3 flex-wrap mb-2">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="select_all" value="1" id="select_all_accounts" {% if all_selected %}checked{% endif %} />
+                <label class="form-check-label" for="select_all_accounts">Выбрать все</label>
+              </div>
+              <div class="text-muted small">Если ничего не выбрано — будут использованы все активные аккаунты.</div>
+            </div>
+            <div class="row g-2">
+              {% for a in accounts %}
+                <div class="col-12 col-md-6">
+                  <div class="form-check">
+                    <input class="form-check-input js-account-checkbox" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
+                    <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-6">
+        <div class="card">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center">
+              <h2 class="h5 mb-0">Последние удаления</h2>
+              <a class="btn btn-sm btn-outline-secondary" href="/antispam-targets/{{ target.chat_id }}/log">Весь лог</a>
+            </div>
+            <div class="text-muted small mt-2">Показываются последние 20 записей.</div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle app-table">
+              <thead>
+                <tr>
+                  <th>Дата</th>
+                  <th>Отправитель</th>
+                  <th>Текст</th>
+                  <th>Метод</th>
+                  <th>Причина</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in recent_logs %}
+                  <tr>
+                    <td class="mono small">{{ (r.created_at or '')|human_dt }}</td>
+                    <td class="small">
+                      <div class="app-clamp-1" title="{{ (r.sender_name or '') ~ ' @' ~ (r.sender_username or '') }}">
+                        {{ r.sender_name or '—' }}
+                        {% if r.sender_username %}<span class="text-muted">@{{ r.sender_username }}</span>{% endif %}
+                      </div>
+                    </td>
+                    <td class="small">
+                      <div class="app-clamp-2" title="{{ r.message_text or '' }}">{{ r.message_text or '—' }}</div>
+                    </td>
+                    <td class="mono small">{{ r.detection_method or '—' }}</td>
+                    <td class="small">
+                      {% if r.detection_method == 'keyword' %}
+                        <span class="mono">{{ r.matched_keyword or '—' }}</span>
+                      {% elif r.detection_method == 'ai' %}
+                        <span class="app-clamp-2" title="{{ r.ai_reason or '' }}">{{ r.ai_reason or '—' }}</span>
+                      {% else %}
+                        —
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+                {% if recent_logs|length == 0 %}
+                  <tr><td colspan="5" class="text-center text-muted py-4">Пока нет записей.</td></tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary" type="submit">Сохранить</button>
+        <a class="btn btn-outline-secondary" href="/antispam-targets">Назад</a>
+      </div>
+    </div>
+  </form>
+
+  <script>
+    (() => {
+      const selectAll = document.getElementById("select_all_accounts");
+      if (!selectAll) return;
+      const boxes = Array.from(document.querySelectorAll(".js-account-checkbox"));
+      const update = () => {
+        if (!boxes.length) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+          return;
+        }
+        const checked = boxes.filter((b) => b.checked).length;
+        if (checked === 0) {
+          selectAll.checked = false;
+          selectAll.indeterminate = false;
+        } else if (checked === boxes.length) {
+          selectAll.checked = true;
+          selectAll.indeterminate = false;
+        } else {
+          selectAll.checked = false;
+          selectAll.indeterminate = true;
+        }
+      };
+      selectAll.addEventListener("change", () => {
+        boxes.forEach((b) => {
+          b.checked = selectAll.checked;
+        });
+        selectAll.indeterminate = false;
+      });
+      boxes.forEach((b) => b.addEventListener("change", update));
+      update();
+    })();
+  </script>
+{% endblock %}

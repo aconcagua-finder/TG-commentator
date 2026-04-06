@@ -228,6 +228,7 @@ async def _delete_message_any(
     msg_id: int,
     *,
     active_clients: dict,
+    allowed_sessions: list[str] | None = None,
 ) -> tuple[bool, str | None]:
     """Try deleting a message using any active client.
 
@@ -260,15 +261,23 @@ async def _delete_message_any(
             return await _try_delete_with_client(client, bare_local, msg_id)
         return False
 
+    allowed_set = set(allowed_sessions) if allowed_sessions else None
+
     if cached_session and isinstance(active_clients, dict) and cached_session in active_clients:
-        wrapper = active_clients.get(cached_session)
-        if wrapper is not None:
-            ok = await _attempt(wrapper)
-            if ok:
-                return True, str(cached_session)
+        if allowed_set is None or cached_session in allowed_set:
+            wrapper = active_clients.get(cached_session)
+            if wrapper is not None:
+                ok = await _attempt(wrapper)
+                if ok:
+                    return True, str(cached_session)
         _delete_success_cache.pop(int(chat_id), None)
 
     wrappers = list(active_clients.values()) if isinstance(active_clients, dict) else []
+    if allowed_set:
+        wrappers = [
+            w for w in wrappers
+            if str(getattr(w, "session_name", "") or "").strip() in allowed_set
+        ]
     for wrapper in wrappers:
         session_name = str(getattr(wrapper, "session_name", "") or "").strip()
         if cached_session and session_name == cached_session:
@@ -439,11 +448,24 @@ async def check_and_handle_spam(
                     old = spam_blocked_msgs_order.popleft()
                     spam_blocked_msgs.discard(old)
 
-    # Delete using any admin-capable account.
+    # Resolve antispam target to get assigned_accounts.
+    antispam_target = None
+    allowed_sessions: list[str] | None = None
+    try:
+        for at in (current_settings.get("antispam_targets") or []):
+            if str(at.get("chat_id") or "").strip() == chat_id_str:
+                antispam_target = at
+                allowed_sessions = at.get("assigned_accounts") or None
+                break
+    except Exception:
+        pass
+
+    # Delete using assigned accounts (or any active client as fallback).
     deleted, operator_session_name = await _delete_message_any(
         chat_id_int,
         msg_id_int,
         active_clients=active_clients,
+        allowed_sessions=allowed_sessions,
     )
     action = "deleted" if deleted else "failed_to_delete"
 
@@ -479,11 +501,12 @@ async def check_and_handle_spam(
     try:
         from services.db_queries import log_action_to_db
 
-        target = None
-        for t in get_project_targets(current_settings):
-            if str(t.get("linked_chat_id") or "").strip() == chat_id_str:
-                target = t
-                break
+        target = antispam_target
+        if target is None:
+            for t in get_project_targets(current_settings):
+                if str(t.get("linked_chat_id") or "").strip() == chat_id_str:
+                    target = t
+                    break
 
         chat_title = ""
         chat_username = ""

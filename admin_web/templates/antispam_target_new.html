@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Добавить антиспам · TG-комментатор{% endblock %}
+{% block content %}
+  {% import "macros.html" as ui %}
+  <h1 class="h3 mb-3">Добавить чат для антиспама</h1>
+  <div class="card">
+    <div class="card-body">
+      <form method="post" action="/antispam-targets/new" class="row g-3">
+        <div class="col-12">
+          <label class="form-label app-label">
+            <span class="app-label-text">ID / @username / ссылка-приглашение</span>
+            {{ ui.tip("Можно указать -100..., @username или ссылку t.me. Антиспам будет работать в этом чате/группе.") }}
+          </label>
+          <input class="form-control" name="chat_input" autocomplete="off" required />
+        </div>
+        <div class="col-12">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="auto_pause" value="1" id="auto_pause" checked />
+            <label class="form-check-label" for="auto_pause">Авто-пауза комментатора</label>
+          </div>
+        </div>
+        <div class="col-12">
+          <button class="btn btn-primary" type="submit">Добавить</button>
+          <a class="btn btn-outline-secondary" href="/antispam-targets">Отмена</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

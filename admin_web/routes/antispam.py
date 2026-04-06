@@ -1,42 +1,57 @@
+"""Antispam-targets routes (independent section)."""
+
 from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from admin_web.helpers import (
     _active_project_id,
+    _auto_pause_commentator,
     _db_connect,
-    _find_target_by_chat_id,
+    _filter_accounts_by_project,
+    _filter_by_project,
+    _find_antispam_target_by_chat_id,
     _flash,
+    _load_accounts,
     _load_settings,
     _parse_bool,
     _redirect,
+    _save_settings,
 )
+from admin_web.telethon_utils import _derive_target_chat_info
 from admin_web.templating import _template_context, templates
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _load_rule(linked_chat_id: str) -> Dict[str, Any]:
-    linked_chat_id = str(linked_chat_id or "").strip()
-    if not linked_chat_id:
-        return {
-            "enabled": 0,
-            "keywords": [],
-            "ai_enabled": 1,
-            "ai_prompt": "",
-            "ai_model": "gpt-4.1-nano",
-            "notify_telegram": 0,
-        }
+def _load_rule(chat_id: str) -> Dict[str, Any]:
+    """Load spam_rules row from DB by chat_id."""
+    chat_id = str(chat_id or "").strip()
+    defaults: Dict[str, Any] = {
+        "enabled": 0,
+        "keywords": [],
+        "ai_enabled": 1,
+        "ai_prompt": "",
+        "ai_model": "gpt-4.1-nano",
+        "notify_telegram": 0,
+    }
+    if not chat_id:
+        return defaults
     with _db_connect() as conn:
         row = conn.execute(
             """
@@ -45,17 +60,10 @@ def _load_rule(linked_chat_id: str) -> Dict[str, Any]:
             WHERE chat_id = ?
             LIMIT 1
             """,
-            (linked_chat_id,),
+            (chat_id,),
         ).fetchone()
     if not row:
-        return {
-            "enabled": 0,
-            "keywords": [],
-            "ai_enabled": 1,
-            "ai_prompt": "",
-            "ai_model": "gpt-4.1-nano",
-            "notify_telegram": 0,
-        }
+        return defaults
     raw_keywords = row["keywords"]
     keywords: list[str] = []
     if raw_keywords:
@@ -90,9 +98,9 @@ def _keywords_from_textarea(raw: str) -> list[str]:
     return out
 
 
-def _load_spam_logs(linked_chat_id: str, *, page: int, per_page: int) -> Tuple[List[Any], int]:
-    linked_chat_id = str(linked_chat_id or "").strip()
-    if not linked_chat_id:
+def _load_spam_logs(chat_id: str, *, page: int, per_page: int) -> Tuple[List[Any], int]:
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
         return [], 0
     page = max(int(page or 0), 0)
     per_page = max(min(int(per_page or 50), 200), 10)
@@ -100,7 +108,7 @@ def _load_spam_logs(linked_chat_id: str, *, page: int, per_page: int) -> Tuple[L
     with _db_connect() as conn:
         total_row = conn.execute(
             "SELECT COUNT(*) AS c FROM spam_log WHERE chat_id = ?",
-            (linked_chat_id,),
+            (chat_id,),
         ).fetchone()
         total = int(total_row["c"] or 0) if total_row else 0
         rows = conn.execute(
@@ -111,65 +119,21 @@ def _load_spam_logs(linked_chat_id: str, *, page: int, per_page: int) -> Tuple[L
             ORDER BY id DESC
             LIMIT ? OFFSET ?
             """,
-            (linked_chat_id, per_page, offset),
+            (chat_id, per_page, offset),
         ).fetchall()
     return list(rows or []), total
 
 
-@router.get("/targets/{chat_id}/antispam", response_class=HTMLResponse)
-async def target_antispam_page(request: Request, chat_id: str):
-    settings, settings_err = _load_settings()
-    project_id = _active_project_id(settings)
-    _, target = _find_target_by_chat_id(settings, chat_id, project_id)
-
-    linked_chat_id = str(target.get("linked_chat_id") or "").strip()
-    rule = _load_rule(linked_chat_id)
-    keywords_text = "\n".join(rule.get("keywords") or [])
-
-    logs, _ = _load_spam_logs(linked_chat_id, page=0, per_page=20)
-    return templates.TemplateResponse(
-        "target_antispam.html",
-        _template_context(
-            request,
-            settings_err=settings_err,
-            target=target,
-            linked_chat_id=linked_chat_id,
-            rule=rule,
-            keywords_text=keywords_text,
-            recent_logs=logs,
-        ),
-    )
-
-
-@router.post("/targets/{chat_id}/antispam/save")
-async def target_antispam_save(
-    request: Request,
+def _upsert_spam_rule(
     chat_id: str,
-    enabled: str | None = Form(None),
-    keywords_text: str = Form(""),
-    ai_enabled: str | None = Form(None),
-    ai_prompt: str = Form(""),
-    ai_model: str = Form("gpt-4.1-nano"),
-    notify_telegram: str | None = Form(None),
-):
-    settings, _ = _load_settings()
-    project_id = _active_project_id(settings)
-    _, target = _find_target_by_chat_id(settings, chat_id, project_id)
-
-    linked_chat_id = str(target.get("linked_chat_id") or "").strip()
-    if not linked_chat_id:
-        _flash(request, "danger", "У цели не найден linked_chat_id (группа обсуждений). Антиспам невозможен.")
-        return _redirect(f"/targets/{quote(chat_id)}/antispam")
-
-    keywords = _keywords_from_textarea(keywords_text)
-    payload = json.dumps(keywords, ensure_ascii=False)
-
-    enabled_flag = 1 if _parse_bool(enabled, default=False) else 0
-    ai_enabled_flag = 1 if _parse_bool(ai_enabled, default=False) else 0
-    notify_flag = 1 if _parse_bool(notify_telegram, default=False) else 0
-    model = str(ai_model or "gpt-4.1-nano").strip() or "gpt-4.1-nano"
-    prompt = str(ai_prompt or "").strip()
-
+    *,
+    enabled: int,
+    keywords_json: str,
+    ai_enabled: int,
+    ai_prompt: str,
+    ai_model: str,
+    notify_telegram: int,
+) -> None:
     with _db_connect() as conn:
         conn.execute(
             """
@@ -183,32 +147,213 @@ async def target_antispam_save(
                 ai_model = excluded.ai_model,
                 notify_telegram = excluded.notify_telegram
             """,
-            (linked_chat_id, enabled_flag, payload, ai_enabled_flag, prompt, model, notify_flag, _now_iso()),
+            (chat_id, enabled, keywords_json, ai_enabled, ai_prompt, ai_model, notify_telegram, _now_iso()),
         )
         conn.commit()
 
-    _flash(request, "success", "Настройки антиспама сохранены.")
-    return _redirect(f"/targets/{quote(chat_id)}/antispam")
+
+# ---------------------------------------------------------------------------
+# List
+# ---------------------------------------------------------------------------
 
 
-@router.get("/targets/{chat_id}/antispam/log", response_class=HTMLResponse)
-async def target_antispam_log_page(request: Request, chat_id: str, page: int = 0):
+@router.get("/antispam-targets", response_class=HTMLResponse)
+async def antispam_targets_page(request: Request):
     settings, settings_err = _load_settings()
     project_id = _active_project_id(settings)
-    _, target = _find_target_by_chat_id(settings, chat_id, project_id)
+    targets = _filter_by_project(settings.get("antispam_targets", []) or [], project_id)
+    targets_sorted = sorted(targets, key=lambda x: x.get("date_added", ""), reverse=True)
 
-    linked_chat_id = str(target.get("linked_chat_id") or "").strip()
-    rows, total = _load_spam_logs(linked_chat_id, page=page, per_page=50)
-    total_pages = max((total + 49) // 50, 1)
-    page = max(min(int(page or 0), total_pages - 1), 0)
+    # Enrich with enabled status from spam_rules DB.
+    for t in targets_sorted:
+        rule = _load_rule(str(t.get("chat_id") or ""))
+        t["_rule_enabled"] = bool(rule.get("enabled"))
 
     return templates.TemplateResponse(
-        "target_antispam_log.html",
+        "antispam_targets.html",
+        _template_context(request, settings_err=settings_err, targets=targets_sorted),
+    )
+
+
+# ---------------------------------------------------------------------------
+# New
+# ---------------------------------------------------------------------------
+
+
+@router.get("/antispam-targets/new", response_class=HTMLResponse)
+async def antispam_targets_new_page(request: Request):
+    return templates.TemplateResponse("antispam_target_new.html", _template_context(request))
+
+
+@router.post("/antispam-targets/new")
+async def antispam_targets_new_submit(
+    request: Request,
+    chat_input: str = Form(...),
+    auto_pause: Optional[str] = Form(None),
+):
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+
+    chat_input = chat_input.strip()
+    auto_pause_flag = _parse_bool(auto_pause, default=True)
+    async with _auto_pause_commentator(request, auto_pause=auto_pause_flag, reason="Проверка чата (антиспам)"):
+        try:
+            base = await _derive_target_chat_info(chat_input)
+        except HTTPException as e:
+            _flash(request, "danger", str(e.detail))
+            return _redirect("/antispam-targets/new")
+
+    chat_id = base["chat_id"]
+    existing = _filter_by_project(settings.get("antispam_targets", []) or [], project_id)
+    if any(str(t.get("chat_id")) == str(chat_id) for t in existing):
+        _flash(request, "warning", "Этот чат уже добавлен в цели антиспама.")
+        return _redirect(f"/antispam-targets/{quote(chat_id)}")
+
+    new_target: Dict[str, Any] = {
+        **base,
+        "assigned_accounts": [],
+        "date_added": datetime.now(timezone.utc).isoformat(),
+        "project_id": project_id,
+    }
+    settings.setdefault("antispam_targets", []).append(new_target)
+    _save_settings(settings)
+
+    # Create default spam_rules row if missing.
+    _upsert_spam_rule(
+        chat_id,
+        enabled=0,
+        keywords_json="[]",
+        ai_enabled=1,
+        ai_prompt="",
+        ai_model="gpt-4.1-nano",
+        notify_telegram=0,
+    )
+
+    _flash(request, "success", f"Цель антиспама добавлена: {base.get('chat_name')}")
+    return _redirect(f"/antispam-targets/{quote(chat_id)}")
+
+
+# ---------------------------------------------------------------------------
+# Edit
+# ---------------------------------------------------------------------------
+
+
+@router.get("/antispam-targets/{chat_id}", response_class=HTMLResponse)
+async def antispam_target_edit_page(request: Request, chat_id: str):
+    settings, settings_err = _load_settings()
+    project_id = _active_project_id(settings)
+    _, target = _find_antispam_target_by_chat_id(settings, chat_id, project_id)
+
+    rule = _load_rule(str(target.get("chat_id") or ""))
+    keywords_text = "\n".join(rule.get("keywords") or [])
+
+    accounts, _ = _load_accounts()
+    accounts = _filter_accounts_by_project(accounts, project_id)
+
+    logs, _ = _load_spam_logs(str(target.get("chat_id") or ""), page=0, per_page=20)
+
+    return templates.TemplateResponse(
+        "antispam_target_edit.html",
         _template_context(
             request,
             settings_err=settings_err,
             target=target,
-            linked_chat_id=linked_chat_id,
+            rule=rule,
+            keywords_text=keywords_text,
+            accounts=accounts,
+            recent_logs=logs,
+        ),
+    )
+
+
+@router.post("/antispam-targets/{chat_id}")
+async def antispam_target_edit_save(
+    request: Request,
+    chat_id: str,
+    enabled: str | None = Form(None),
+    keywords_text: str = Form(""),
+    ai_enabled: str | None = Form(None),
+    ai_prompt: str = Form(""),
+    ai_model: str = Form("gpt-4.1-nano"),
+    notify_telegram: str | None = Form(None),
+    select_all: Optional[str] = Form(None),
+    assigned_accounts: Optional[List[str]] = Form(None),
+):
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    idx, target = _find_antispam_target_by_chat_id(settings, chat_id, project_id)
+
+    target_chat_id = str(target.get("chat_id") or "").strip()
+
+    # Update spam rules in DB.
+    keywords = _keywords_from_textarea(keywords_text)
+    _upsert_spam_rule(
+        target_chat_id,
+        enabled=1 if _parse_bool(enabled, default=False) else 0,
+        keywords_json=json.dumps(keywords, ensure_ascii=False),
+        ai_enabled=1 if _parse_bool(ai_enabled, default=False) else 0,
+        ai_prompt=str(ai_prompt or "").strip(),
+        ai_model=str(ai_model or "gpt-4.1-nano").strip() or "gpt-4.1-nano",
+        notify_telegram=1 if _parse_bool(notify_telegram, default=False) else 0,
+    )
+
+    # Update assigned accounts in settings.json.
+    accounts, _ = _load_accounts()
+    allowed_sessions = [
+        a.get("session_name")
+        for a in _filter_accounts_by_project(accounts, project_id)
+        if a.get("session_name")
+    ]
+    allowed_set = set(allowed_sessions)
+    if select_all is not None:
+        target["assigned_accounts"] = allowed_sessions
+    else:
+        target["assigned_accounts"] = [s for s in list(assigned_accounts or []) if s in allowed_set]
+
+    settings["antispam_targets"][idx] = target
+    _save_settings(settings)
+    _flash(request, "success", "Настройки антиспама сохранены.")
+    return _redirect(f"/antispam-targets/{quote(chat_id)}")
+
+
+# ---------------------------------------------------------------------------
+# Delete
+# ---------------------------------------------------------------------------
+
+
+@router.post("/antispam-targets/{chat_id}/delete")
+async def antispam_target_delete(request: Request, chat_id: str):
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    idx, _ = _find_antispam_target_by_chat_id(settings, chat_id, project_id)
+    settings["antispam_targets"].pop(idx)
+    _save_settings(settings)
+    _flash(request, "success", "Цель антиспама удалена.")
+    return _redirect("/antispam-targets")
+
+
+# ---------------------------------------------------------------------------
+# Log
+# ---------------------------------------------------------------------------
+
+
+@router.get("/antispam-targets/{chat_id}/log", response_class=HTMLResponse)
+async def antispam_target_log_page(request: Request, chat_id: str, page: int = 0):
+    settings, settings_err = _load_settings()
+    project_id = _active_project_id(settings)
+    _, target = _find_antispam_target_by_chat_id(settings, chat_id, project_id)
+
+    target_chat_id = str(target.get("chat_id") or "").strip()
+    rows, total = _load_spam_logs(target_chat_id, page=page, per_page=50)
+    total_pages = max((total + 49) // 50, 1)
+    page = max(min(int(page or 0), total_pages - 1), 0)
+
+    return templates.TemplateResponse(
+        "antispam_target_log.html",
+        _template_context(
+            request,
+            settings_err=settings_err,
+            target=target,
             rows=rows,
             page=page,
             total=total,
@@ -217,9 +362,8 @@ async def target_antispam_log_page(request: Request, chat_id: str, page: int = 0
     )
 
 
-@router.post("/targets/{chat_id}/antispam/log/{log_id}/restore")
-async def target_antispam_log_restore(request: Request, chat_id: str, log_id: int):
-    # Optional / future: mark as false positive.
+@router.post("/antispam-targets/{chat_id}/log/{log_id}/restore")
+async def antispam_target_log_restore(request: Request, chat_id: str, log_id: int):
     try:
         with _db_connect() as conn:
             conn.execute("UPDATE spam_log SET action = 'restored' WHERE id = ?", (int(log_id),))
@@ -227,5 +371,4 @@ async def target_antispam_log_restore(request: Request, chat_id: str, log_id: in
     except Exception:
         pass
     _flash(request, "success", "Запись отмечена как восстановленная (ложное срабатывание).")
-    return _redirect(f"/targets/{quote(chat_id)}/antispam/log")
-
+    return _redirect(f"/antispam-targets/{quote(chat_id)}/log")

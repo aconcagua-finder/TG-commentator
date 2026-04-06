@@ -1413,6 +1413,17 @@ def _find_monitor_target_by_chat_id(
     raise HTTPException(status_code=404, detail="Цель мониторинга не найдена в текущем проекте")
 
 
+def _find_antispam_target_by_chat_id(
+    settings: Dict[str, Any], chat_id: str, project_id: Optional[str] = None
+) -> Tuple[int, Dict[str, Any]]:
+    targets = settings.get("antispam_targets", [])
+    pid = project_id or _active_project_id(settings)
+    for i, t in enumerate(targets):
+        if str(t.get("chat_id")) == str(chat_id) and _project_id_for(t) == pid:
+            return i, t
+    raise HTTPException(status_code=404, detail="Цель антиспама не найдена в текущем проекте")
+
+
 # ---------------------------------------------------------------------------
 # Request helpers
 # ---------------------------------------------------------------------------
