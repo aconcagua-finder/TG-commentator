@@ -216,7 +216,7 @@ async def dialog_delete_thread(
     with _db_connect() as conn:
         conn.execute("DELETE FROM inbox_messages WHERE kind='dm' AND session_name=? AND chat_id=?", (session_name, chat_id))
         conn.execute(
-            "DELETE FROM outbound_queue WHERE session_name=? AND chat_id=? AND (reply_to_msg_id IS NULL OR reply_to_msg_id='')",
+            "DELETE FROM outbound_queue WHERE session_name=? AND chat_id=? AND reply_to_msg_id IS NULL",
             (session_name, chat_id),
         )
         conn.commit()

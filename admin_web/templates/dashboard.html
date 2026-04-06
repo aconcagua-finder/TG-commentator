@@ -36,13 +36,13 @@
       {{ ui.stat_card("Аккаунты", accounts|length, "bi-people", "/accounts", "primary") }}
     </div>
     <div class="col-6 col-md-3">
-      {{ ui.stat_card("Комментирование", settings.targets|length, "bi-chat-left-text", "/targets", "info") }}
+      {{ ui.stat_card("Комментирование", targets|length, "bi-chat-left-text", "/targets", "info") }}
     </div>
     <div class="col-6 col-md-3">
-      {{ ui.stat_card("Реакции", settings.reaction_targets|length, "bi-hand-thumbs-up", "/reaction-targets", "warning") }}
+      {{ ui.stat_card("Реакции", reaction_targets|length, "bi-hand-thumbs-up", "/reaction-targets", "warning") }}
     </div>
     <div class="col-6 col-md-3">
-      {{ ui.stat_card("Мониторинг", settings.monitor_targets|length, "bi-broadcast", "/monitor-targets", "success") }}
+      {{ ui.stat_card("Мониторинг", monitor_targets|length, "bi-broadcast", "/monitor-targets", "success") }}
     </div>
   </div>
 

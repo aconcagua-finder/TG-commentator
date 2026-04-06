@@ -35,6 +35,9 @@ async def dashboard(request: Request):
     accounts, accounts_err = _load_accounts()
     project_id = _active_project_id(settings)
     accounts = _filter_accounts_by_project(accounts, project_id)
+    targets = _filter_by_project(settings.get("targets") or [], project_id)
+    reaction_targets = _filter_by_project(settings.get("reaction_targets") or [], project_id)
+    monitor_targets = _filter_by_project(settings.get("monitor_targets") or [], project_id)
 
     with _db_connect() as conn:
         proxies_total = conn.execute("SELECT COUNT(*) AS c FROM proxies").fetchone()["c"]
@@ -57,6 +60,9 @@ async def dashboard(request: Request):
             settings_err=settings_err,
             accounts=accounts,
             accounts_err=accounts_err,
+            targets=targets,
+            reaction_targets=reaction_targets,
+            monitor_targets=monitor_targets,
             proxies_total=proxies_total,
             proxies_active=proxies_active,
             triggers_total=triggers_total,
