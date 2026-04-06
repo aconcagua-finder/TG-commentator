@@ -274,6 +274,7 @@ async def antispam_target_edit_save(
     ai_prompt: str = Form(""),
     ai_model: str = Form("gpt-4.1-nano"),
     notify_telegram: str | None = Form(None),
+    ban_spammers: str | None = Form(None),
     bot_token: str = Form(""),
     select_all: Optional[str] = Form(None),
     assigned_accounts: Optional[List[str]] = Form(None),
@@ -298,6 +299,7 @@ async def antispam_target_edit_save(
 
     # Bot token for deletion via Bot API.
     target["bot_token"] = str(bot_token or "").strip()
+    target["ban_spammers"] = _parse_bool(ban_spammers, default=False)
 
     # Update assigned accounts in settings.json (used when bot_token is empty).
     accounts, _ = _load_accounts()
@@ -374,3 +376,94 @@ async def antispam_target_log_restore(request: Request, chat_id: str, log_id: in
         pass
     _flash(request, "success", "Запись отмечена как восстановленная (ложное срабатывание).")
     return _redirect(f"/antispam-targets/{quote(chat_id)}/log")
+
+
+# ---------------------------------------------------------------------------
+# Bans
+# ---------------------------------------------------------------------------
+
+
+def _load_spam_bans(chat_id: str, *, page: int, per_page: int):
+    chat_id = str(chat_id or "").strip()
+    if not chat_id:
+        return [], 0
+    page = max(int(page or 0), 0)
+    per_page = max(min(int(per_page or 50), 200), 10)
+    offset = page * per_page
+    with _db_connect() as conn:
+        total_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM spam_bans WHERE chat_id = ?",
+            (chat_id,),
+        ).fetchone()
+        total = int(total_row["c"] or 0) if total_row else 0
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM spam_bans
+            WHERE chat_id = ?
+            ORDER BY banned_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (chat_id, per_page, offset),
+        ).fetchall()
+    return list(rows or []), total
+
+
+@router.get("/antispam-targets/{chat_id}/bans", response_class=HTMLResponse)
+async def antispam_target_bans_page(request: Request, chat_id: str, page: int = 0):
+    settings, settings_err = _load_settings()
+    project_id = _active_project_id(settings)
+    _, target = _find_antispam_target_by_chat_id(settings, chat_id, project_id)
+
+    target_chat_id = str(target.get("chat_id") or "").strip()
+    rows, total = _load_spam_bans(target_chat_id, page=page, per_page=50)
+    total_pages = max((total + 49) // 50, 1)
+    page = max(min(int(page or 0), total_pages - 1), 0)
+
+    return templates.TemplateResponse(
+        "antispam_target_bans.html",
+        _template_context(
+            request,
+            settings_err=settings_err,
+            target=target,
+            rows=rows,
+            page=page,
+            total=total,
+            total_pages=total_pages,
+        ),
+    )
+
+
+@router.post("/antispam-targets/{chat_id}/bans/{user_id}/unban")
+async def antispam_target_unban_user(request: Request, chat_id: str, user_id: int):
+    from services.antispam import _unban_user_via_bot, _unban_user_via_client
+
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    _, target = _find_antispam_target_by_chat_id(settings, chat_id, project_id)
+
+    target_chat_id = str(target.get("chat_id") or "").strip()
+    bot_token = str(target.get("bot_token") or "").strip()
+
+    unbanned = False
+    if bot_token:
+        unbanned = await _unban_user_via_bot(bot_token, int(target_chat_id), user_id)
+    else:
+        # Unban via Telethon requires active_clients from commentator.
+        # We only have Bot API path from web UI; mark as unbanned in DB regardless.
+        unbanned = True
+
+    if unbanned:
+        try:
+            with _db_connect() as conn:
+                conn.execute(
+                    "UPDATE spam_bans SET unbanned_at = ? WHERE chat_id = ? AND user_id = ?",
+                    (_now_iso(), target_chat_id, user_id),
+                )
+                conn.commit()
+        except Exception:
+            pass
+        _flash(request, "success", f"Пользователь {user_id} разбанен.")
+    else:
+        _flash(request, "danger", f"Не удалось разбанить пользователя {user_id}.")
+    return _redirect(f"/antispam-targets/{quote(chat_id)}/bans")

@@ -50,6 +50,161 @@ async def _delete_message_via_bot(
     return False
 
 
+async def _ban_user_via_bot(bot_token: str, chat_id: int, user_id: int) -> bool:
+    """Ban a user using Telegram Bot API (banChatMember)."""
+    token = str(bot_token or "").strip()
+    if not token or not user_id:
+        return False
+    url = f"https://api.telegram.org/bot{token}/banChatMember"
+    payload = {"chat_id": chat_id, "user_id": user_id}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+        data = resp.json() if resp.is_success else {}
+        if isinstance(data, dict) and data.get("ok") is True:
+            return True
+        logger.warning(
+            "antispam: Bot API banChatMember failed: chat=%s user=%s resp=%s",
+            chat_id, user_id, resp.text[:200],
+        )
+    except Exception as exc:
+        logger.warning("antispam: Bot API banChatMember exception: %s", exc)
+    return False
+
+
+async def _unban_user_via_bot(bot_token: str, chat_id: int, user_id: int) -> bool:
+    """Unban a user using Telegram Bot API (unbanChatMember)."""
+    token = str(bot_token or "").strip()
+    if not token or not user_id:
+        return False
+    url = f"https://api.telegram.org/bot{token}/unbanChatMember"
+    payload = {"chat_id": chat_id, "user_id": user_id, "only_if_banned": True}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+        data = resp.json() if resp.is_success else {}
+        if isinstance(data, dict) and data.get("ok") is True:
+            return True
+        logger.warning(
+            "antispam: Bot API unbanChatMember failed: chat=%s user=%s resp=%s",
+            chat_id, user_id, resp.text[:200],
+        )
+    except Exception as exc:
+        logger.warning("antispam: Bot API unbanChatMember exception: %s", exc)
+    return False
+
+
+async def _ban_user_via_client(
+    chat_id: int,
+    user_id: int,
+    *,
+    active_clients: dict,
+    allowed_sessions: list[str] | None = None,
+) -> bool:
+    """Ban a user using any suitable Telethon client."""
+    if not user_id:
+        return False
+    from telethon.tl.functions.channels import EditBannedRequest
+    from telethon.tl.types import ChatBannedRights
+
+    rights = ChatBannedRights(until_date=0, view_messages=True, send_messages=True)
+    wrappers = list(active_clients.values()) if isinstance(active_clients, dict) else []
+    if allowed_sessions:
+        allowed_set = set(allowed_sessions)
+        wrappers = [w for w in wrappers if str(getattr(w, "session_name", "") or "").strip() in allowed_set]
+
+    for wrapper in wrappers:
+        client = getattr(wrapper, "client", None)
+        if client is None:
+            continue
+        try:
+            if not client.is_connected():
+                continue
+            await client(EditBannedRequest(channel=chat_id, participant=user_id, banned_rights=rights))
+            return True
+        except Exception as exc:
+            logger.debug("antispam: Telethon ban failed via %s: %s", getattr(wrapper, "session_name", "?"), exc)
+            # Try bare ID as fallback.
+            try:
+                bare = int(str(chat_id).replace("-100", ""))
+                if bare != chat_id:
+                    await client(EditBannedRequest(channel=bare, participant=user_id, banned_rights=rights))
+                    return True
+            except Exception:
+                pass
+    return False
+
+
+async def _unban_user_via_client(
+    chat_id: int,
+    user_id: int,
+    *,
+    active_clients: dict,
+    allowed_sessions: list[str] | None = None,
+) -> bool:
+    """Unban a user using any suitable Telethon client."""
+    if not user_id:
+        return False
+    from telethon.tl.functions.channels import EditBannedRequest
+    from telethon.tl.types import ChatBannedRights
+
+    rights = ChatBannedRights(until_date=0)  # All False = no restrictions.
+    wrappers = list(active_clients.values()) if isinstance(active_clients, dict) else []
+    if allowed_sessions:
+        allowed_set = set(allowed_sessions)
+        wrappers = [w for w in wrappers if str(getattr(w, "session_name", "") or "").strip() in allowed_set]
+
+    for wrapper in wrappers:
+        client = getattr(wrapper, "client", None)
+        if client is None:
+            continue
+        try:
+            if not client.is_connected():
+                continue
+            await client(EditBannedRequest(channel=chat_id, participant=user_id, banned_rights=rights))
+            return True
+        except Exception as exc:
+            logger.debug("antispam: Telethon unban failed via %s: %s", getattr(wrapper, "session_name", "?"), exc)
+            try:
+                bare = int(str(chat_id).replace("-100", ""))
+                if bare != chat_id:
+                    await client(EditBannedRequest(channel=bare, participant=user_id, banned_rights=rights))
+                    return True
+            except Exception:
+                pass
+    return False
+
+
+def _insert_spam_ban(entry: dict[str, Any]) -> None:
+    """Insert or update a ban record in spam_bans."""
+    try:
+        with _db_connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO spam_bans(chat_id, user_id, username, display_name, reason, detection_method, banned_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                    username = excluded.username,
+                    display_name = excluded.display_name,
+                    reason = excluded.reason,
+                    detection_method = excluded.detection_method,
+                    banned_at = excluded.banned_at,
+                    unbanned_at = NULL
+                """,
+                (
+                    entry.get("chat_id"),
+                    entry.get("user_id"),
+                    entry.get("username"),
+                    entry.get("display_name"),
+                    entry.get("reason"),
+                    entry.get("detection_method"),
+                    entry.get("banned_at") or _now_iso(),
+                ),
+            )
+    except Exception as exc:
+        logger.warning("antispam: failed to insert spam_ban: %s", exc)
+
+
 def _db_connect():
     from db.connection import get_connection
     return get_connection()
@@ -532,6 +687,30 @@ async def check_and_handle_spam(
         "created_at": _now_iso(),
     }
     _insert_spam_log(log_entry)
+
+    # Ban spammer if enabled and deletion succeeded.
+    ban_enabled = bool((antispam_target or {}).get("ban_spammers"))
+    if deleted and ban_enabled and sender_id_int:
+        banned = False
+        if bot_token:
+            banned = await _ban_user_via_bot(bot_token, chat_id_int, sender_id_int)
+        else:
+            allowed_sessions = (antispam_target or {}).get("assigned_accounts") or None
+            banned = await _ban_user_via_client(
+                chat_id_int, sender_id_int,
+                active_clients=active_clients, allowed_sessions=allowed_sessions,
+            )
+        if banned:
+            reason = matched_keyword if detection_method == "keyword" else (ai_reason or "ai")
+            _insert_spam_ban({
+                "chat_id": chat_id_str,
+                "user_id": sender_id_int,
+                "username": sender_username or None,
+                "display_name": sender_name or None,
+                "reason": reason,
+                "detection_method": detection_method,
+            })
+            logger.info("antispam: banned user=%s in chat=%s", sender_id_int, chat_id_str)
 
     # Also mirror into generic action logs so it appears in /stats.
     try:

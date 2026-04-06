@@ -357,6 +357,23 @@ def _table_spam_log() -> str:
     """
 
 
+def _table_spam_bans() -> str:
+    return f"""
+    CREATE TABLE IF NOT EXISTS spam_bans (
+        id {_serial_pk()},
+        chat_id TEXT NOT NULL,
+        user_id BIGINT NOT NULL,
+        username TEXT,
+        display_name TEXT,
+        reason TEXT,
+        detection_method TEXT,
+        banned_at TEXT,
+        unbanned_at TEXT,
+        UNIQUE(chat_id, user_id)
+    )
+    """
+
+
 # ---------------------------------------------------------------------------
 # Indexes
 # ---------------------------------------------------------------------------
@@ -378,6 +395,7 @@ INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_warning_history_key ON warning_history(key)",
     "CREATE INDEX IF NOT EXISTS idx_warning_history_resolved ON warning_history(resolved_at)",
     "CREATE INDEX IF NOT EXISTS idx_spam_log_chat_created ON spam_log(chat_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_spam_bans_chat ON spam_bans(chat_id, banned_at)",
 ]
 
 
@@ -415,6 +433,7 @@ def init_database(conn) -> None:
         _table_warning_history,
         _table_spam_rules,
         _table_spam_log,
+        _table_spam_bans,
     ]
 
     for fn in table_funcs:
