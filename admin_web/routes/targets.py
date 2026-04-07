@@ -31,6 +31,7 @@ from admin_web.helpers import (
     _save_settings,
     _update_join_status,
 )
+from admin_web.sort_helpers import apply_sort, resolve_key, template_options
 from admin_web.telethon_utils import (
     _attempt_join_target,
     _derive_target_chat_info,
@@ -47,11 +48,12 @@ router = APIRouter()
 
 
 @router.get("/targets", response_class=HTMLResponse)
-async def targets_page(request: Request):
+async def targets_page(request: Request, sort: str = ""):
     settings, settings_err = _load_settings()
     project_id = _active_project_id(settings)
     targets = _filter_by_project(settings.get("targets", []) or [], project_id)
-    targets_sorted = sorted(targets, key=lambda x: x.get("date_added", ""), reverse=True)
+    sort_key = resolve_key(sort, "chat_target")
+    targets_sorted = apply_sort(targets, sort_key, "chat_target")
     accounts, _ = _load_accounts()
     accounts = _filter_accounts_by_project(accounts, project_id)
     accounts_by_session = {a.get("session_name"): a for a in accounts}
@@ -62,6 +64,8 @@ async def targets_page(request: Request):
             settings_err=settings_err,
             targets=targets_sorted,
             accounts_by_session=accounts_by_session,
+            sort_options=template_options("chat_target"),
+            current_sort=sort_key,
         ),
     )
 

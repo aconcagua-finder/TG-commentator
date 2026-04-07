@@ -1,13 +1,16 @@
 {% extends "base.html" %}
+{% import "macros.html" as ui %}
 {% block title %}Мониторинг · TG-комментатор{% endblock %}
 {% block content %}
   <div class="app-page-head mb-3">
     <h1 class="h3 mb-0">Каналы мониторинга</h1>
-    <a class="btn btn-primary" href="/monitor-targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+    <div class="app-actions">
+      {{ ui.sort_dropdown(sort_options, current_sort, "/monitor-targets", "monitor_targets") }}
+      <a class="btn btn-primary" href="/monitor-targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+    </div>
   </div>
   <p class="text-muted">Бот читает новые посты в указанных каналах и присылает уведомление, если содержание соответствует вашему запросу.</p>
   {% if targets|length == 0 %}
-    {% import "macros.html" as ui %}
     {{ ui.empty_state("bi-broadcast", "Настройте мониторинг каналов", "Бот будет читать новые посты и присылать уведомления, если содержание совпадает с вашим запросом. Работает как «радар» по нужной теме.", "/monitor-targets/new", "Добавить канал для мониторинга") }}
   {% endif %}
 

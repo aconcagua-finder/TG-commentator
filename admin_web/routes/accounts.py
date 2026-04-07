@@ -66,6 +66,7 @@ from admin_web.helpers import (
     _auto_pause_commentator,
     ACCOUNT_CHECKS_ENABLED,
 )
+from admin_web.sort_helpers import apply_sort, resolve_key, template_options
 from admin_web.telethon_utils import (
     _telethon_credentials,
     _parse_proxy_tuple,
@@ -80,7 +81,7 @@ router = APIRouter()
 
 
 @router.get("/accounts", response_class=HTMLResponse)
-async def accounts_page(request: Request):
+async def accounts_page(request: Request, sort: str = ""):
     accounts, accounts_err = _load_accounts()
     if _ensure_accounts_date_added(accounts):
         _save_accounts(accounts)
@@ -89,6 +90,9 @@ async def accounts_page(request: Request):
     project_id = _active_project_id(settings)
     accounts = _filter_accounts_by_project(accounts, project_id)
     role_names = _role_name_map(settings)
+
+    sort_key = resolve_key(sort, "accounts")
+    accounts = apply_sort(accounts, sort_key, "accounts")
 
     with _db_connect() as conn:
         proxies = conn.execute(
@@ -105,6 +109,8 @@ async def accounts_page(request: Request):
             role_names=role_names,
             proxies=proxies,
             proxy_names=proxy_names,
+            sort_options=template_options("accounts"),
+            current_sort=sort_key,
         ),
     )
 

@@ -33,13 +33,14 @@ from admin_web.helpers import (
     _flash,
     _redirect,
 )
+from admin_web.sort_helpers import apply_sort, resolve_key, template_options
 from admin_web.templating import templates, _template_context
 
 router = APIRouter()
 
 
 @router.get("/personas", response_class=HTMLResponse)
-async def personas_page(request: Request):
+async def personas_page(request: Request, sort: str = ""):
     settings, settings_err = _load_settings()
     accounts, _ = _load_accounts()
     _ensure_accounts_roles_saved(accounts, settings)
@@ -53,6 +54,8 @@ async def personas_page(request: Request):
         for category in ROLE_PRESET_CATEGORIES
     }
     roles = _sorted_role_items(settings)
+    sort_key = resolve_key(sort, "personas")
+    roles = apply_sort(roles, sort_key, "personas")
     default_role_id = _default_role_id(settings)
     return templates.TemplateResponse(
         "personas.html",
@@ -65,6 +68,8 @@ async def personas_page(request: Request):
             role_presets=role_presets,
             emoji_levels=EMOJI_LEVELS,
             gender_options=GENDER_OPTIONS,
+            sort_options=template_options("personas"),
+            current_sort=sort_key,
         ),
     )
 

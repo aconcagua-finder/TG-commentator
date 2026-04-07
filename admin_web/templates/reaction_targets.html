@@ -1,13 +1,16 @@
 {% extends "base.html" %}
+{% import "macros.html" as ui %}
 {% block title %}Реакции · TG-комментатор{% endblock %}
 {% block content %}
   <div class="app-page-head mb-3">
     <h1 class="h3 mb-0">Цели реакций</h1>
-    <a class="btn btn-primary" href="/reaction-targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+    <div class="app-actions">
+      {{ ui.sort_dropdown(sort_options, current_sort, "/reaction-targets", "reaction_targets") }}
+      <a class="btn btn-primary" href="/reaction-targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+    </div>
   </div>
   <p class="text-muted">Автоматические эмодзи-реакции на новые посты. Для каждого канала можно задать набор эмодзи и вероятность реакции.</p>
   {% if targets|length == 0 %}
-    {% import "macros.html" as ui %}
     {{ ui.empty_state("bi-emoji-smile", "Настройте авто-реакции", "Бот будет автоматически ставить эмодзи-реакции на новые посты в выбранных каналах. Укажите набор эмодзи и вероятность.", "/reaction-targets/new", "Добавить канал для реакций") }}
   {% endif %}
 

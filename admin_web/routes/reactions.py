@@ -22,6 +22,7 @@ from admin_web.helpers import (
     _redirect,
     _save_settings,
 )
+from admin_web.sort_helpers import apply_sort, resolve_key, template_options
 from admin_web.telethon_utils import _derive_target_chat_info
 from admin_web.templating import templates, _template_context
 
@@ -29,16 +30,23 @@ router = APIRouter()
 
 
 @router.get("/reaction-targets", response_class=HTMLResponse)
-async def reaction_targets_page(request: Request):
+async def reaction_targets_page(request: Request, sort: str = ""):
     settings, _ = _load_settings()
     project_id = _active_project_id(settings)
     targets = _filter_by_project(settings.get("reaction_targets", []) or [], project_id)
-    targets_sorted = sorted(targets, key=lambda x: x.get("date_added", ""), reverse=True)
+    sort_key = resolve_key(sort, "chat_target")
+    targets_sorted = apply_sort(targets, sort_key, "chat_target")
     accounts, _ = _load_accounts()
     accounts = _filter_accounts_by_project(accounts, project_id)
     return templates.TemplateResponse(
         "reaction_targets.html",
-        _template_context(request, targets=targets_sorted, accounts=accounts),
+        _template_context(
+            request,
+            targets=targets_sorted,
+            accounts=accounts,
+            sort_options=template_options("chat_target"),
+            current_sort=sort_key,
+        ),
     )
 
 

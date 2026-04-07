@@ -1,13 +1,16 @@
 {% extends "base.html" %}
+{% import "macros.html" as ui %}
 {% block title %}Антиспам · TG-комментатор{% endblock %}
 {% block content %}
   <div class="app-page-head mb-3">
     <h1 class="h3 mb-0">Антиспам</h1>
-    <a class="btn btn-primary" href="/antispam-targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+    <div class="app-actions">
+      {{ ui.sort_dropdown(sort_options, current_sort, "/antispam-targets", "antispam_targets") }}
+      <a class="btn btn-primary" href="/antispam-targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+    </div>
   </div>
   <p class="text-muted">Автоматическое обнаружение и удаление спама в чатах. Для каждого чата можно задать ключевые слова, AI-верификацию и выбрать аккаунты-модераторы.</p>
   {% if targets|length == 0 %}
-    {% import "macros.html" as ui %}
     {{ ui.empty_state("bi-shield-check", "Настройте антиспам", "Бот будет автоматически удалять спам-сообщения в выбранных чатах. Укажите ключевые слова и/или включите AI-верификацию.", "/antispam-targets/new", "Добавить чат для антиспама") }}
   {% endif %}
 

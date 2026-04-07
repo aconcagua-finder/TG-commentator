@@ -33,6 +33,7 @@ from admin_web.helpers import (
     _save_settings,
     _update_join_status,
 )
+from admin_web.sort_helpers import apply_sort, resolve_key, template_options
 from admin_web.telethon_utils import (
     _attempt_join_target,
     _derive_target_chat_info,
@@ -48,11 +49,12 @@ router = APIRouter()
 
 
 @router.get("/discussions", response_class=HTMLResponse)
-async def discussions_page(request: Request):
+async def discussions_page(request: Request, sort: str = ""):
     settings, settings_err = _load_settings()
     project_id = _active_project_id(settings)
     targets = _filter_by_project(settings.get("discussion_targets", []) or [], project_id)
-    targets_sorted = sorted(targets, key=lambda x: x.get("date_added", ""), reverse=True)
+    sort_key = resolve_key(sort, "chat_target")
+    targets_sorted = apply_sort(targets, sort_key, "chat_target")
     targets_view: List[Dict[str, Any]] = [dict(t) for t in targets_sorted]
     last_by_target: Dict[str, Dict[str, Any]] = {}
     try:
@@ -90,6 +92,8 @@ async def discussions_page(request: Request):
             settings_err=settings_err,
             targets=targets_view,
             accounts=accounts,
+            sort_options=template_options("chat_target"),
+            current_sort=sort_key,
         ),
     )
 

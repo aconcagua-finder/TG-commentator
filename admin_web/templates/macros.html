@@ -135,6 +135,51 @@
   </div>
 {%- endmacro %}
 
+{# ── Sort dropdown for list pages ─────────────────────────────── #}
+{#  Renders a small "Сортировка: …" select that submits via GET.    #}
+{#                                                                  #}
+{#  options    : list of {key, label} dicts (from sort_helpers.template_options) #}
+{#  current    : currently active sort key                          #}
+{#  base_url   : path the form posts to (e.g. "/accounts")          #}
+{#  list_type  : identifier saved to localStorage so the choice     #}
+{#               persists across visits (handled by list_sort.js)   #}
+{#  extra      : optional dict of extra hidden inputs (e.g. filters #}
+{#               that should survive the sort change)               #}
+{% macro sort_dropdown(options, current, base_url, list_type, extra=none) -%}
+  {% if options %}
+    <form
+      method="get"
+      action="{{ base_url }}"
+      class="d-inline-flex align-items-center gap-2 app-sort-form"
+      data-sort-form
+      data-sort-list-type="{{ list_type }}"
+    >
+      {% if extra %}
+        {% for k, v in extra.items() %}
+          {% if v is not none and v != "" %}
+            <input type="hidden" name="{{ k }}" value="{{ v }}" />
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+      <label class="form-label mb-0 small text-body-secondary" for="sort_{{ list_type }}">
+        <i class="bi bi-arrow-down-up me-1" aria-hidden="true"></i>Сортировка
+      </label>
+      <select
+        class="form-select form-select-sm app-sort-select"
+        id="sort_{{ list_type }}"
+        name="sort"
+        onchange="this.form.submit()"
+        data-sort-select
+      >
+        {% for opt in options %}
+          <option value="{{ opt.key }}" {% if opt.key == current %}selected{% endif %}>{{ opt.label }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button class="btn btn-sm btn-outline-secondary" type="submit">Применить</button></noscript>
+    </form>
+  {% endif %}
+{%- endmacro %}
+
 {# ── Localized status badge ───────────────────────────────────── #}
 {#  Maps raw status string to Russian label + Bootstrap color.      #}
 {#  type: "bot" | "account" | "proxy" | "session" | "join"         #}

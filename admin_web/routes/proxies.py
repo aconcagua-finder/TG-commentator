@@ -15,6 +15,11 @@ from admin_web.helpers import (
     _redirect,
     _save_accounts,
 )
+from admin_web.sort_helpers import (
+    proxy_order_by_sql,
+    proxy_resolve_key,
+    proxy_sort_options,
+)
 from admin_web.telethon_utils import (
     _check_proxy_health,
     _normalize_proxy_url,
@@ -26,10 +31,12 @@ router = APIRouter()
 
 
 @router.get("/proxies", response_class=HTMLResponse)
-async def proxies_page(request: Request):
+async def proxies_page(request: Request, sort: str = ""):
+    sort_key = proxy_resolve_key(sort)
+    order_by = proxy_order_by_sql(sort_key)
     with _db_connect() as conn:
         proxies = conn.execute(
-            "SELECT id, url, name, ip, country, status, last_check FROM proxies ORDER BY id DESC LIMIT 200"
+            f"SELECT id, url, name, ip, country, status, last_check FROM proxies ORDER BY {order_by} LIMIT 200"
         ).fetchall()
         total = conn.execute("SELECT COUNT(*) AS c FROM proxies").fetchone()["c"]
         active = conn.execute("SELECT COUNT(*) AS c FROM proxies WHERE status='active'").fetchone()["c"]
@@ -37,7 +44,15 @@ async def proxies_page(request: Request):
 
     return templates.TemplateResponse(
         "proxies.html",
-        _template_context(request, proxies=proxies, total=total, active=active, dead=dead),
+        _template_context(
+            request,
+            proxies=proxies,
+            total=total,
+            active=active,
+            dead=dead,
+            sort_options=proxy_sort_options(),
+            current_sort=sort_key,
+        ),
     )
 
 

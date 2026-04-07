@@ -1,15 +1,18 @@
 {% extends "base.html" %}
+{% import "macros.html" as ui %}
 {% block title %}Обсуждения · TG-комментатор{% endblock %}
 {% block content %}
   <div class="app-page-head mb-3">
     <h1 class="h3 mb-0">Обсуждения</h1>
-    <a class="btn btn-primary" href="/discussions/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+    <div class="app-actions">
+      {{ ui.sort_dropdown(sort_options, current_sort, "/discussions", "discussion_targets") }}
+      <a class="btn btn-primary" href="/discussions/new"><i class="bi bi-plus-circle me-1"></i>Добавить</a>
+    </div>
   </div>
   {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
   <p class="text-muted">Создавайте управляемые дискуссии: вы пишете стартовое сообщение, а выбранные аккаунты продолжают обсуждение в заданном стиле.</p>
 
   {% if targets|length == 0 %}
-    {% import "macros.html" as ui %}
     {{ ui.empty_state("bi-chat-square-text", "Создайте сценарий обсуждения", "Оператор пишет стартовое сообщение, а выбранные аккаунты разыгрывают живую дискуссию по заданному вектору и лимитам.", "/discussions/new", "Создать обсуждение") }}
   {% endif %}
 

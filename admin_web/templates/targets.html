@@ -1,9 +1,11 @@
 {% extends "base.html" %}
+{% import "macros.html" as ui %}
 {% block title %}Комментирование · TG-комментатор{% endblock %}
 {% block content %}
   <div class="app-page-head mb-2">
     <h1 class="h3 mb-0">Комментирование</h1>
     <div class="app-actions">
+      {{ ui.sort_dropdown(sort_options, current_sort, "/targets", "comment_targets") }}
       <a class="btn btn-outline-secondary" href="/targets/search"><i class="bi bi-search me-1"></i>Поиск каналов</a>
       <a class="btn btn-primary" href="/targets/new"><i class="bi bi-plus-circle me-1"></i>Добавить цель</a>
     </div>
@@ -12,7 +14,6 @@
   {% if settings_err %}<div class="alert alert-danger">ai_settings.json: {{ settings_err }}</div>{% endif %}
   <p class="text-muted">Каналы и чаты, в которых бот автоматически комментирует новые посты. Для каждого чата настраиваются стиль ответов, фильтры и сценарии.</p>
   {% if targets|length == 0 %}
-    {% import "macros.html" as ui %}
     {{ ui.empty_state("bi-chat-left-text", "Добавьте первый канал", "Укажите канал или чат, и бот начнёт автоматически комментировать новые посты. Для каждого чата можно настроить стиль, частоту и фильтры.", "/targets/new", "Добавить канал") }}
   {% endif %}
 

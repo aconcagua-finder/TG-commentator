@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "macros.html" as ui %}
 {% block title %}Прокси · TG-комментатор{% endblock %}
 {% block content %}
   <div class="app-page-head mb-3">
@@ -7,6 +8,7 @@
       <div class="text-muted">Всего: {{ total }}, рабочих: {{ active }}, нерабочих: {{ dead }}</div>
     </div>
     <div class="app-actions">
+      {{ ui.sort_dropdown(sort_options, current_sort, "/proxies", "proxies") }}
       <form method="post" action="/proxies/check-all">
         <button class="btn btn-primary" type="submit">Проверить все</button>
       </form>

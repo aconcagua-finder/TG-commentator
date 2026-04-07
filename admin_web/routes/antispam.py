@@ -24,6 +24,7 @@ from admin_web.helpers import (
     _redirect,
     _save_settings,
 )
+from admin_web.sort_helpers import apply_sort, resolve_key, template_options
 from admin_web.telethon_utils import _derive_target_chat_info
 from admin_web.templating import _template_context, templates
 
@@ -181,11 +182,12 @@ def _upsert_spam_rule(
 
 
 @router.get("/antispam-targets", response_class=HTMLResponse)
-async def antispam_targets_page(request: Request):
+async def antispam_targets_page(request: Request, sort: str = ""):
     settings, settings_err = _load_settings()
     project_id = _active_project_id(settings)
     targets = _filter_by_project(settings.get("antispam_targets", []) or [], project_id)
-    targets_sorted = sorted(targets, key=lambda x: x.get("date_added", ""), reverse=True)
+    sort_key = resolve_key(sort, "chat_target")
+    targets_sorted = apply_sort(targets, sort_key, "chat_target")
 
     # Enrich with enabled status from spam_rules DB.
     for t in targets_sorted:
@@ -194,7 +196,13 @@ async def antispam_targets_page(request: Request):
 
     return templates.TemplateResponse(
         "antispam_targets.html",
-        _template_context(request, settings_err=settings_err, targets=targets_sorted),
+        _template_context(
+            request,
+            settings_err=settings_err,
+            targets=targets_sorted,
+            sort_options=template_options("chat_target"),
+            current_sort=sort_key,
+        ),
     )
 
 
