@@ -51,6 +51,19 @@ class TestParseContent(unittest.TestCase):
         p = parse_content("comment_skip", "шанс коммента 25%")
         self.assertIn("Пропустил", p["summary"])
 
+    def test_spam_deleted(self):
+        p = parse_content("spam_deleted", "[keyword] kw=ставки реклама ставок")
+        self.assertIn("Удалил", p["summary"])
+
+    def test_spam_failed_summary_explains_failure(self):
+        p = parse_content("spam_failed", "НЕ УДАЛЕНО · [name_keyword] kw=казино")
+        self.assertIn("не удалён", p["summary"])
+
+    def test_spam_failed_meta_uses_danger(self):
+        m = log_type_meta("spam_failed")
+        self.assertEqual(m["color"], "danger")
+        self.assertIn("не удалось", m["label"].lower())
+
 
 class TestLogTypeMeta(unittest.TestCase):
     def test_known_types(self):

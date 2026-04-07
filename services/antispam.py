@@ -754,11 +754,12 @@ async def _handle_detected_spam(
 
         log_action_to_db(
             {
-                "type": "spam_deleted",
+                "type": "spam_deleted" if deleted else "spam_failed",
                 "post_id": msg_id_int,
                 "msg_id": msg_id_int,
                 "comment": (
-                    f"[{detection_method}] "
+                    ("" if deleted else "НЕ УДАЛЕНО · ")
+                    + f"[{detection_method}] "
                     + (f"kw={matched_keyword} " if matched_keyword else "")
                     + (f"reason={ai_reason} " if ai_reason else "")
                     + (text or "")

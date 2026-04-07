@@ -71,6 +71,12 @@ LOG_TYPE_META: Dict[str, Dict[str, str]] = {
         "color": "success",
         "task": "Удаление спама",
     },
+    "spam_failed": {
+        "label": "Антиспам: не удалось",
+        "icon": "bi-shield-exclamation",
+        "color": "danger",
+        "task": "Удаление спама провалено",
+    },
     "forbidden": {
         "label": "Запрещено",
         "icon": "bi-slash-circle",
@@ -142,6 +148,16 @@ def parse_content(log_type: str, raw: Optional[str]) -> Dict[str, Any]:
     if lt == "spam_deleted":
         result["body"] = text
         result["summary"] = ("Удалил спам: " + text) if text else "Удалил спам-сообщение"
+        return result
+
+    # Spam detected but deletion failed (no rights, etc.)
+    if lt == "spam_failed":
+        result["body"] = text
+        result["summary"] = (
+            ("Спам найден, но не удалён: " + text)
+            if text
+            else "Спам найден, но удалить не удалось"
+        )
         return result
 
     # Comment skip stores a short reason

@@ -50,7 +50,8 @@ LOG_TYPE_OPTIONS: list[tuple[str, str]] = [
     ("comment_skip", "Пропуск"),
     ("monitoring", "Мониторинг"),
     ("forbidden", "Запрещено"),
-    ("spam_deleted", "Антиспам"),
+    ("spam_deleted", "Антиспам: удалён"),
+    ("spam_failed", "Антиспам: не удалось"),
 ]
 
 PERIOD_LABELS: Dict[str, str] = {
@@ -64,8 +65,9 @@ SUMMARY_CARDS: List[Tuple[str, str, str]] = [
     ("comment", "Комментарии", "bi-chat-left-text"),
     ("comment_reply", "Ответы", "bi-reply"),
     ("reaction", "Реакции", "bi-hand-thumbs-up"),
-    ("comment_failed", "Ошибки", "bi-exclamation-triangle"),
-    ("spam_deleted", "Антиспам", "bi-shield-check"),
+    ("comment_failed", "Ошибки комментов", "bi-exclamation-triangle"),
+    ("spam_deleted", "Антиспам ✅", "bi-shield-check"),
+    ("spam_failed", "Антиспам ❌", "bi-shield-exclamation"),
     ("monitoring", "Мониторинг", "bi-broadcast"),
 ]
 
@@ -204,7 +206,8 @@ async def stats_export(period: str = "day", log_type: str = ""):
             "comment_skip": "Пропуск",
             "monitoring": "Мониторинг",
             "forbidden": "Запрещено",
-            "spam_deleted": "Антиспам",
+            "spam_deleted": "Антиспам: удалён",
+            "spam_failed": "Антиспам: не удалось",
         }
         log_type = log_type_map.get(log_type_raw, log_type_raw or "—")
 

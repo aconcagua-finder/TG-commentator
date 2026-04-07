@@ -221,13 +221,25 @@ def build_spam_notification(log_entry: Any, target: Any) -> str:
     elif method == "ai":
         reason = str(entry.get("ai_reason") or "").strip()
 
+    action = str(entry.get("action") or "deleted").strip().lower()
+    deleted = action == "deleted"
+    if deleted:
+        title = "<b>🧹 Антиспам: спам удалён</b>"
+        status_line = "<b>Статус:</b> ✅ Удалён"
+    else:
+        title = "<b>⚠️ Антиспам: спам найден, но НЕ удалён</b>"
+        status_line = (
+            "<b>Статус:</b> ❌ Удаление не выполнено — проверьте права бота/аккаунта в чате"
+        )
+
     text = str(entry.get("message_text") or "").strip()
     return _join_notification_lines(
-        "<b>🧹 Антиспам: удалено</b>",
+        title,
         f"<b>Канал:</b> {escape_html(where)}",
         f"<b>От:</b> {escape_html(_compose_person(sender_name, sender_username))}",
         f"<b>Метод:</b> {escape_html(method)}",
         f"<b>Причина:</b> {escape_html(reason or '—')}",
+        status_line,
         f"<b>Текст:</b> {escape_html(_truncate_text(text, limit=260) or '—')}",
     )
 
