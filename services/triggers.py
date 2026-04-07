@@ -72,7 +72,8 @@ async def process_trigger(
             )
             rows = cursor.fetchall()
 
-            for phrase, answer in rows:
+            for r in rows:
+                phrase, answer = r[0], r[1]
                 clean_phrase = phrase.strip().lower()
                 if clean_phrase and clean_phrase in post_text:
                     answer_text = answer

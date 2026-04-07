@@ -65,6 +65,7 @@ def log_inbox_message_to_db(
                     is_read, error
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT DO NOTHING
+                RETURNING id
                 """,
                 (
                     kind,
@@ -88,8 +89,9 @@ def log_inbox_message_to_db(
                     (error or "").strip() or None,
                 ),
             )
+            row = cursor.fetchone()
             conn.commit()
-            return cursor.lastrowid or None
+            return int(row[0]) if row and row[0] is not None else None
     except Exception:
         return None
 

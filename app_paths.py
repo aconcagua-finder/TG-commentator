@@ -17,11 +17,8 @@ CONFIG_FILE = _resolve_path(os.getenv("APP_CONFIG_FILE"), BASE_DIR / "config.ini
 
 SETTINGS_FILE = str(DATA_DIR / "ai_settings.json")
 ACCOUNTS_FILE = str(DATA_DIR / "accounts.json")
-DB_FILE = str(DATA_DIR / "actions.sqlite")
 
 PROXIES_FILE = str(DATA_DIR / "proxies.txt")
-LOGS_FILE = str(DATA_DIR / "comment_logs.json")
-OLD_LOGS_FILE = LOGS_FILE
 
 
 def ensure_data_dir() -> None:

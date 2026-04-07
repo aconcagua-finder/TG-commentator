@@ -708,10 +708,12 @@ def _enqueue_manual_task(
               overrides_json, status, created_at
             )
             VALUES (?, ?, ?, ?, ?, 'pending', ?)
+            RETURNING id
             """,
             (project_id, str(chat_id), str(message_chat_id), int(post_id), payload, now_ts),
         )
-        return int(cur.lastrowid or 0)
+        row = cur.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
 
 
 def _clear_manual_tasks(project_id: str, *, statuses: Tuple[str, ...] = ("pending", "processing")) -> int:

@@ -537,6 +537,7 @@ def _insert_spam_log(entry: dict[str, Any]) -> int | None:
                     action, created_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (
                     entry.get("chat_id"),
@@ -552,10 +553,8 @@ def _insert_spam_log(entry: dict[str, Any]) -> int | None:
                     entry.get("created_at") or _now_iso(),
                 ),
             )
-            try:
-                return int(getattr(cur, "lastrowid", None) or 0) or None
-            except Exception:
-                return None
+            row = cur.fetchone()
+            return int(row[0]) if row and row[0] is not None else None
     except Exception as exc:
         logger.warning("antispam: failed to insert spam_log: %s", exc)
         return None

@@ -6,7 +6,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-from app_paths import CONFIG_FILE, OLD_LOGS_FILE, PROXIES_FILE, SETTINGS_FILE, ensure_data_dir
+from app_paths import CONFIG_FILE, PROXIES_FILE, SETTINGS_FILE, ensure_data_dir
 from app_storage import load_json, save_json
 from role_engine import ensure_role_schema
 from services.client import manage_clients
@@ -164,51 +164,6 @@ def init_database():
     except Exception as e:
         logger.critical(f"Критическая ошибка при инициализации БД: {e}")
         exit()
-
-
-def migrate_json_to_sqlite(conn):
-    logger.warning("Обнаружен старый файл comment_logs.json. Начинаю миграцию данных в SQLite...")
-    try:
-        with open(OLD_LOGS_FILE, 'r', encoding='utf-8') as f:
-            old_logs = json.load(f)
-
-        cursor = conn.cursor()
-        migrated_count = 0
-        for chat_id, data in old_logs.items():
-            for log in data.get('all_logs', []):
-                content = ""
-                if log.get('type') == 'reaction':
-                    content = ' '.join(log.get('reactions', []))
-                else:
-                    content = log.get('comment', '')
-
-                cursor.execute('''
-                    INSERT INTO logs (
-                        log_type, timestamp, destination_chat_id, channel_name, channel_username,
-                        source_channel_id, post_id, account_session_name, account_first_name,
-                        account_username, content
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    log.get('type', 'comment'),
-                    log.get('date'),
-                    log.get('target', {}).get('destination_chat_id', chat_id),
-                    log.get('target', {}).get('chat_name'),
-                    log.get('target', {}).get('chat_username'),
-                    log.get('target', {}).get('channel_id'),
-                    log.get('post_id'),
-                    log.get('account', {}).get('session_name'),
-                    log.get('account', {}).get('first_name'),
-                    log.get('account', {}).get('username'),
-                    content
-                ))
-                migrated_count += 1
-        conn.commit()
-        logger.info(f"Миграция завершена. Перенесено {migrated_count} записей.")
-        os.rename(OLD_LOGS_FILE, f"{OLD_LOGS_FILE}.migrated")
-        logger.info(f"Старый файл логов переименован в {OLD_LOGS_FILE}.migrated")
-    except Exception as e:
-        logger.error(f"Ошибка во время миграции данных: {e}")
-
 
 
 def load_config(section):

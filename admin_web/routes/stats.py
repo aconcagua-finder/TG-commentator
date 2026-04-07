@@ -32,7 +32,6 @@ from admin_web.helpers import (
 )
 from admin_web.telethon_utils import _get_any_authorized_client
 from admin_web.templating import templates, _template_context
-from db.schema import _is_postgres
 
 router = APIRouter()
 
@@ -73,17 +72,11 @@ SUMMARY_CARDS: List[Tuple[str, str, str]] = [
 
 
 def _period_sql_filter(period: str) -> str:
-    if _is_postgres():
-        if period == "day":
-            return "timestamp::timestamptz >= NOW() - INTERVAL '1 day'"
-        if period == "week":
-            return "timestamp::timestamptz >= NOW() - INTERVAL '7 days'"
-        return "timestamp::timestamptz >= NOW() - INTERVAL '30 days'"
     if period == "day":
-        return "timestamp >= datetime('now', '-1 day', 'localtime')"
+        return "timestamp::timestamptz >= NOW() - INTERVAL '1 day'"
     if period == "week":
-        return "timestamp >= datetime('now', '-7 days', 'localtime')"
-    return "timestamp >= datetime('now', '-30 days', 'localtime')"
+        return "timestamp::timestamptz >= NOW() - INTERVAL '7 days'"
+    return "timestamp::timestamptz >= NOW() - INTERVAL '30 days'"
 
 
 def _get_period_summary(period: str) -> Dict[str, int]:

@@ -29,13 +29,11 @@ accounts/
 # Runtime data (root)
 accounts.json
 ai_settings.json
-actions.sqlite*
 comment_logs.json
 proxies.txt
 
 # Runtime data (./data)
 data/accounts.json
 data/ai_settings.json
-data/actions.sqlite*
 data/comment_logs.json
 data/proxies.txt

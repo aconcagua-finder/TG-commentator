@@ -1,18 +1,16 @@
 """Database connection management.
 
-Supports PostgreSQL (via psycopg2 for sync, asyncpg for async)
-with SQLite fallback when DB_URL is not set.
+PostgreSQL only — psycopg2 for sync, asyncpg for async.
 
 Configuration via environment:
-    DB_URL  — PostgreSQL connection string, e.g. postgres://user:pass@host:5432/dbname
-              If not set, falls back to SQLite at DB_FILE path.
+    DB_URL — PostgreSQL connection string,
+             e.g. postgres://user:pass@host:5432/dbname
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import sqlite3
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Iterator
 
@@ -21,7 +19,7 @@ logger = logging.getLogger(__name__)
 DB_URL: str | None = os.getenv("DB_URL")
 
 # ---------------------------------------------------------------------------
-# PostgreSQL pool (lazy-initialized)
+# PostgreSQL pools (lazy-initialized)
 # ---------------------------------------------------------------------------
 _pg_pool = None
 _pg_async_pool = None
@@ -31,6 +29,11 @@ def _get_pg_pool():
     """Lazy-init sync psycopg2 connection pool."""
     global _pg_pool
     if _pg_pool is None:
+        if not DB_URL:
+            raise RuntimeError(
+                "DB_URL is not set — PostgreSQL is required. "
+                "Set DB_URL=postgres://user:pass@host:5432/dbname."
+            )
         import psycopg2
         from psycopg2 import pool as pg_pool
 
@@ -47,6 +50,11 @@ async def _get_pg_async_pool():
     """Lazy-init async asyncpg connection pool."""
     global _pg_async_pool
     if _pg_async_pool is None:
+        if not DB_URL:
+            raise RuntimeError(
+                "DB_URL is not set — PostgreSQL is required. "
+                "Set DB_URL=postgres://user:pass@host:5432/dbname."
+            )
         import asyncpg
 
         _pg_async_pool = await asyncpg.create_pool(
@@ -59,26 +67,19 @@ async def _get_pg_async_pool():
 
 
 # ---------------------------------------------------------------------------
-# SQLite helpers
-# ---------------------------------------------------------------------------
-_sqlite_db_file: str | None = None
-
-
-def _get_sqlite_path() -> str:
-    """Resolve SQLite file path from app_paths."""
-    global _sqlite_db_file
-    if _sqlite_db_file is None:
-        from app_paths import DB_FILE
-        _sqlite_db_file = DB_FILE
-    return _sqlite_db_file
-
-
-# ---------------------------------------------------------------------------
-# Unified wrappers that normalize PG results to look like sqlite3.Row
+# Wrapper classes — give psycopg2 a sqlite3-style API the rest of the
+# codebase already uses (`conn.execute(...)`, `row["col"]`, `row[0]`).
+# Migrating every call site to native psycopg2 would be a huge churn for
+# zero functional gain, so we keep this thin adapter.
 # ---------------------------------------------------------------------------
 
 class DictRow(dict):
-    """Dict-like row that also supports index-based access (row[0], row[1])."""
+    """Dict-like row that also supports index-based access (row[0], row[1]).
+
+    Note: ``__iter__`` is intentionally NOT overridden, so ``dict(row)`` and
+    other dict consumers keep working. Code that needs positional unpacking
+    must use indices explicitly: ``a, b = row[0], row[1]``.
+    """
 
     def __init__(self, keys: list[str], values: list):
         super().__init__(zip(keys, values))
@@ -101,8 +102,9 @@ class DictRow(dict):
 class PgConnectionWrapper:
     """Wraps a psycopg2 connection to provide sqlite3-compatible interface.
 
-    - Translates ? placeholders to %s
-    - Returns DictRow objects instead of tuples
+    - Translates legacy ``?`` placeholders to ``%s`` (still needed until all
+      callers migrate to ``%s`` directly).
+    - Returns ``DictRow`` objects so callers can use ``row["col"]`` and ``row[0]``.
     """
 
     def __init__(self, conn):
@@ -152,10 +154,6 @@ class PgCursorWrapper:
         return [DictRow(keys, list(row)) for row in rows]
 
     @property
-    def lastrowid(self):
-        return getattr(self._cursor, "lastrowid", None)
-
-    @property
     def rowcount(self):
         return self._cursor.rowcount
 
@@ -182,12 +180,6 @@ class PgCursorAsConnection:
         return []
 
     @property
-    def lastrowid(self):
-        if self._last_result:
-            return self._last_result.lastrowid
-        return None
-
-    @property
     def rowcount(self):
         if self._last_result:
             return self._last_result.rowcount
@@ -197,7 +189,9 @@ class PgCursorAsConnection:
 def _translate_placeholders(sql: str) -> str:
     """Convert SQLite-style ? placeholders to PostgreSQL-style %s.
 
-    Skips ? inside string literals.
+    Skips ? inside string literals. This is a transitional helper — once all
+    SQL literals in the codebase use %s directly, this function (and its call
+    site in PgConnectionWrapper.execute) can be removed.
     """
     result = []
     in_string = False
@@ -218,18 +212,6 @@ def _translate_placeholders(sql: str) -> str:
     return "".join(result)
 
 
-def _translate_schema_sql(sql: str) -> str:
-    """Convert SQLite DDL to PostgreSQL DDL."""
-    # AUTOINCREMENT → handled by SERIAL
-    sql = sql.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
-    # PRAGMA statements are SQLite-specific
-    if sql.strip().upper().startswith("PRAGMA"):
-        return ""
-    # SQLite boolean literals
-    sql = sql.replace("DEFAULT 0", "DEFAULT 0")  # noop, same syntax
-    return sql
-
-
 # ---------------------------------------------------------------------------
 # Public sync interface
 # ---------------------------------------------------------------------------
@@ -245,26 +227,17 @@ def get_connection() -> Iterator[Any]:
     Returns a connection-like object with .execute(), .commit().
     Results support both dict-style and index-style access.
     """
-    if DB_URL:
-        pool = _get_pg_pool()
-        raw_conn = pool.getconn()
-        try:
-            wrapper = PgConnectionWrapper(raw_conn)
-            yield wrapper
-            raw_conn.commit()
-        except Exception:
-            raw_conn.rollback()
-            raise
-        finally:
-            pool.putconn(raw_conn)
-    else:
-        conn = sqlite3.connect(_get_sqlite_path())
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
+    pool = _get_pg_pool()
+    raw_conn = pool.getconn()
+    try:
+        wrapper = PgConnectionWrapper(raw_conn)
+        yield wrapper
+        raw_conn.commit()
+    except Exception:
+        raw_conn.rollback()
+        raise
+    finally:
+        pool.putconn(raw_conn)
 
 
 # ---------------------------------------------------------------------------
@@ -275,31 +248,21 @@ def get_connection() -> Iterator[Any]:
 async def get_async_connection():
     """Get a database connection (async).
 
-    For now, wraps sync connection in executor for compatibility.
-    Full asyncpg support can be added later for performance.
+    For now, wraps the sync psycopg2 pool. Full asyncpg support can be added
+    later for performance — but it would require rewriting all queries that
+    rely on the PgConnectionWrapper API.
     """
-    # Use sync connection for now — asyncpg has different API (no .execute with ?)
-    # and would require rewriting all queries. This keeps compatibility.
-    if DB_URL:
-        pool = _get_pg_pool()
-        raw_conn = pool.getconn()
-        try:
-            wrapper = PgConnectionWrapper(raw_conn)
-            yield wrapper
-            raw_conn.commit()
-        except Exception:
-            raw_conn.rollback()
-            raise
-        finally:
-            pool.putconn(raw_conn)
-    else:
-        conn = sqlite3.connect(_get_sqlite_path())
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-            conn.commit()
-        finally:
-            conn.close()
+    pool = _get_pg_pool()
+    raw_conn = pool.getconn()
+    try:
+        wrapper = PgConnectionWrapper(raw_conn)
+        yield wrapper
+        raw_conn.commit()
+    except Exception:
+        raw_conn.rollback()
+        raise
+    finally:
+        pool.putconn(raw_conn)
 
 
 # ---------------------------------------------------------------------------
@@ -307,17 +270,16 @@ async def get_async_connection():
 # ---------------------------------------------------------------------------
 
 def is_integrity_error(exc: Exception) -> bool:
-    """Check if exception is an IntegrityError (works with both SQLite and psycopg2)."""
-    import sqlite3 as _sqlite3
-    if isinstance(exc, _sqlite3.IntegrityError):
-        return True
+    """Check if exception is a PostgreSQL IntegrityError.
+
+    Kept as a thin abstraction so call sites don't need to import psycopg2
+    directly. The function name is historic (used to also check sqlite3).
+    """
     try:
         import psycopg2
-        if isinstance(exc, psycopg2.IntegrityError):
-            return True
+        return isinstance(exc, psycopg2.IntegrityError)
     except ImportError:
-        pass
-    return False
+        return False
 
 
 # ---------------------------------------------------------------------------

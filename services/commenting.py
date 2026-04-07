@@ -165,7 +165,9 @@ async def process_new_post(
                 row = cursor.fetchone()
 
                 if row:
-                    found_chat_id, content, status = row
+                    # DictRow inherits from dict, so positional unpacking
+                    # would yield column names. Use index access explicitly.
+                    found_chat_id, content, status = row[0], row[1], row[2]
                     if content and content.strip() and status != 'stopped':
                         if from_catch_up:
                             _mark_processed(unique_id)

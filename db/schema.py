@@ -1,24 +1,13 @@
 """Unified database schema — single source of truth for all tables.
 
-Supports both PostgreSQL and SQLite via dialect detection.
+PostgreSQL only.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 
 logger = logging.getLogger(__name__)
-
-DB_URL: str | None = os.getenv("DB_URL")
-
-
-def _is_postgres() -> bool:
-    return bool(DB_URL)
-
-
-def _serial_pk() -> str:
-    return "SERIAL PRIMARY KEY" if _is_postgres() else "INTEGER PRIMARY KEY AUTOINCREMENT"
 
 
 # ---------------------------------------------------------------------------
@@ -26,9 +15,9 @@ def _serial_pk() -> str:
 # ---------------------------------------------------------------------------
 
 def _table_logs() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS logs (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         log_type TEXT NOT NULL,
         timestamp TEXT NOT NULL,
         destination_chat_id BIGINT NOT NULL,
@@ -46,9 +35,9 @@ def _table_logs() -> str:
 
 
 def _table_proxies() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS proxies (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         url TEXT NOT NULL UNIQUE,
         name TEXT,
         ip TEXT,
@@ -72,9 +61,9 @@ def _table_scenarios() -> str:
 
 
 def _table_post_scenarios() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS post_scenarios (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         chat_id TEXT,
         post_id INTEGER,
         current_index INTEGER DEFAULT 0,
@@ -85,9 +74,9 @@ def _table_post_scenarios() -> str:
 
 
 def _table_triggers() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS triggers (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         chat_id TEXT NOT NULL,
         trigger_phrase TEXT NOT NULL,
         answer_text TEXT NOT NULL
@@ -96,9 +85,9 @@ def _table_triggers() -> str:
 
 
 def _table_alert_context() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS alert_context (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         chat_id TEXT,
         msg_id INTEGER,
         session_name TEXT,
@@ -108,9 +97,9 @@ def _table_alert_context() -> str:
 
 
 def _table_outbound_queue() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS outbound_queue (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         chat_id TEXT,
         reply_to_msg_id INTEGER,
         session_name TEXT,
@@ -121,9 +110,9 @@ def _table_outbound_queue() -> str:
 
 
 def _table_inbox_messages() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS inbox_messages (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         kind TEXT NOT NULL,
         direction TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -148,9 +137,9 @@ def _table_inbox_messages() -> str:
 
 
 def _table_join_status() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS join_status (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         session_name TEXT NOT NULL,
         target_id TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -164,9 +153,9 @@ def _table_join_status() -> str:
 
 
 def _table_account_failures() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS account_failures (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         session_name TEXT NOT NULL,
         kind TEXT NOT NULL,
         count INTEGER NOT NULL DEFAULT 0,
@@ -178,9 +167,9 @@ def _table_account_failures() -> str:
 
 
 def _table_account_failure_log() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS account_failure_log (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         session_name TEXT NOT NULL,
         kind TEXT NOT NULL,
         error TEXT,
@@ -239,9 +228,9 @@ def _table_used_identities() -> str:
 
 
 def _table_discussion_sessions() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS discussion_sessions (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         project_id TEXT NOT NULL,
         discussion_target_id TEXT,
         discussion_target_chat_id TEXT NOT NULL,
@@ -262,9 +251,9 @@ def _table_discussion_sessions() -> str:
 
 
 def _table_discussion_messages() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS discussion_messages (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         session_id INTEGER NOT NULL,
         created_at REAL NOT NULL,
         speaker_type TEXT NOT NULL,
@@ -280,9 +269,9 @@ def _table_discussion_messages() -> str:
 
 
 def _table_manual_tasks() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS manual_tasks (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         project_id TEXT NOT NULL,
         chat_id TEXT NOT NULL,
         message_chat_id TEXT,
@@ -307,9 +296,9 @@ def _table_warning_seen() -> str:
 
 
 def _table_warning_history() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS warning_history (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         key TEXT NOT NULL,
         level TEXT NOT NULL DEFAULT 'warning',
         title TEXT NOT NULL,
@@ -331,9 +320,9 @@ def _table_warning_dismissed() -> str:
 
 
 def _table_spam_rules() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS spam_rules (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         chat_id TEXT NOT NULL,
         enabled INTEGER DEFAULT 0,
         keywords TEXT DEFAULT '',
@@ -350,9 +339,9 @@ def _table_spam_rules() -> str:
 
 
 def _table_spam_log() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS spam_log (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         chat_id TEXT NOT NULL,
         msg_id BIGINT,
         sender_id BIGINT,
@@ -369,9 +358,9 @@ def _table_spam_log() -> str:
 
 
 def _table_spam_bans() -> str:
-    return f"""
+    return """
     CREATE TABLE IF NOT EXISTS spam_bans (
-        id {_serial_pk()},
+        id SERIAL PRIMARY KEY,
         chat_id TEXT NOT NULL,
         user_id BIGINT NOT NULL,
         username TEXT,
@@ -415,11 +404,10 @@ INDEXES = [
 # ---------------------------------------------------------------------------
 
 def init_database(conn) -> None:
-    """Create all tables and indexes.
+    """Create all tables, run idempotent column migrations, and set up indexes.
 
     Args:
-        conn: A connection object with .execute() method.
-              Works with both sqlite3.Connection and PgConnectionWrapper.
+        conn: A PgConnectionWrapper from db.connection.get_connection().
     """
     table_funcs = [
         _table_logs,
@@ -453,38 +441,17 @@ def init_database(conn) -> None:
         if sql:
             conn.execute(sql)
 
-    if _is_postgres():
-        conn.execute("ALTER TABLE logs ADD COLUMN IF NOT EXISTS msg_id BIGINT")
-        conn.execute("ALTER TABLE spam_rules ADD COLUMN IF NOT EXISTS name_keywords TEXT DEFAULT '[]'")
-        conn.execute("ALTER TABLE spam_rules ADD COLUMN IF NOT EXISTS ai_check_name INTEGER DEFAULT 0")
-    else:
-        try:
-            conn.execute("ALTER TABLE logs ADD COLUMN msg_id BIGINT")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE spam_rules ADD COLUMN name_keywords TEXT DEFAULT '[]'")
-        except Exception:
-            pass
-        try:
-            conn.execute("ALTER TABLE spam_rules ADD COLUMN ai_check_name INTEGER DEFAULT 0")
-        except Exception:
-            pass
+    # Idempotent column additions for tables that grew over time.
+    conn.execute("ALTER TABLE logs ADD COLUMN IF NOT EXISTS msg_id BIGINT")
+    conn.execute("ALTER TABLE spam_rules ADD COLUMN IF NOT EXISTS name_keywords TEXT DEFAULT '[]'")
+    conn.execute("ALTER TABLE spam_rules ADD COLUMN IF NOT EXISTS ai_check_name INTEGER DEFAULT 0")
 
     for idx_sql in INDEXES:
         conn.execute(idx_sql)
-
-    # PostgreSQL-specific: set up WAL-equivalent (already default in PG)
-    if not _is_postgres():
-        try:
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;")
-        except Exception:
-            pass
 
     try:
         conn.commit()
     except AttributeError:
         pass
 
-    logger.info("Database schema initialized (%s)", "PostgreSQL" if _is_postgres() else "SQLite")
+    logger.info("Database schema initialized (PostgreSQL)")

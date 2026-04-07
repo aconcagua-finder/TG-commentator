@@ -296,7 +296,7 @@ def _telegram_message_link(destination_chat_id: Any, msg_id: Any) -> str:
 
 
 def _row_get(row: Any, key: str, default: Any = None) -> Any:
-    """Access a sqlite3.Row or plain dict field, returning default when missing."""
+    """Access a DictRow or plain dict field, returning default when missing."""
     try:
         value = row[key]
     except (KeyError, IndexError):

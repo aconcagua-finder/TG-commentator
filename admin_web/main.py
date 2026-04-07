@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from app_paths import ACCOUNTS_FILE, DB_FILE, SETTINGS_FILE, ensure_data_dir
+from app_paths import ACCOUNTS_FILE, SETTINGS_FILE, ensure_data_dir
 
 from admin_web.helpers import (
     ADMIN_WEB_PASSWORD,

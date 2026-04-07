@@ -170,9 +170,9 @@ def _scenario_history_load(chat_id: str, post_id: int) -> dict[int, int]:
                 (chat_id, int(post_id)),
             ).fetchall()
         out: dict[int, int] = {}
-        for ref_idx, msg_id in rows or []:
+        for r in rows or []:
             try:
-                out[int(ref_idx)] = int(msg_id)
+                out[int(r[0])] = int(r[1])
             except Exception:
                 continue
         return out
@@ -554,6 +554,7 @@ def _db_create_discussion_session(
                     operator_session_name, seed_msg_id, seed_text,
                     settings_json, participants_json, error
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (
                     project_id,
@@ -573,7 +574,8 @@ def _db_create_discussion_session(
                     str(error or "") if error else None,
                 ),
             )
-            return int(cur.lastrowid)
+            row = cur.fetchone()
+            return int(row[0]) if row and row[0] is not None else None
     except Exception:
         return None
 

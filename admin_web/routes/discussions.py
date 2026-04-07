@@ -1235,6 +1235,7 @@ async def discussion_target_start(
                     operator_session_name, seed_msg_id, seed_text,
                     settings_json, participants_json, error
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
                 """,
                 (
                     project_id,
@@ -1254,7 +1255,8 @@ async def discussion_target_start(
                     None,
                 ),
             )
-            session_id = int(cur.lastrowid)
+            row = cur.fetchone()
+            session_id = int(row[0]) if row and row[0] is not None else None
     except Exception:
         session_id = None
     settings.setdefault("discussion_start_queue", []).append(
