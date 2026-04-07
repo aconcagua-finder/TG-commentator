@@ -11,6 +11,7 @@ import pandas as pd
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
+from admin_web.activity_helpers import enrich_log_rows, log_type_meta
 from admin_web.helpers import (
     _load_settings,
     _save_settings,
@@ -52,22 +53,61 @@ LOG_TYPE_OPTIONS: list[tuple[str, str]] = [
     ("spam_deleted", "Антиспам"),
 ]
 
-def _get_logs_for_period(period: str, page: int, items_per_page: int = 20, *, log_type: str = "") -> Tuple[List[Any], int]:
+PERIOD_LABELS: Dict[str, str] = {
+    "day": "за сегодня",
+    "week": "за неделю",
+    "month": "за месяц",
+}
+
+# Order + colors for the summary cards on the stats page
+SUMMARY_CARDS: List[Tuple[str, str, str]] = [
+    ("comment", "Комментарии", "bi-chat-left-text"),
+    ("comment_reply", "Ответы", "bi-reply"),
+    ("reaction", "Реакции", "bi-hand-thumbs-up"),
+    ("comment_failed", "Ошибки", "bi-exclamation-triangle"),
+    ("spam_deleted", "Антиспам", "bi-shield-check"),
+    ("monitoring", "Мониторинг", "bi-broadcast"),
+]
+
+
+def _period_sql_filter(period: str) -> str:
     if _is_postgres():
         if period == "day":
-            period_filter = "timestamp::timestamptz >= NOW() - INTERVAL '1 day'"
-        elif period == "week":
-            period_filter = "timestamp::timestamptz >= NOW() - INTERVAL '7 days'"
-        else:
-            period_filter = "timestamp::timestamptz >= NOW() - INTERVAL '30 days'"
-    else:
-        # SQLite
-        if period == "day":
-            period_filter = "timestamp >= datetime('now', '-1 day', 'localtime')"
-        elif period == "week":
-            period_filter = "timestamp >= datetime('now', '-7 days', 'localtime')"
-        else:
-            period_filter = "timestamp >= datetime('now', '-30 days', 'localtime')"
+            return "timestamp::timestamptz >= NOW() - INTERVAL '1 day'"
+        if period == "week":
+            return "timestamp::timestamptz >= NOW() - INTERVAL '7 days'"
+        return "timestamp::timestamptz >= NOW() - INTERVAL '30 days'"
+    if period == "day":
+        return "timestamp >= datetime('now', '-1 day', 'localtime')"
+    if period == "week":
+        return "timestamp >= datetime('now', '-7 days', 'localtime')"
+    return "timestamp >= datetime('now', '-30 days', 'localtime')"
+
+
+def _get_period_summary(period: str) -> Dict[str, int]:
+    """Return counts grouped by log_type for the whole period."""
+    period_filter = _period_sql_filter(period)
+    with _db_connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT log_type, COUNT(*) AS c
+              FROM logs
+             WHERE {period_filter}
+             GROUP BY log_type
+            """
+        ).fetchall()
+
+    counts: Dict[str, int] = {"total": 0}
+    for row in rows:
+        lt = str(row["log_type"] or "other").strip() or "other"
+        count = int(row["c"] or 0)
+        counts[lt] = counts.get(lt, 0) + count
+        counts["total"] += count
+    return counts
+
+
+def _get_logs_for_period(period: str, page: int, items_per_page: int = 20, *, log_type: str = "") -> Tuple[List[Any], int]:
+    period_filter = _period_sql_filter(period)
 
     offset = page * items_per_page
     log_type_value = str(log_type or "").strip()
@@ -111,15 +151,36 @@ async def stats_page(request: Request, period: str = "day", page: int = 0, log_t
     total_pages = max((total + 19) // 20, 1)
     page = max(min(page, total_pages - 1), 0)
 
+    settings, _ = _load_settings()
+    activity = enrich_log_rows(rows, settings)
+
+    # Build summary cards: counts across the entire period, ignoring the log_type filter
+    period_counts = _get_period_summary(period)
+    summary_cards: List[Dict[str, Any]] = []
+    for lt, label, icon in SUMMARY_CARDS:
+        meta = log_type_meta(lt)
+        summary_cards.append(
+            {
+                "key": lt,
+                "label": label,
+                "icon": icon,
+                "color": meta["color"],
+                "value": period_counts.get(lt, 0),
+            }
+        )
+
     return templates.TemplateResponse(
         "stats.html",
         _template_context(
             request,
             period=period,
+            period_label=PERIOD_LABELS.get(period, period),
             page=page,
             total=total,
             total_pages=total_pages,
-            rows=rows,
+            activity=activity,
+            summary_cards=summary_cards,
+            period_total=period_counts.get("total", 0),
             log_type=str(log_type or "").strip(),
             log_type_options=LOG_TYPE_OPTIONS,
         ),

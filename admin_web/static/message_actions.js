@@ -19,7 +19,11 @@
 
     const textarea = formEl.querySelector("textarea");
     if (textarea) {
-      textarea.value = textValue(textEl);
+      // Prefer the server-provided original textarea value (may include role/mood prefix).
+      // Fall back to the visible text element only if the textarea came in empty.
+      if (!textarea.value) {
+        textarea.value = textValue(textEl);
+      }
       textarea.focus();
       textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     }

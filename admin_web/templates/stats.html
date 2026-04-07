@@ -4,136 +4,194 @@
   <div class="app-page-head mb-3">
     <div>
       <h1 class="h3 mb-1">Статистика</h1>
-      <div class="text-muted">Период: {{ period }}, всего: {{ total }}{% if log_type %}, фильтр: {{ log_type }}{% endif %}</div>
+      <div class="text-body-secondary">
+        Действия ботов {{ period_label }} · всего записей: <strong>{{ period_total }}</strong>
+        {% if log_type %}<span class="text-body-tertiary">·</span> фильтр: <span class="badge text-bg-light border">{{ log_type }}</span>{% endif %}
+      </div>
     </div>
     <div class="app-actions">
       {% set ltq = ('&log_type=' ~ log_type) if log_type else '' %}
-      <a class="btn {% if period == 'day' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=day{{ ltq }}">День</a>
-      <a class="btn {% if period == 'week' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=week{{ ltq }}">Неделя</a>
-      <a class="btn {% if period == 'month' %}btn-secondary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=month{{ ltq }}">Месяц</a>
-      <form class="d-inline-flex gap-2" method="get" action="/stats">
-        <input type="hidden" name="period" value="{{ period }}" />
-        <select class="form-select form-select-sm" name="log_type" aria-label="Фильтр по типу">
-          {% for key, label in log_type_options %}
-            <option value="{{ key }}" {% if key == log_type %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-        <button class="btn btn-sm btn-outline-secondary" type="submit">Фильтр</button>
-      </form>
-      <a class="btn btn-primary" href="/stats/export?period={{ period }}{% if log_type %}&log_type={{ log_type }}{% endif %}">Экспорт .xlsx</a>
+      <div class="btn-group" role="group" aria-label="Период">
+        <a class="btn {% if period == 'day' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=day{{ ltq }}">День</a>
+        <a class="btn {% if period == 'week' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=week{{ ltq }}">Неделя</a>
+        <a class="btn {% if period == 'month' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="/stats?period=month{{ ltq }}">Месяц</a>
+      </div>
+      <a class="btn btn-primary" href="/stats/export?period={{ period }}{% if log_type %}&log_type={{ log_type }}{% endif %}">
+        <i class="bi bi-download me-1" aria-hidden="true"></i>Экспорт .xlsx
+      </a>
     </div>
   </div>
-  <p class="text-muted">Это лог действий из `actions.sqlite` (комментарии/реакции/ответы/пропуски). Можно выгрузить в Excel.</p>
-  {% if total == 0 %}
-    <div class="alert alert-info">Пока нет логов. Запустите комментатор и дождитесь первых действий — записи появятся здесь.</div>
-  {% endif %}
 
-  <div class="card">
-    <div class="card-body p-0">
-      <div class="table-responsive">
-        <table class="table table-hover mb-0 align-middle app-table">
-          <caption class="visually-hidden">Логи действий (комментарии/реакции/ответы)</caption>
-          <thead>
-            <tr>
-              <th>Тип</th>
-              <th>Дата</th>
-              <th>Канал</th>
-              <th>Аккаунт</th>
-              <th>Пост</th>
-              <th>Текст</th>
-              <th class="text-end">Действия</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for r in rows %}
-              <tr data-msg-row>
-                {% set lt = r.log_type %}
-                {% set can_manage = lt in ['comment', 'comment_reply', 'monitoring'] and r.msg_id is not none %}
-                {% if lt == 'reaction' %}
-                  {% set lt_label = 'Реакция' %}
-                {% elif lt == 'comment' %}
-                  {% set lt_label = 'Комментарий' %}
-                {% elif lt == 'comment_reply' %}
-                  {% set lt_label = 'Ответ' %}
-                {% elif lt == 'comment_failed' %}
-                  {% set lt_label = 'Ошибка' %}
-                {% elif lt == 'comment_skip' %}
-                  {% set lt_label = 'Пропуск' %}
-                {% elif lt == 'monitoring' %}
-                  {% set lt_label = 'Мониторинг' %}
-                {% elif lt == 'forbidden' %}
-                  {% set lt_label = 'Запрещено' %}
-                {% elif lt == 'spam_deleted' %}
-                  {% set lt_label = 'Антиспам' %}
-                {% else %}
-                  {% set lt_label = lt %}
-                {% endif %}
-                <td title="{{ lt }}" class="small">{{ lt_label }}</td>
-                <td class="mono small">{{ r.timestamp|human_dt }}</td>
-                <td>
-                  <span class="d-inline-block align-top app-clamp-1" style="max-width: 320px;" title="{{ r.channel_name or '' }}">
-                    {{ r.channel_name }}
-                  </span>
-                </td>
-                <td class="mono">{{ r.account_session_name or '—' }}</td>
-                <td class="mono">{{ r.post_id }}</td>
-                <td class="small">
-                  <div data-msg-text class="app-clamp-3" title="{{ r.content or '' }}">{{ r.content }}</div>
-                  {% if can_manage %}
-                    <form method="post" action="/messages/edit" data-msg-edit-form class="mt-2" style="display:none">
-                      <input type="hidden" name="source" value="logs" />
-                      <input type="hidden" name="record_id" value="{{ r.id }}" />
-                      <input type="hidden" name="return_to" value="/stats?period={{ period }}&page={{ page }}" />
-                      <textarea class="form-control form-control-sm" name="new_text" rows="4" required>{{ r.content or '' }}</textarea>
-                      <div class="d-flex flex-wrap gap-2 mt-2">
-                        <button class="btn btn-sm btn-secondary" type="submit">Сохранить</button>
-                        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="cancelMessageEdit(this)">Отменить</button>
-                      </div>
-                    </form>
+  {# ── Summary cards ── #}
+  <div class="app-stats-summary">
+    {% for card in summary_cards %}
+      {% set is_active = (log_type == card.key) %}
+      <a class="app-stats-summary-card text-decoration-none text-reset{% if is_active %} border-primary shadow-sm{% endif %}"
+         href="/stats?period={{ period }}{% if not is_active %}&log_type={{ card.key }}{% endif %}">
+        <div class="app-activity-icon app-activity-icon--{{ card.color }}">
+          <i class="bi {{ card.icon }}" aria-hidden="true"></i>
+        </div>
+        <div>
+          <div class="label">{{ card.label }}</div>
+          <div class="value">{{ card.value }}</div>
+        </div>
+      </a>
+    {% endfor %}
+    {% set all_active = not log_type %}
+    <a class="app-stats-summary-card text-decoration-none text-reset{% if all_active %} border-primary shadow-sm{% endif %}"
+       href="/stats?period={{ period }}">
+      <div class="app-activity-icon app-activity-icon--secondary">
+        <i class="bi bi-collection" aria-hidden="true"></i>
+      </div>
+      <div>
+        <div class="label">Всего {{ period_label }}</div>
+        <div class="value">{{ period_total }}</div>
+      </div>
+    </a>
+  </div>
+
+  {# ── Filter toolbar ── #}
+  <form class="d-flex flex-wrap gap-2 align-items-center mb-3" method="get" action="/stats">
+    <input type="hidden" name="period" value="{{ period }}" />
+    <label class="form-label mb-0 me-1" for="log_type_select">Тип действия:</label>
+    <select class="form-select form-select-sm" id="log_type_select" name="log_type" onchange="this.form.submit()" style="max-width: 240px;">
+      {% for key, label in log_type_options %}
+        <option value="{{ key }}" {% if key == log_type %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <noscript><button class="btn btn-sm btn-outline-secondary" type="submit">Применить</button></noscript>
+    {% if log_type %}
+      <a class="btn btn-sm btn-link text-decoration-none" href="/stats?period={{ period }}">
+        <i class="bi bi-x-circle me-1" aria-hidden="true"></i>сбросить фильтр
+      </a>
+    {% endif %}
+    <span class="text-body-secondary small ms-auto">Показано: {{ activity|length }} из {{ total }}</span>
+  </form>
+
+  {% if total == 0 %}
+    <div class="alert alert-info d-flex align-items-center gap-2">
+      <i class="bi bi-info-circle" aria-hidden="true"></i>
+      Нет действий за выбранный период. Запустите комментатор и дождитесь первых активностей — записи появятся здесь.
+    </div>
+  {% else %}
+    <div class="card">
+      <div class="card-body">
+        <ul class="list-unstyled mb-0 app-activity-list">
+          {% for item in activity %}
+            {% set can_manage = item.log_type in ['comment', 'comment_reply', 'monitoring'] and item.msg_id is not none %}
+            <li class="app-activity-item" data-msg-row>
+              <div class="app-activity-icon app-activity-icon--{{ item.type_color }}">
+                <i class="bi {{ item.type_icon }}" aria-hidden="true"></i>
+              </div>
+              <div class="app-activity-body">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                  <span class="badge text-bg-{{ item.type_color }}">{{ item.type_label }}</span>
+                  <span class="fw-semibold">{{ item.task_label }}</span>
+                  {% if item.tag %}
+                    <span class="badge text-bg-light border text-body-secondary">{{ item.tag }}</span>
                   {% endif %}
-                </td>
-                <td class="text-end">
-                  {% if can_manage %}
-                    <div class="d-inline-flex flex-wrap gap-1 justify-content-end" data-msg-actions>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" onclick="startMessageEdit(this)" title="Редактировать">
-                        <i class="bi bi-pencil"></i>
-                        <span class="visually-hidden">Редактировать</span>
-                      </button>
-                      <form method="post" action="/messages/delete">
-                        <input type="hidden" name="source" value="logs" />
-                        <input type="hidden" name="record_id" value="{{ r.id }}" />
-                        <input type="hidden" name="return_to" value="/stats?period={{ period }}&page={{ page }}" />
-                        <button class="btn btn-sm btn-outline-danger" type="submit" title="Удалить"
-                          onclick="return confirm('Удалить сообщение из Telegram? Это действие необратимо.');">
-                          <i class="bi bi-trash"></i>
-                          <span class="visually-hidden">Удалить</span>
-                        </button>
-                      </form>
-                    </div>
+                  {% if item.role %}
+                    <span class="badge text-bg-light border text-body-secondary" title="Роль">
+                      <i class="bi bi-person-badge me-1" aria-hidden="true"></i>{{ item.role }}
+                    </span>
+                  {% endif %}
+                  {% if item.mood %}
+                    <span class="badge text-bg-light border text-body-secondary" title="Настроение">
+                      <i class="bi bi-emoji-smile me-1" aria-hidden="true"></i>{{ item.mood }}
+                    </span>
+                  {% endif %}
+                </div>
+                <div class="text-body-secondary small mb-1 d-flex flex-wrap align-items-center gap-1">
+                  <i class="bi bi-broadcast-pin" aria-hidden="true"></i>
+                  {% if item.target_href %}
+                    <a class="text-reset fw-semibold text-decoration-none" href="{{ item.target_href }}">{{ item.channel_display }}</a>
                   {% else %}
-                    <span class="text-muted small">—</span>
+                    <span class="fw-semibold">{{ item.channel_display }}</span>
                   {% endif %}
-                </td>
-              </tr>
-            {% endfor %}
-            {% if rows|length == 0 %}
-              <tr><td colspan="7" class="text-center text-muted py-4">Записей нет.</td></tr>
-            {% endif %}
-          </tbody>
-        </table>
+                  {% if item.post_link %}
+                    <span class="text-body-tertiary">·</span>
+                    <a class="text-reset text-decoration-none" href="{{ item.post_link }}" target="_blank" rel="noopener">
+                      <i class="bi bi-box-arrow-up-right me-1" aria-hidden="true"></i>пост #{{ item.post_id }}
+                    </a>
+                  {% elif item.post_id %}
+                    <span class="text-body-tertiary">·</span>
+                    <span>пост #{{ item.post_id }}</span>
+                  {% endif %}
+                  {% if item.account_session_name %}
+                    <span class="text-body-tertiary">·</span>
+                    <i class="bi bi-person-circle" aria-hidden="true"></i>
+                    <span class="mono">{{ item.account_session_name }}</span>
+                    {% if item.account_username %}
+                      <span class="text-body-tertiary">(@{{ item.account_username }})</span>
+                    {% endif %}
+                  {% endif %}
+                </div>
+                {% if item.body %}
+                  <div data-msg-text class="app-activity-text app-clamp-3 small" title="{{ item.raw_content }}">{{ item.body }}</div>
+                {% elif item.summary %}
+                  <div class="app-activity-text app-clamp-2 small text-body-secondary">{{ item.summary }}</div>
+                {% endif %}
+                {% if item.message_link %}
+                  <div class="mt-1">
+                    <a class="small text-decoration-none" href="{{ item.message_link }}" target="_blank" rel="noopener">
+                      <i class="bi bi-telegram me-1" aria-hidden="true"></i>открыть в Telegram
+                    </a>
+                  </div>
+                {% endif %}
+                {% if can_manage %}
+                  <form method="post" action="/messages/edit" data-msg-edit-form class="mt-2" style="display:none">
+                    <input type="hidden" name="source" value="logs" />
+                    <input type="hidden" name="record_id" value="{{ item.id }}" />
+                    <input type="hidden" name="return_to" value="/stats?period={{ period }}&page={{ page }}{% if log_type %}&log_type={{ log_type }}{% endif %}" />
+                    <textarea class="form-control form-control-sm" name="new_text" rows="4" required>{{ item.body or item.raw_content }}</textarea>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                      <button class="btn btn-sm btn-secondary" type="submit">Сохранить</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" onclick="cancelMessageEdit(this)">Отменить</button>
+                    </div>
+                  </form>
+                {% endif %}
+              </div>
+              <div class="app-activity-time d-flex flex-column align-items-end gap-2">
+                <span class="text-body-secondary small mono">{{ item.timestamp|human_dt }}</span>
+                {% if can_manage %}
+                  <div class="d-inline-flex gap-1" data-msg-actions>
+                    <button class="btn btn-sm btn-outline-secondary app-icon-btn" type="button" onclick="startMessageEdit(this)" title="Редактировать в Telegram">
+                      <i class="bi bi-pencil" aria-hidden="true"></i>
+                      <span class="visually-hidden">Редактировать</span>
+                    </button>
+                    <form method="post" action="/messages/delete" class="d-inline">
+                      <input type="hidden" name="source" value="logs" />
+                      <input type="hidden" name="record_id" value="{{ item.id }}" />
+                      <input type="hidden" name="return_to" value="/stats?period={{ period }}&page={{ page }}{% if log_type %}&log_type={{ log_type }}{% endif %}" />
+                      <button class="btn btn-sm btn-outline-danger app-icon-btn" type="submit" title="Удалить из Telegram"
+                              onclick="return confirm('Удалить сообщение из Telegram? Это действие необратимо.');">
+                        <i class="bi bi-trash" aria-hidden="true"></i>
+                        <span class="visually-hidden">Удалить</span>
+                      </button>
+                    </form>
+                  </div>
+                {% endif %}
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
       </div>
     </div>
-  </div>
 
-  <div class="app-page-head mt-3">
-    <div class="text-muted">Страница {{ page + 1 }} из {{ total_pages }}</div>
-    <div class="app-actions">
-      {% if page > 0 %}
-        <a class="btn btn-outline-secondary" href="/stats?period={{ period }}&page={{ page - 1 }}{% if log_type %}&log_type={{ log_type }}{% endif %}">Назад</a>
-      {% endif %}
-      {% if page + 1 < total_pages %}
-        <a class="btn btn-outline-secondary" href="/stats?period={{ period }}&page={{ page + 1 }}{% if log_type %}&log_type={{ log_type }}{% endif %}">Вперёд</a>
-      {% endif %}
+    <div class="app-page-head mt-3">
+      <div class="text-body-secondary small">Страница {{ page + 1 }} из {{ total_pages }}</div>
+      <div class="app-actions">
+        {% if page > 0 %}
+          <a class="btn btn-outline-secondary" href="/stats?period={{ period }}&page={{ page - 1 }}{% if log_type %}&log_type={{ log_type }}{% endif %}">
+            <i class="bi bi-chevron-left me-1" aria-hidden="true"></i>Назад
+          </a>
+        {% endif %}
+        {% if page + 1 < total_pages %}
+          <a class="btn btn-outline-secondary" href="/stats?period={{ period }}&page={{ page + 1 }}{% if log_type %}&log_type={{ log_type }}{% endif %}">
+            Вперёд<i class="bi bi-chevron-right ms-1" aria-hidden="true"></i>
+          </a>
+        {% endif %}
+      </div>
     </div>
-  </div>
+  {% endif %}
 {% endblock %}

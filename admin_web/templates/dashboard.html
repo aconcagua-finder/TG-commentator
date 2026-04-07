@@ -84,24 +84,81 @@
   </div>
 
   {# ── Recent activity ── #}
-  {% if recent_logs is defined and recent_logs %}
-    <div class="card mt-3">
+  {% if recent_activity is defined and recent_activity %}
+    <div class="card mt-3 app-activity">
       <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h2 class="h6 mb-0">Последняя активность</h2>
-          <a class="btn btn-sm btn-outline-secondary" href="/stats">Вся статистика</a>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <h2 class="h6 mb-0">Последняя активность</h2>
+            <div class="text-body-secondary small">Свежие действия ботов из лога</div>
+          </div>
+          <a class="btn btn-sm btn-outline-secondary" href="/stats">
+            <i class="bi bi-bar-chart me-1" aria-hidden="true"></i>Вся статистика
+          </a>
         </div>
-        <div class="list-group list-group-flush">
-          {% for log in recent_logs %}
-            <div class="list-group-item px-0 d-flex justify-content-between align-items-start gap-2">
-              <div class="min-w-0">
-                <div class="app-clamp-1 small">{{ log.content or '—' }}</div>
-                <div class="text-muted small">{{ log.account_session_name or '' }} &middot; {{ log.destination_chat_id or '' }}</div>
+        <ul class="list-unstyled mb-0 app-activity-list">
+          {% for item in recent_activity %}
+            <li class="app-activity-item">
+              <div class="app-activity-icon app-activity-icon--{{ item.type_color }}">
+                <i class="bi {{ item.type_icon }}" aria-hidden="true"></i>
               </div>
-              <div class="text-muted small text-nowrap">{{ log.timestamp|human_dt }}</div>
-            </div>
+              <div class="app-activity-body">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                  <span class="badge text-bg-{{ item.type_color }}">{{ item.type_label }}</span>
+                  <span class="fw-semibold">{{ item.task_label }}</span>
+                  {% if item.tag %}
+                    <span class="badge text-bg-light border text-body-secondary">{{ item.tag }}</span>
+                  {% endif %}
+                  {% if item.role %}
+                    <span class="badge text-bg-light border text-body-secondary" title="Роль">
+                      <i class="bi bi-person-badge me-1" aria-hidden="true"></i>{{ item.role }}
+                    </span>
+                  {% endif %}
+                  {% if item.mood %}
+                    <span class="badge text-bg-light border text-body-secondary" title="Настроение">
+                      <i class="bi bi-emoji-smile me-1" aria-hidden="true"></i>{{ item.mood }}
+                    </span>
+                  {% endif %}
+                </div>
+                <div class="text-body-secondary small mb-1 d-flex flex-wrap align-items-center gap-1">
+                  <i class="bi bi-broadcast-pin" aria-hidden="true"></i>
+                  {% if item.target_href %}
+                    <a class="text-reset fw-semibold text-decoration-none" href="{{ item.target_href }}">{{ item.channel_display }}</a>
+                  {% else %}
+                    <span class="fw-semibold">{{ item.channel_display }}</span>
+                  {% endif %}
+                  {% if item.post_link %}
+                    <span class="text-body-tertiary">·</span>
+                    <a class="text-reset text-decoration-none" href="{{ item.post_link }}" target="_blank" rel="noopener">
+                      <i class="bi bi-box-arrow-up-right me-1" aria-hidden="true"></i>пост #{{ item.post_id }}
+                    </a>
+                  {% elif item.post_id %}
+                    <span class="text-body-tertiary">·</span>
+                    <span>пост #{{ item.post_id }}</span>
+                  {% endif %}
+                  {% if item.account_session_name %}
+                    <span class="text-body-tertiary">·</span>
+                    <i class="bi bi-person-circle" aria-hidden="true"></i>
+                    <span class="mono">{{ item.account_session_name }}</span>
+                  {% endif %}
+                </div>
+                {% if item.body %}
+                  <div class="app-activity-text app-clamp-2 small" title="{{ item.raw_content }}">{{ item.body }}</div>
+                {% elif item.summary %}
+                  <div class="app-activity-text app-clamp-2 small text-body-secondary">{{ item.summary }}</div>
+                {% endif %}
+                {% if item.message_link %}
+                  <div class="mt-1">
+                    <a class="small text-decoration-none" href="{{ item.message_link }}" target="_blank" rel="noopener">
+                      <i class="bi bi-telegram me-1" aria-hidden="true"></i>открыть в Telegram
+                    </a>
+                  </div>
+                {% endif %}
+              </div>
+              <div class="app-activity-time text-body-secondary small text-nowrap">{{ item.timestamp|human_dt }}</div>
+            </li>
           {% endfor %}
-        </div>
+        </ul>
       </div>
     </div>
   {% endif %}

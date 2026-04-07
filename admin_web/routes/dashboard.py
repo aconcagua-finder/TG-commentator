@@ -26,6 +26,7 @@ from admin_web.helpers import (
     _flash,
     _redirect,
 )
+from admin_web.activity_helpers import enrich_log_rows
 from admin_web.templating import templates, _template_context
 
 router = APIRouter()
@@ -46,13 +47,11 @@ async def dashboard(request: Request):
         proxies_active = conn.execute("SELECT COUNT(*) AS c FROM proxies WHERE status='active'").fetchone()["c"]
         triggers_total = conn.execute("SELECT COUNT(*) AS c FROM triggers").fetchone()["c"]
         scenarios_total = conn.execute("SELECT COUNT(*) AS c FROM scenarios").fetchone()["c"]
-        recent_logs = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT timestamp, account_session_name, destination_chat_id, content "
-                "FROM logs ORDER BY id DESC LIMIT 5"
-            ).fetchall()
-        ]
+        raw_logs = conn.execute(
+            "SELECT l.* FROM logs l ORDER BY l.id DESC LIMIT 8"
+        ).fetchall()
+
+    recent_activity = enrich_log_rows(raw_logs, settings)
 
     return templates.TemplateResponse(
         "dashboard.html",
@@ -69,7 +68,7 @@ async def dashboard(request: Request):
             proxies_active=proxies_active,
             triggers_total=triggers_total,
             scenarios_total=scenarios_total,
-            recent_logs=recent_logs,
+            recent_activity=recent_activity,
         ),
     )
 
