@@ -1087,6 +1087,7 @@ async def scan_post_for_spam(
     checked = 0
     spam_count = 0
     deleted_count = 0
+    failed_count = 0
     banned_count = 0
 
     try:
@@ -1163,6 +1164,8 @@ async def scan_post_for_spam(
             )
             if result.get("deleted"):
                 deleted_count += 1
+            else:
+                failed_count += 1
             if result.get("banned"):
                 banned_count += 1
     except Exception as exc:
@@ -1173,7 +1176,10 @@ async def scan_post_for_spam(
             "checked": checked,
             "spam": spam_count,
             "deleted": deleted_count,
+            "failed_to_delete": failed_count,
             "banned": banned_count,
+            "discussion_chat_id": discussion_chat_id,
+            "via_bot": bool(str((antispam_target or {}).get("bot_token") or "").strip()),
         }
 
     return {
@@ -1182,5 +1188,8 @@ async def scan_post_for_spam(
         "checked": checked,
         "spam": spam_count,
         "deleted": deleted_count,
+        "failed_to_delete": failed_count,
         "banned": banned_count,
+        "discussion_chat_id": discussion_chat_id,
+        "via_bot": bool(str((antispam_target or {}).get("bot_token") or "").strip()),
     }

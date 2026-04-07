@@ -570,12 +570,36 @@ async def antispam_target_scan_post(
         return _redirect(f"/antispam-targets/{quote(chat_id)}")
 
     if result and result.get("ok"):
-        _flash(
-            request,
-            "success",
-            f"Проверено: {result['checked']}, спам: {result['spam']}, "
-            f"удалено: {result['deleted']}, забанено: {result['banned']}.",
-        )
+        checked = result.get("checked", 0)
+        spam = result.get("spam", 0)
+        deleted = result.get("deleted", 0)
+        failed = result.get("failed_to_delete", 0)
+        banned = result.get("banned", 0)
+        discussion_id = result.get("discussion_chat_id")
+        via_bot = result.get("via_bot", False)
+
+        summary = f"Проверено: {checked}, спам: {spam}, удалено: {deleted}, забанено: {banned}."
+
+        if spam == 0:
+            _flash(request, "success", summary)
+        elif failed == 0:
+            _flash(request, "success", summary)
+        else:
+            # Partial failure: spam was detected but not deleted.
+            if via_bot:
+                hint = (
+                    f" Удалить НЕ удалось ({failed} шт.): убедись, что бот добавлен "
+                    f"в группу обсуждений (chat_id={discussion_id}) с правом удаления "
+                    f"сообщений (Delete Messages). В канал боту добавляться не нужно — "
+                    f"работать он должен в самой группе комментариев."
+                )
+            else:
+                hint = (
+                    f" Удалить НЕ удалось ({failed} шт.): у назначенных аккаунтов нет "
+                    f"прав на удаление сообщений в группе обсуждений (chat_id={discussion_id}). "
+                    f"Дай аккаунту права админа или подключи бот."
+                )
+            _flash(request, "warning", summary + hint)
     else:
         err = (result or {}).get("error") or "unknown_error"
         error_messages = {
