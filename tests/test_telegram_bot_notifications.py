@@ -191,6 +191,7 @@ class TestNotificationsRoutes(unittest.TestCase):
                     "inbox_replies": True,
                     "inbox_reactions": False,
                     "monitoring": False,
+                    "spam_deleted": False,
                 },
             )
             self.assertEqual(second_project["telegram_bot"]["chat_id"], "-100222")
@@ -291,6 +292,7 @@ class TestNotificationsRoutes(unittest.TestCase):
                     "inbox_replies": True,
                     "inbox_reactions": False,
                     "monitoring": False,
+                    "spam_deleted": False,
                 },
             )
 
