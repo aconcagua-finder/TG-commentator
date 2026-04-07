@@ -45,7 +45,9 @@ def _load_rule(chat_id: str) -> Dict[str, Any]:
     defaults: Dict[str, Any] = {
         "enabled": 0,
         "keywords": [],
+        "name_keywords": [],
         "ai_enabled": 1,
+        "ai_check_name": 0,
         "ai_prompt": "",
         "ai_model": "gpt-4.1-nano",
         "notify_telegram": 0,
@@ -55,7 +57,8 @@ def _load_rule(chat_id: str) -> Dict[str, Any]:
     with _db_connect() as conn:
         row = conn.execute(
             """
-            SELECT enabled, keywords, ai_enabled, ai_prompt, ai_model, notify_telegram
+            SELECT enabled, keywords, name_keywords, ai_enabled, ai_check_name,
+                   ai_prompt, ai_model, notify_telegram
             FROM spam_rules
             WHERE chat_id = ?
             LIMIT 1
@@ -64,19 +67,33 @@ def _load_rule(chat_id: str) -> Dict[str, Any]:
         ).fetchone()
     if not row:
         return defaults
-    raw_keywords = row["keywords"]
-    keywords: list[str] = []
-    if raw_keywords:
-        try:
-            parsed = json.loads(raw_keywords)
-            if isinstance(parsed, list):
-                keywords = [str(x or "").strip() for x in parsed if str(x or "").strip()]
-        except Exception:
-            keywords = []
+
+    def _parse_kw_list(raw):
+        out: list[str] = []
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    out = [str(x or "").strip() for x in parsed if str(x or "").strip()]
+            except Exception:
+                out = []
+        return out
+
+    try:
+        name_kw_raw = row["name_keywords"]
+    except (KeyError, IndexError):
+        name_kw_raw = None
+    try:
+        ai_check_name_raw = row["ai_check_name"]
+    except (KeyError, IndexError):
+        ai_check_name_raw = 0
+
     return {
         "enabled": int(row["enabled"] or 0),
-        "keywords": keywords,
+        "keywords": _parse_kw_list(row["keywords"]),
+        "name_keywords": _parse_kw_list(name_kw_raw),
         "ai_enabled": int(row["ai_enabled"] or 0),
+        "ai_check_name": int(ai_check_name_raw or 0),
         "ai_prompt": str(row["ai_prompt"] or ""),
         "ai_model": str(row["ai_model"] or "gpt-4.1-nano") or "gpt-4.1-nano",
         "notify_telegram": int(row["notify_telegram"] or 0),
@@ -129,7 +146,9 @@ def _upsert_spam_rule(
     *,
     enabled: int,
     keywords_json: str,
+    name_keywords_json: str,
     ai_enabled: int,
+    ai_check_name: int,
     ai_prompt: str,
     ai_model: str,
     notify_telegram: int,
@@ -137,17 +156,21 @@ def _upsert_spam_rule(
     with _db_connect() as conn:
         conn.execute(
             """
-            INSERT INTO spam_rules(chat_id, enabled, keywords, ai_enabled, ai_prompt, ai_model, notify_telegram, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO spam_rules(chat_id, enabled, keywords, name_keywords, ai_enabled, ai_check_name,
+                                   ai_prompt, ai_model, notify_telegram, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET
                 enabled = excluded.enabled,
                 keywords = excluded.keywords,
+                name_keywords = excluded.name_keywords,
                 ai_enabled = excluded.ai_enabled,
+                ai_check_name = excluded.ai_check_name,
                 ai_prompt = excluded.ai_prompt,
                 ai_model = excluded.ai_model,
                 notify_telegram = excluded.notify_telegram
             """,
-            (chat_id, enabled, keywords_json, ai_enabled, ai_prompt, ai_model, notify_telegram, _now_iso()),
+            (chat_id, enabled, keywords_json, name_keywords_json, ai_enabled, ai_check_name,
+             ai_prompt, ai_model, notify_telegram, _now_iso()),
         )
         conn.commit()
 
@@ -244,6 +267,7 @@ async def antispam_target_edit_page(request: Request, chat_id: str):
 
     rule = _load_rule(str(target.get("chat_id") or ""))
     keywords_text = "\n".join(rule.get("keywords") or [])
+    name_keywords_text = "\n".join(rule.get("name_keywords") or [])
 
     accounts, _ = _load_accounts()
     accounts = _filter_accounts_by_project(accounts, project_id)
@@ -258,6 +282,7 @@ async def antispam_target_edit_page(request: Request, chat_id: str):
             target=target,
             rule=rule,
             keywords_text=keywords_text,
+            name_keywords_text=name_keywords_text,
             accounts=accounts,
             recent_logs=logs,
         ),
@@ -270,7 +295,9 @@ async def antispam_target_edit_save(
     chat_id: str,
     enabled: str | None = Form(None),
     keywords_text: str = Form(""),
+    name_keywords_text: str = Form(""),
     ai_enabled: str | None = Form(None),
+    ai_check_name: str | None = Form(None),
     ai_prompt: str = Form(""),
     ai_model: str = Form("gpt-4.1-nano"),
     notify_telegram: str | None = Form(None),
@@ -287,11 +314,14 @@ async def antispam_target_edit_save(
 
     # Update spam rules in DB.
     keywords = _keywords_from_textarea(keywords_text)
+    name_keywords = _keywords_from_textarea(name_keywords_text)
     _upsert_spam_rule(
         target_chat_id,
         enabled=1 if _parse_bool(enabled, default=False) else 0,
         keywords_json=json.dumps(keywords, ensure_ascii=False),
+        name_keywords_json=json.dumps(name_keywords, ensure_ascii=False),
         ai_enabled=1 if _parse_bool(ai_enabled, default=False) else 0,
+        ai_check_name=1 if _parse_bool(ai_check_name, default=False) else 0,
         ai_prompt=str(ai_prompt or "").strip(),
         ai_model=str(ai_model or "gpt-4.1-nano").strip() or "gpt-4.1-nano",
         notify_telegram=1 if _parse_bool(notify_telegram, default=False) else 0,
@@ -467,3 +497,69 @@ async def antispam_target_unban_user(request: Request, chat_id: str, user_id: in
     else:
         _flash(request, "danger", f"Не удалось разбанить пользователя {user_id}.")
     return _redirect(f"/antispam-targets/{quote(chat_id)}/bans")
+
+
+# ---------------------------------------------------------------------------
+# Manual scan: re-check existing post
+# ---------------------------------------------------------------------------
+
+
+@router.post("/antispam-targets/{chat_id}/scan-post")
+async def antispam_target_scan_post(
+    request: Request,
+    chat_id: str,
+    post_url: str = Form(""),
+    limit: str = Form("200"),
+):
+    from services.antispam import scan_post_for_spam
+
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    _, target = _find_antispam_target_by_chat_id(settings, chat_id, project_id)
+
+    post_url = str(post_url or "").strip()
+    if not post_url:
+        _flash(request, "warning", "Укажи ссылку на пост в канале.")
+        return _redirect(f"/antispam-targets/{quote(chat_id)}")
+
+    try:
+        limit_int = max(min(int(limit or 200), 500), 1)
+    except Exception:
+        limit_int = 200
+
+    active_clients = getattr(request.app.state, "active_clients", {}) or {}
+    if not active_clients:
+        _flash(request, "danger", "Нет активных клиентов. Запусти комментатор и попробуй снова.")
+        return _redirect(f"/antispam-targets/{quote(chat_id)}")
+
+    result = await scan_post_for_spam(
+        post_url=post_url,
+        antispam_target=target,
+        active_clients=active_clients,
+        current_settings=settings,
+        limit=limit_int,
+    )
+
+    if result.get("ok"):
+        _flash(
+            request,
+            "success",
+            f"Проверено: {result['checked']}, спам: {result['spam']}, "
+            f"удалено: {result['deleted']}, забанено: {result['banned']}.",
+        )
+    else:
+        err = result.get("error") or "unknown_error"
+        error_messages = {
+            "invalid_url": "Не удалось разобрать ссылку. Пример: https://t.me/channel/123",
+            "no_target_chat_id": "У цели нет chat_id.",
+            "no_spam_rule": "Для этого чата нет правил антиспама. Сначала сохрани правила.",
+            "no_connected_clients": "Нет подключённых аккаунтов для этой цели.",
+            "no_discussion_thread": "Не удалось найти обсуждение под этим постом (возможно, нет комментариев или канал без linked-группы).",
+            "discussion_entity_failed": "Не удалось получить группу обсуждений.",
+        }
+        msg = error_messages.get(err) or f"Ошибка: {err}"
+        if result.get("checked"):
+            msg += f" (проверено до ошибки: {result['checked']})"
+        _flash(request, "danger", msg)
+
+    return _redirect(f"/antispam-targets/{quote(chat_id)}")

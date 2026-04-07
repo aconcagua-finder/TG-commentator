@@ -328,7 +328,9 @@ def _table_spam_rules() -> str:
         chat_id TEXT NOT NULL,
         enabled INTEGER DEFAULT 0,
         keywords TEXT DEFAULT '',
+        name_keywords TEXT DEFAULT '[]',
         ai_enabled INTEGER DEFAULT 1,
+        ai_check_name INTEGER DEFAULT 0,
         ai_prompt TEXT DEFAULT '',
         ai_model TEXT DEFAULT 'gpt-4.1-nano',
         notify_telegram INTEGER DEFAULT 0,
@@ -443,9 +445,19 @@ def init_database(conn) -> None:
 
     if _is_postgres():
         conn.execute("ALTER TABLE logs ADD COLUMN IF NOT EXISTS msg_id BIGINT")
+        conn.execute("ALTER TABLE spam_rules ADD COLUMN IF NOT EXISTS name_keywords TEXT DEFAULT '[]'")
+        conn.execute("ALTER TABLE spam_rules ADD COLUMN IF NOT EXISTS ai_check_name INTEGER DEFAULT 0")
     else:
         try:
             conn.execute("ALTER TABLE logs ADD COLUMN msg_id BIGINT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE spam_rules ADD COLUMN name_keywords TEXT DEFAULT '[]'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE spam_rules ADD COLUMN ai_check_name INTEGER DEFAULT 0")
         except Exception:
             pass
 

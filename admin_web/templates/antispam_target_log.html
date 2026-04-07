@@ -42,9 +42,9 @@
                 </td>
                 <td class="mono small">{{ r.detection_method or '—' }}</td>
                 <td class="small">
-                  {% if r.detection_method == 'keyword' %}
+                  {% if r.detection_method in ('keyword', 'name_keyword') %}
                     <span class="mono">{{ r.matched_keyword or '—' }}</span>
-                  {% elif r.detection_method == 'ai' %}
+                  {% elif r.detection_method in ('ai', 'ai_name') %}
                     <span class="app-clamp-3" title="{{ r.ai_reason or '' }}">{{ r.ai_reason or '—' }}</span>
                   {% else %}
                     —

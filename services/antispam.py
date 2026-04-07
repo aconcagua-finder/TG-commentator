@@ -287,7 +287,8 @@ def _load_spam_rule(chat_id: str) -> dict[str, Any] | None:
         with _db_connect() as conn:
             row = conn.execute(
                 """
-                SELECT enabled, keywords, ai_enabled, ai_prompt, ai_model, notify_telegram
+                SELECT enabled, keywords, name_keywords, ai_enabled, ai_check_name,
+                       ai_prompt, ai_model, notify_telegram
                 FROM spam_rules
                 WHERE chat_id = ?
                 LIMIT 1
@@ -296,11 +297,22 @@ def _load_spam_rule(chat_id: str) -> dict[str, Any] | None:
             ).fetchone()
         if not row:
             return None
+        # Tolerate older rows where new columns may be NULL.
+        try:
+            name_keywords_raw = row["name_keywords"]
+        except (KeyError, IndexError):
+            name_keywords_raw = None
+        try:
+            ai_check_name_raw = row["ai_check_name"]
+        except (KeyError, IndexError):
+            ai_check_name_raw = 0
         return {
             "chat_id": chat_id,
             "enabled": int(row["enabled"] or 0),
             "keywords": _parse_keywords(row["keywords"]),
+            "name_keywords": _parse_keywords(name_keywords_raw),
             "ai_enabled": int(row["ai_enabled"] or 0),
+            "ai_check_name": int(ai_check_name_raw or 0),
             "ai_prompt": str(row["ai_prompt"] or "").strip(),
             "ai_model": str(row["ai_model"] or "gpt-4.1-nano").strip() or "gpt-4.1-nano",
             "notify_telegram": int(row["notify_telegram"] or 0),
@@ -341,11 +353,18 @@ async def _ai_check_spam(
     ai_prompt: str,
     model: str,
     api_key: str,
-) -> tuple[bool, str]:
+    sender_display: str = "",
+    check_name: bool = False,
+) -> tuple[bool, str, str]:
+    """Check if a message is spam via OpenAI.
+
+    Returns:
+        (is_spam, reason, source) where source is "text" or "name".
+    """
     if not api_key:
-        return False, "missing_openai_api_key"
-    if not text.strip():
-        return False, "empty_text"
+        return False, "missing_openai_api_key", ""
+    if not text.strip() and not (check_name and sender_display.strip()):
+        return False, "empty_input", ""
 
     system_prompt = (
         "Ты антиспам-фильтр для Telegram-комментариев. "
@@ -353,13 +372,33 @@ async def _ai_check_spam(
         "Спам: крипта/инвестиции/сигналы, казино/ставки, промокоды/скидки, "
         "реферальные ссылки, набор в команды, 'пиши в лс', предложения заработка, "
         "продажа услуг, накрутка, фишинг.\n"
-        "Верни СТРОГО JSON без пояснений вокруг: "
-        '{"spam": true|false, "reason": "коротко почему"}.\n'
-        "Если сомневаешься — spam=false."
     )
+    if check_name and sender_display.strip():
+        system_prompt += (
+            "Также учитывай имя отправителя: если в имени или username "
+            "явно присутствует реклама/продвижение/услуги (например, "
+            "'Имя | Реклама', 'Продвижение в TG', '@promo_user') — "
+            "это спам, даже если текст комментария осмысленный.\n"
+            "В поле 'source' укажи 'text' если основная причина в тексте, "
+            "или 'name' если в имени отправителя.\n"
+            'Верни СТРОГО JSON: {"spam": true|false, "reason": "...", "source": "text|name"}.\n'
+        )
+    else:
+        system_prompt += (
+            "Верни СТРОГО JSON без пояснений вокруг: "
+            '{"spam": true|false, "reason": "коротко почему"}.\n'
+        )
+    system_prompt += "Если сомневаешься — spam=false."
+
     extra = str(ai_prompt or "").strip()
     if extra:
         system_prompt += f"\n\nДоп.описание спама для этого канала:\n{extra}"
+
+    user_parts = []
+    if check_name and sender_display.strip():
+        user_parts.append(f"Имя отправителя: {sender_display.strip()}")
+    user_parts.append(f"Сообщение:\n{text}")
+    user_content = "\n\n".join(user_parts)
 
     client = openai.AsyncOpenAI(api_key=api_key)
     try:
@@ -367,14 +406,14 @@ async def _ai_check_spam(
             model=str(model or "gpt-4.1-nano"),
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Сообщение:\n{text}"},
+                {"role": "user", "content": user_content},
             ],
             temperature=0,
-            max_completion_tokens=120,
+            max_completion_tokens=160,
         )
     except Exception as exc:
         logger.warning("antispam: OpenAI request failed: %s", exc)
-        return False, f"openai_error:{type(exc).__name__}"
+        return False, f"openai_error:{type(exc).__name__}", ""
 
     content = ""
     try:
@@ -382,19 +421,23 @@ async def _ai_check_spam(
     except Exception:
         content = ""
     if not content:
-        return False, "empty_openai_response"
+        return False, "empty_openai_response", ""
 
     raw = _strip_code_fences(content)
     try:
         payload = json.loads(raw)
     except Exception:
-        return False, "invalid_json"
+        return False, "invalid_json", ""
 
-    spam = bool(payload.get("spam")) if isinstance(payload, dict) else False
-    reason = ""
-    if isinstance(payload, dict):
-        reason = str(payload.get("reason") or "").strip()
-    return spam, (reason or "ai")
+    if not isinstance(payload, dict):
+        return False, "invalid_json", ""
+
+    spam = bool(payload.get("spam"))
+    reason = str(payload.get("reason") or "").strip()
+    source = str(payload.get("source") or "").strip().lower()
+    if source not in ("text", "name"):
+        source = "text"
+    return spam, (reason or "ai"), source
 
 
 async def _try_delete_with_client(client, chat_id: int, msg_id: int) -> bool:
@@ -544,6 +587,229 @@ async def _notify_spam_deleted(
         logger.warning("antispam: telegram notify failed: %s", exc)
 
 
+async def _classify_spam(
+    text: str,
+    *,
+    sender_name: str,
+    sender_username: str,
+    rule: dict[str, Any],
+    current_settings: dict,
+) -> tuple[bool, str, str, str]:
+    """Classify a message as spam using keywords and optional AI.
+
+    Returns:
+        (is_spam, detection_method, matched_keyword, ai_reason)
+        detection_method ∈ {"keyword", "name_keyword", "ai", "ai_name"}
+    """
+    # 1. Text keywords.
+    matched = _keyword_match(text, rule.get("keywords") or [])
+    if matched:
+        return True, "keyword", matched, ""
+
+    # 2. Name keywords (sender display name + username).
+    name_haystack = " ".join([sender_name or "", sender_username or ""]).strip()
+    name_matched = _keyword_match(name_haystack, rule.get("name_keywords") or [])
+    if name_matched:
+        return True, "name_keyword", name_matched, ""
+
+    # 3. AI verification.
+    if int(rule.get("ai_enabled") or 0) == 1:
+        api_key = _openai_api_key(current_settings)
+        check_name = int(rule.get("ai_check_name") or 0) == 1
+        sender_display = ""
+        if check_name:
+            parts = []
+            if sender_name:
+                parts.append(sender_name)
+            if sender_username:
+                parts.append(f"@{sender_username}")
+            sender_display = " ".join(parts).strip()
+
+        is_spam, reason, source = await _ai_check_spam(
+            text,
+            ai_prompt=str(rule.get("ai_prompt") or ""),
+            model=str(rule.get("ai_model") or "gpt-4.1-nano"),
+            api_key=api_key,
+            sender_display=sender_display,
+            check_name=check_name,
+        )
+        if is_spam:
+            method = "ai_name" if (check_name and source == "name") else "ai"
+            return True, method, "", reason
+
+    return False, "", "", ""
+
+
+async def _handle_detected_spam(
+    *,
+    chat_id_int: int,
+    msg_id_int: int,
+    text: str,
+    sender_id_int: int,
+    sender_name: str,
+    sender_username: str,
+    detection_method: str,
+    matched_keyword: str,
+    ai_reason: str,
+    rule: dict[str, Any],
+    antispam_target: dict[str, Any] | None,
+    active_clients: dict,
+    current_settings: dict,
+    spam_blocked_msgs: set | None,
+    spam_blocked_msgs_order: deque | None,
+    spam_blocked_msgs_max: int,
+    chat_title: str = "",
+    chat_username: str = "",
+) -> dict[str, Any]:
+    """Delete + ban + log a detected spam message.
+
+    Returns a result dict with deleted/banned booleans and operator info.
+    """
+    chat_id_str = str(chat_id_int)
+
+    # Mark blocked messages (LRU eviction to avoid unbounded growth).
+    if isinstance(spam_blocked_msgs, set):
+        spam_blocked_msgs.add(msg_id_int)
+        if isinstance(spam_blocked_msgs_order, deque):
+            spam_blocked_msgs_order.append(msg_id_int)
+            try:
+                limit = int(spam_blocked_msgs_max or 0)
+            except Exception:
+                limit = 10000
+            limit = max(limit, 0)
+            if limit > 0:
+                while len(spam_blocked_msgs_order) > limit:
+                    old = spam_blocked_msgs_order.popleft()
+                    spam_blocked_msgs.discard(old)
+
+    # Delete: bot_token → Bot API, otherwise → user-accounts.
+    deleted = False
+    operator_session_name: str | None = None
+    bot_token = str((antispam_target or {}).get("bot_token") or "").strip()
+
+    if bot_token:
+        deleted = await _delete_message_via_bot(bot_token, chat_id_int, msg_id_int)
+        if deleted:
+            operator_session_name = "bot"
+    else:
+        allowed_sessions = (antispam_target or {}).get("assigned_accounts") or None
+        deleted, operator_session_name = await _delete_message_any(
+            chat_id_int,
+            msg_id_int,
+            active_clients=active_clients,
+            allowed_sessions=allowed_sessions,
+        )
+
+    action = "deleted" if deleted else "failed_to_delete"
+
+    log_entry: dict[str, Any] = {
+        "chat_id": chat_id_str,
+        "msg_id": msg_id_int,
+        "sender_id": sender_id_int or None,
+        "sender_name": sender_name or None,
+        "sender_username": sender_username or None,
+        "message_text": text or None,
+        "detection_method": detection_method or None,
+        "matched_keyword": matched_keyword if detection_method in ("keyword", "name_keyword") else None,
+        "ai_reason": ai_reason if detection_method in ("ai", "ai_name") else None,
+        "action": action,
+        "created_at": _now_iso(),
+    }
+    _insert_spam_log(log_entry)
+
+    # Ban spammer if enabled and deletion succeeded.
+    banned = False
+    ban_enabled = bool((antispam_target or {}).get("ban_spammers"))
+    if deleted and ban_enabled and sender_id_int:
+        if bot_token:
+            banned = await _ban_user_via_bot(bot_token, chat_id_int, sender_id_int)
+        else:
+            allowed_sessions = (antispam_target or {}).get("assigned_accounts") or None
+            banned = await _ban_user_via_client(
+                chat_id_int, sender_id_int,
+                active_clients=active_clients, allowed_sessions=allowed_sessions,
+            )
+        if banned:
+            reason_for_ban = matched_keyword or ai_reason or detection_method
+            _insert_spam_ban({
+                "chat_id": chat_id_str,
+                "user_id": sender_id_int,
+                "username": sender_username or None,
+                "display_name": sender_name or None,
+                "reason": reason_for_ban,
+                "detection_method": detection_method,
+            })
+            logger.info("antispam: banned user=%s in chat=%s", sender_id_int, chat_id_str)
+
+    # Mirror into generic action logs so it appears in /stats.
+    target = antispam_target
+    try:
+        from services.db_queries import log_action_to_db
+
+        if target is None:
+            for t in get_project_targets(current_settings):
+                if str(t.get("linked_chat_id") or "").strip() == chat_id_str:
+                    target = t
+                    break
+
+        log_action_to_db(
+            {
+                "type": "spam_deleted",
+                "post_id": msg_id_int,
+                "msg_id": msg_id_int,
+                "comment": (
+                    f"[{detection_method}] "
+                    + (f"kw={matched_keyword} " if matched_keyword else "")
+                    + (f"reason={ai_reason} " if ai_reason else "")
+                    + (text or "")
+                ).strip(),
+                "date": _now_iso(),
+                "account": {
+                    "session_name": operator_session_name or "",
+                    "first_name": "",
+                    "username": "",
+                },
+                "target": {
+                    "chat_name": str((target or {}).get("chat_name") or chat_title or chat_id_str),
+                    "chat_username": str((target or {}).get("chat_username") or chat_username or ""),
+                    "channel_id": chat_id_str,
+                    "destination_chat_id": chat_id_str,
+                },
+            }
+        )
+    except Exception:
+        pass
+
+    if int(rule.get("notify_telegram") or 0) == 1:
+        try:
+            await _notify_spam_deleted(
+                log_entry=log_entry,
+                target=target,
+                operator_session_name=operator_session_name,
+                current_settings=current_settings,
+            )
+        except Exception:
+            pass
+
+    if deleted:
+        logger.info(
+            "🧹 [antispam] deleted chat=%s msg=%s method=%s",
+            chat_id_str, msg_id_int, detection_method,
+        )
+    else:
+        logger.warning(
+            "⚠️ [antispam] detected but failed to delete chat=%s msg=%s method=%s",
+            chat_id_str, msg_id_int, detection_method,
+        )
+
+    return {
+        "deleted": deleted,
+        "banned": banned,
+        "operator_session_name": operator_session_name,
+        "log_entry": log_entry,
+    }
+
+
 async def check_and_handle_spam(
     event,
     *,
@@ -592,74 +858,7 @@ async def check_and_handle_spam(
     if not rule or int(rule.get("enabled") or 0) != 1:
         return False
 
-    text = _safe_text(msg)
-    matched_keyword = _keyword_match(text, rule.get("keywords") or [])
-    spam = False
-    detection_method = ""
-    ai_reason = ""
-
-    if matched_keyword:
-        spam = True
-        detection_method = "keyword"
-    elif int(rule.get("ai_enabled") or 0) == 1:
-        api_key = _openai_api_key(current_settings)
-        spam, ai_reason = await _ai_check_spam(
-            text,
-            ai_prompt=str(rule.get("ai_prompt") or ""),
-            model=str(rule.get("ai_model") or "gpt-4.1-nano"),
-            api_key=api_key,
-        )
-        if spam:
-            detection_method = "ai"
-
-    if not spam:
-        return False
-
-    # Mark blocked messages (LRU eviction to avoid unbounded growth).
-    if isinstance(spam_blocked_msgs, set):
-        spam_blocked_msgs.add(msg_id_int)
-        if isinstance(spam_blocked_msgs_order, deque):
-            spam_blocked_msgs_order.append(msg_id_int)
-            try:
-                limit = int(spam_blocked_msgs_max or 0)
-            except Exception:
-                limit = 10000
-            limit = max(limit, 0)
-            if limit > 0:
-                while len(spam_blocked_msgs_order) > limit:
-                    old = spam_blocked_msgs_order.popleft()
-                    spam_blocked_msgs.discard(old)
-
-    # Resolve antispam target to get bot_token / assigned_accounts.
-    antispam_target = None
-    try:
-        for at in (current_settings.get("antispam_targets") or []):
-            if str(at.get("chat_id") or "").strip() == chat_id_str:
-                antispam_target = at
-                break
-    except Exception:
-        pass
-
-    # Delete: bot_token → Bot API, otherwise → user-accounts.
-    deleted = False
-    operator_session_name: str | None = None
-    bot_token = str((antispam_target or {}).get("bot_token") or "").strip()
-
-    if bot_token:
-        deleted = await _delete_message_via_bot(bot_token, chat_id_int, msg_id_int)
-        if deleted:
-            operator_session_name = "bot"
-    else:
-        allowed_sessions = (antispam_target or {}).get("assigned_accounts") or None
-        deleted, operator_session_name = await _delete_message_any(
-            chat_id_int,
-            msg_id_int,
-            active_clients=active_clients,
-            allowed_sessions=allowed_sessions,
-        )
-
-    action = "deleted" if deleted else "failed_to_delete"
-
+    # Extract sender info upfront so we can also classify by name.
     sender_name = ""
     sender_username = ""
     try:
@@ -669,121 +868,321 @@ async def check_and_handle_spam(
         ln = str(getattr(sender, "last_name", None) or "").strip()
         sender_name = (f"{fn} {ln}").strip()
     except Exception:
-        sender = None
+        pass
     if not sender_name and sender_id_int:
         sender_name = str(sender_id_int)
 
-    log_entry: dict[str, Any] = {
-        "chat_id": chat_id_str,
-        "msg_id": msg_id_int,
-        "sender_id": sender_id_int or None,
-        "sender_name": sender_name or None,
-        "sender_username": sender_username or None,
-        "message_text": text or None,
-        "detection_method": detection_method or None,
-        "matched_keyword": matched_keyword if detection_method == "keyword" else None,
-        "ai_reason": ai_reason if detection_method == "ai" else None,
-        "action": action,
-        "created_at": _now_iso(),
-    }
-    _insert_spam_log(log_entry)
+    text = _safe_text(msg)
+    is_spam, detection_method, matched_keyword, ai_reason = await _classify_spam(
+        text,
+        sender_name=sender_name,
+        sender_username=sender_username,
+        rule=rule,
+        current_settings=current_settings,
+    )
+    if not is_spam:
+        return False
 
-    # Ban spammer if enabled and deletion succeeded.
-    ban_enabled = bool((antispam_target or {}).get("ban_spammers"))
-    if deleted and ban_enabled and sender_id_int:
-        banned = False
-        if bot_token:
-            banned = await _ban_user_via_bot(bot_token, chat_id_int, sender_id_int)
-        else:
-            allowed_sessions = (antispam_target or {}).get("assigned_accounts") or None
-            banned = await _ban_user_via_client(
-                chat_id_int, sender_id_int,
-                active_clients=active_clients, allowed_sessions=allowed_sessions,
-            )
-        if banned:
-            reason = matched_keyword if detection_method == "keyword" else (ai_reason or "ai")
-            _insert_spam_ban({
-                "chat_id": chat_id_str,
-                "user_id": sender_id_int,
-                "username": sender_username or None,
-                "display_name": sender_name or None,
-                "reason": reason,
-                "detection_method": detection_method,
-            })
-            logger.info("antispam: banned user=%s in chat=%s", sender_id_int, chat_id_str)
-
-    # Also mirror into generic action logs so it appears in /stats.
+    # Resolve antispam target to get bot_token / assigned_accounts / ban_spammers.
+    antispam_target = None
     try:
-        from services.db_queries import log_action_to_db
-
-        target = antispam_target
-        if target is None:
-            for t in get_project_targets(current_settings):
-                if str(t.get("linked_chat_id") or "").strip() == chat_id_str:
-                    target = t
-                    break
-
-        chat_title = ""
-        chat_username = ""
-        try:
-            chat = await event.get_chat()
-            chat_title = str(getattr(chat, "title", None) or "").strip()
-            chat_username = str(getattr(chat, "username", None) or "").strip()
-        except Exception:
-            chat = None
-
-        log_action_to_db(
-            {
-                "type": "spam_deleted",
-                "post_id": msg_id_int,
-                "msg_id": msg_id_int,
-                "comment": (
-                    f"[{detection_method}] "
-                    + (f"kw={matched_keyword} " if matched_keyword else "")
-                    + (f"reason={ai_reason} " if ai_reason else "")
-                    + (text or "")
-                ).strip(),
-                "date": _now_iso(),
-                "account": {
-                    "session_name": operator_session_name or "",
-                    "first_name": "",
-                    "username": "",
-                },
-                "target": {
-                    "chat_name": str((target or {}).get("chat_name") or chat_title or chat_id_str),
-                    "chat_username": str((target or {}).get("chat_username") or chat_username or ""),
-                    "channel_id": chat_id_str,
-                    "destination_chat_id": chat_id_str,
-                },
-            }
-        )
+        for at in (current_settings.get("antispam_targets") or []):
+            if str(at.get("chat_id") or "").strip() == chat_id_str:
+                antispam_target = at
+                break
     except Exception:
-        target = None
+        pass
 
-    if int(rule.get("notify_telegram") or 0) == 1:
-        try:
-            await _notify_spam_deleted(
-                log_entry=log_entry,
-                target=target,
-                operator_session_name=operator_session_name,
-                current_settings=current_settings,
-            )
-        except Exception:
-            pass
+    chat_title = ""
+    chat_username = ""
+    try:
+        chat = await event.get_chat()
+        chat_title = str(getattr(chat, "title", None) or "").strip()
+        chat_username = str(getattr(chat, "username", None) or "").strip()
+    except Exception:
+        pass
 
-    if deleted:
-        logger.info(
-            "🧹 [antispam] deleted chat=%s msg=%s method=%s",
-            chat_id_str,
-            msg_id_int,
-            detection_method,
-        )
-    else:
-        logger.warning(
-            "⚠️ [antispam] detected but failed to delete chat=%s msg=%s method=%s",
-            chat_id_str,
-            msg_id_int,
-            detection_method,
-        )
+    await _handle_detected_spam(
+        chat_id_int=chat_id_int,
+        msg_id_int=msg_id_int,
+        text=text,
+        sender_id_int=sender_id_int,
+        sender_name=sender_name,
+        sender_username=sender_username,
+        detection_method=detection_method,
+        matched_keyword=matched_keyword,
+        ai_reason=ai_reason,
+        rule=rule,
+        antispam_target=antispam_target,
+        active_clients=active_clients,
+        current_settings=current_settings,
+        spam_blocked_msgs=spam_blocked_msgs,
+        spam_blocked_msgs_order=spam_blocked_msgs_order,
+        spam_blocked_msgs_max=spam_blocked_msgs_max,
+        chat_title=chat_title,
+        chat_username=chat_username,
+    )
 
     return True
+
+
+# ---------------------------------------------------------------------------
+# Manual scan: re-check existing post comments
+# ---------------------------------------------------------------------------
+
+
+def _parse_telegram_post_url(url: str) -> tuple[str, int] | None:
+    """Parse a Telegram message link.
+
+    Returns (chat_ref, msg_id) where chat_ref is either:
+      - a "@username" / "username" string for public channels, or
+      - a "-100..." string for private channels (/c/ links).
+
+    Supported formats:
+      - https://t.me/CHANNEL/123
+      - https://t.me/CHANNEL/123/456 (forum or comment link → uses second id)
+      - https://t.me/c/1234567890/123
+      - https://t.me/c/1234567890/123/456
+      - t.me/... without scheme
+    """
+    import re
+    s = str(url or "").strip()
+    if not s:
+        return None
+    s = re.sub(r"^https?://", "", s, flags=re.IGNORECASE)
+    s = s.lstrip("/")
+    if s.lower().startswith("t.me/"):
+        s = s[5:]
+    elif s.lower().startswith("telegram.me/"):
+        s = s[12:]
+    parts = [p for p in s.split("/") if p]
+    if len(parts) < 2:
+        return None
+
+    if parts[0] == "c":
+        # Private: c/<bare>/<id>[/<sub_id>]
+        if len(parts) < 3:
+            return None
+        try:
+            bare = int(parts[1])
+        except ValueError:
+            return None
+        chat_ref = f"-100{bare}"
+        # Use the deepest message id we have.
+        try:
+            msg_id = int(parts[3]) if len(parts) >= 4 else int(parts[2])
+        except ValueError:
+            return None
+        return chat_ref, msg_id
+
+    # Public: <username>/<id>[/<sub_id>]
+    username = parts[0].lstrip("@")
+    try:
+        msg_id = int(parts[2]) if len(parts) >= 3 else int(parts[1])
+    except ValueError:
+        return None
+    return username, msg_id
+
+
+async def scan_post_for_spam(
+    *,
+    post_url: str,
+    antispam_target: dict[str, Any],
+    active_clients: dict,
+    current_settings: dict,
+    spam_blocked_msgs: set | None = None,
+    spam_blocked_msgs_order: deque | None = None,
+    spam_blocked_msgs_max: int = 10000,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Manually scan all comments under a Telegram post for spam.
+
+    Resolves the post URL → channel → discussion thread, iterates the
+    last `limit` comments, and runs the same spam classifier+handler.
+
+    Returns: {ok, error, checked, spam, deleted, banned}
+    """
+    parsed = _parse_telegram_post_url(post_url)
+    if parsed is None:
+        return {"ok": False, "error": "invalid_url", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
+    chat_ref, post_id = parsed
+
+    target_chat_id = str(antispam_target.get("chat_id") or "").strip()
+    if not target_chat_id:
+        return {"ok": False, "error": "no_target_chat_id", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
+
+    rule = _load_spam_rule(target_chat_id)
+    if not rule:
+        return {"ok": False, "error": "no_spam_rule", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
+
+    # Pick a connected client (prefer assigned_accounts, fallback to any).
+    assigned = antispam_target.get("assigned_accounts") or []
+    wrappers = list(active_clients.values()) if isinstance(active_clients, dict) else []
+    if assigned:
+        allowed_set = set(assigned)
+        candidates = [w for w in wrappers if str(getattr(w, "session_name", "") or "").strip() in allowed_set]
+    else:
+        candidates = wrappers
+    candidates = [
+        w for w in candidates
+        if getattr(w, "client", None) is not None and w.client.is_connected()
+    ]
+    if not candidates:
+        return {"ok": False, "error": "no_connected_clients", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
+
+    wrapper = candidates[0]
+    client = wrapper.client
+
+    # Resolve the source channel entity.
+    try:
+        if isinstance(chat_ref, str) and chat_ref.startswith("-100"):
+            entity = await client.get_input_entity(int(chat_ref))
+        else:
+            entity = await client.get_entity(chat_ref)
+    except Exception as exc:
+        logger.warning("antispam scan: failed to resolve %s: %s", chat_ref, exc)
+        return {"ok": False, "error": f"resolve_failed:{type(exc).__name__}", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
+
+    # Resolve to discussion thread (linked group + thread root msg id).
+    discussion_chat_id = None
+    discussion_root_id = None
+    try:
+        from telethon.tl.functions.messages import GetDiscussionMessageRequest
+        discussion_res = await client(GetDiscussionMessageRequest(peer=entity, msg_id=post_id))
+        if discussion_res and discussion_res.messages:
+            root_msg = discussion_res.messages[0]
+            try:
+                discussion_chat_id = int(getattr(root_msg, "chat_id", None) or 0) or None
+            except Exception:
+                discussion_chat_id = None
+            if not discussion_chat_id:
+                peer = getattr(root_msg, "peer_id", None)
+                channel_id = getattr(peer, "channel_id", None)
+                if channel_id:
+                    discussion_chat_id = int(f"-100{channel_id}")
+            discussion_root_id = int(getattr(root_msg, "id", None) or post_id)
+    except Exception as exc:
+        logger.warning("antispam scan: GetDiscussionMessageRequest failed: %s", exc)
+
+    if not discussion_chat_id or not discussion_root_id:
+        return {"ok": False, "error": "no_discussion_thread", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
+
+    # Make sure the discussion chat matches the antispam target chat_id.
+    if str(discussion_chat_id) != target_chat_id:
+        logger.warning(
+            "antispam scan: discussion chat %s != target %s",
+            discussion_chat_id, target_chat_id,
+        )
+
+    # Iterate comments in the thread.
+    try:
+        discussion_entity = await client.get_input_entity(discussion_chat_id)
+    except Exception as exc:
+        logger.warning("antispam scan: failed to get discussion entity: %s", exc)
+        return {"ok": False, "error": "discussion_entity_failed", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
+
+    try:
+        our_ids = get_all_our_user_ids(active_clients=active_clients, current_settings=current_settings)
+    except Exception:
+        our_ids = set()
+
+    checked = 0
+    spam_count = 0
+    deleted_count = 0
+    banned_count = 0
+
+    try:
+        async for message in client.iter_messages(
+            discussion_entity, reply_to=discussion_root_id, limit=limit,
+        ):
+            if message is None:
+                continue
+            try:
+                msg_id_int = int(getattr(message, "id", 0) or 0)
+            except Exception:
+                continue
+            if not msg_id_int:
+                continue
+
+            # Skip the root message itself.
+            if msg_id_int == discussion_root_id:
+                continue
+
+            sender_id_raw = getattr(message, "sender_id", None)
+            try:
+                sender_id_int = int(sender_id_raw) if sender_id_raw is not None else 0
+            except Exception:
+                sender_id_int = 0
+
+            if sender_id_int and sender_id_int in our_ids:
+                continue
+
+            # Extract sender info.
+            sender_name = ""
+            sender_username = ""
+            try:
+                sender = await message.get_sender()
+                sender_username = str(getattr(sender, "username", None) or "").strip()
+                fn = str(getattr(sender, "first_name", None) or "").strip()
+                ln = str(getattr(sender, "last_name", None) or "").strip()
+                sender_name = (f"{fn} {ln}").strip()
+            except Exception:
+                pass
+            if not sender_name and sender_id_int:
+                sender_name = str(sender_id_int)
+
+            text = _safe_text(message)
+            checked += 1
+
+            is_spam, detection_method, matched_keyword, ai_reason = await _classify_spam(
+                text,
+                sender_name=sender_name,
+                sender_username=sender_username,
+                rule=rule,
+                current_settings=current_settings,
+            )
+            if not is_spam:
+                continue
+
+            spam_count += 1
+            result = await _handle_detected_spam(
+                chat_id_int=discussion_chat_id,
+                msg_id_int=msg_id_int,
+                text=text,
+                sender_id_int=sender_id_int,
+                sender_name=sender_name,
+                sender_username=sender_username,
+                detection_method=detection_method,
+                matched_keyword=matched_keyword,
+                ai_reason=ai_reason,
+                rule=rule,
+                antispam_target=antispam_target,
+                active_clients=active_clients,
+                current_settings=current_settings,
+                spam_blocked_msgs=spam_blocked_msgs,
+                spam_blocked_msgs_order=spam_blocked_msgs_order,
+                spam_blocked_msgs_max=spam_blocked_msgs_max,
+            )
+            if result.get("deleted"):
+                deleted_count += 1
+            if result.get("banned"):
+                banned_count += 1
+    except Exception as exc:
+        logger.warning("antispam scan: iteration failed: %s", exc)
+        return {
+            "ok": False,
+            "error": f"iter_failed:{type(exc).__name__}",
+            "checked": checked,
+            "spam": spam_count,
+            "deleted": deleted_count,
+            "banned": banned_count,
+        }
+
+    return {
+        "ok": True,
+        "error": "",
+        "checked": checked,
+        "spam": spam_count,
+        "deleted": deleted_count,
+        "banned": banned_count,
+    }
