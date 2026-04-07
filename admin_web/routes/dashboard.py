@@ -21,6 +21,8 @@ from admin_web.helpers import (
     _load_resolved_warning_history,
     _load_seen_warning_keys,
     _mark_warning_keys_seen,
+    _filter_dismissed_warnings,
+    _mark_warning_keys_dismissed,
     _flash,
     _redirect,
 )
@@ -150,6 +152,7 @@ async def warnings_page(request: Request):
     settings, _ = _load_settings()
     _sync_warning_history(_collect_warnings_for_scope(accounts, settings, project_id=None))
     warnings = _collect_warnings(accounts, settings)
+    warnings = _filter_dismissed_warnings(warnings)
     project_id = _active_project_id(settings)
     active_sessions = [
         str(account.get("session_name")).strip()
@@ -158,16 +161,74 @@ async def warnings_page(request: Request):
     ]
     keys = [w.get("key") for w in warnings if w.get("key")]
     seen = _load_seen_warning_keys(keys)
+    has_new = False
     for w in warnings:
         key = w.get("key")
         if key:
-            w["is_new"] = key not in seen
-    _mark_warning_keys_seen(keys)
+            is_new = key not in seen
+            w["is_new"] = is_new
+            if is_new:
+                has_new = True
     resolved_warnings = _load_resolved_warning_history(active_sessions, limit=50)
     return templates.TemplateResponse(
         "warnings.html",
-        _template_context(request, warnings=warnings, resolved_warnings=resolved_warnings),
+        _template_context(
+            request,
+            warnings=warnings,
+            resolved_warnings=resolved_warnings,
+            has_new=has_new,
+            mark_all_url="/warnings/mark-all-read",
+            bulk_dismiss_url="/warnings/bulk-dismiss",
+        ),
     )
+
+
+@router.post("/warnings/mark-all-read")
+async def warnings_mark_all_read(request: Request):
+    accounts, _ = _load_accounts()
+    settings, _ = _load_settings()
+    warnings = _collect_warnings(accounts, settings)
+    warnings = _filter_dismissed_warnings(warnings)
+    keys = [w.get("key") for w in warnings if w.get("key")]
+    if not keys:
+        _flash(request, "info", "Нет новых предупреждений для отметки.")
+        return _redirect("/warnings")
+
+    seen = _load_seen_warning_keys(keys)
+    new_count = sum(1 for k in keys if k not in seen)
+    _mark_warning_keys_seen(keys)
+
+    if new_count:
+        _flash(request, "success", f"Помечено как прочитанные: {new_count}.")
+    else:
+        _flash(request, "info", "Все предупреждения уже отмечены.")
+    return _redirect("/warnings")
+
+
+@router.post("/warnings/bulk-dismiss")
+async def warnings_bulk_dismiss(request: Request):
+    form = await request.form()
+    raw_keys = form.getlist("warning_keys")
+    keys = [str(k or "").strip() for k in raw_keys if str(k or "").strip()]
+
+    if not keys:
+        _flash(request, "warning", "Выберите хотя бы одно предупреждение.")
+        return _redirect("/warnings")
+
+    accounts, _ = _load_accounts()
+    settings, _ = _load_settings()
+    current = _collect_warnings(accounts, settings)
+    current = _filter_dismissed_warnings(current)
+    valid_keys = {str(w.get("key") or "").strip() for w in current if w.get("key")}
+    keys_to_dismiss = [k for k in keys if k in valid_keys]
+
+    if not keys_to_dismiss:
+        _flash(request, "warning", "Не удалось найти предупреждения для скрытия.")
+        return _redirect("/warnings")
+
+    _mark_warning_keys_dismissed(keys_to_dismiss)
+    _flash(request, "success", f"Скрыто предупреждений: {len(keys_to_dismiss)}.")
+    return _redirect("/warnings")
 
 
 @router.post("/status/start")

@@ -18,61 +18,104 @@
     </form>
   </div>
 
+  {% if items|length > 0 %}
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+      <form method="post" action="{{ mark_all_url }}" class="d-inline">
+        <input type="hidden" name="session_name" value="{{ selected_session }}" />
+        <button class="btn btn-sm btn-outline-primary" type="submit" {% if not has_unread %}disabled{% endif %}>
+          <i class="bi bi-check2-all me-1" aria-hidden="true"></i>Прочитать все
+        </button>
+      </form>
+      <span class="text-muted small">·</span>
+      <button class="btn btn-sm btn-outline-secondary" type="button" data-bulk-toggle="all" data-target="#quotesBulkForm">
+        Выбрать все
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" type="button" data-bulk-toggle="none" data-target="#quotesBulkForm">
+        Снять выбор
+      </button>
+      <button
+        class="btn btn-sm btn-outline-danger ms-auto"
+        type="button"
+        id="quotesBulkDeleteBtn"
+        disabled
+        data-bulk-confirm-form="#quotesBulkForm"
+        data-confirm-title="Удалить выбранные цитирования?"
+        data-confirm-body="Выбранные записи цитирования будут удалены. Действие нельзя отменить."
+        data-confirm-label="Удалить"
+      >
+        <i class="bi bi-trash me-1" aria-hidden="true"></i>Удалить выбранные (<span data-bulk-count="#quotesBulkForm">0</span>)
+      </button>
+    </div>
+  {% endif %}
+
   <div class="card">
     <div class="card-body">
       {% if items|length == 0 %}
         <div class="alert alert-info mb-0">Пока нет цитирований. Когда кто-то ответит на сообщение аккаунта — запись появится здесь.</div>
       {% else %}
-        <div class="list-group">
-          {% for it in items %}
-            <div class="list-group-item d-flex justify-content-between align-items-start gap-3">
-              <a class="flex-grow-1 text-decoration-none text-reset" href="{{ it.url }}" style="min-width: 0;">
-                <div class="d-flex justify-content-between align-items-center gap-2">
-                  <div class="d-flex flex-wrap align-items-center gap-2" style="min-width: 0;">
-                    <span class="badge text-bg-light border mono">#{{ it.session_name }}</span>
-                    <span class="fw-semibold app-clamp-1">{{ it.title }}</span>
-                    {% if it.is_unread %}
-                      <span class="badge text-bg-danger">new</span>
-                    {% endif %}
+        <form id="quotesBulkForm" method="post" action="{{ bulk_delete_url }}" data-bulk-form>
+          <input type="hidden" name="session_name" value="{{ selected_session }}" />
+          <div class="list-group">
+            {% for it in items %}
+              <div class="list-group-item d-flex justify-content-between align-items-start gap-3">
+                <div class="form-check d-flex align-items-center pt-1">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    name="inbox_ids"
+                    value="{{ it.id }}"
+                    aria-label="Выбрать цитирование {{ it.title }}"
+                    data-bulk-item
+                  />
+                </div>
+                <a class="flex-grow-1 text-decoration-none text-reset" href="{{ it.url }}" style="min-width: 0;">
+                  <div class="d-flex justify-content-between align-items-center gap-2">
+                    <div class="d-flex flex-wrap align-items-center gap-2" style="min-width: 0;">
+                      <span class="badge text-bg-light border mono">#{{ it.session_name }}</span>
+                      <span class="fw-semibold app-clamp-1">{{ it.title }}</span>
+                      {% if it.is_unread %}
+                        <span class="badge text-bg-danger">new</span>
+                      {% endif %}
+                    </div>
+                    <div class="text-muted small mono flex-shrink-0">{{ it.created_at|human_dt }}</div>
                   </div>
-                  <div class="text-muted small mono flex-shrink-0">{{ it.created_at|human_dt }}</div>
+                  <div class="text-muted small mt-1">
+                    {% if it.sender %}<span>{{ it.sender }}</span>{% endif %}
+                    {% if it.link %}{% if it.sender %} · {% endif %}<span class="mono">t.me ссылка</span>{% endif %}
+                  </div>
+                  {% if it.replied_to_text %}
+                    <div class="small text-muted border-start ps-2 mt-2" style="white-space: pre-wrap;">{{ it.replied_to_text }}</div>
+                  {% endif %}
+                  {% if it.text %}
+                    <div class="mt-2 app-clamp-3" style="white-space: pre-wrap;">{{ it.text }}</div>
+                  {% endif %}
+                  {% if it.reactions_summary %}
+                    <div class="small text-muted mt-1">Реакции: {{ it.reactions_summary }}</div>
+                  {% endif %}
+                </a>
+                <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
+                  {% if it.link %}
+                    <span class="text-muted small mono">↗</span>
+                  {% endif %}
+                  <button
+                    class="btn btn-sm btn-outline-danger app-icon-btn"
+                    type="button"
+                    data-confirm-action="{{ it.delete_url }}"
+                    data-confirm-title="Удалить запись?"
+                    data-confirm-body="Действие нельзя отменить."
+                    data-confirm-label="Удалить"
+                    data-bs-toggle="tooltip"
+                    data-bs-title="Удалить"
+                    aria-label="Удалить"
+                    title="Удалить"
+                  >
+                    <i class="bi bi-trash" aria-hidden="true"></i>
+                  </button>
                 </div>
-                <div class="text-muted small mt-1">
-                  {% if it.sender %}<span>{{ it.sender }}</span>{% endif %}
-                  {% if it.link %}{% if it.sender %} · {% endif %}<span class="mono">t.me ссылка</span>{% endif %}
-                </div>
-                {% if it.replied_to_text %}
-                  <div class="small text-muted border-start ps-2 mt-2" style="white-space: pre-wrap;">{{ it.replied_to_text }}</div>
-                {% endif %}
-                {% if it.text %}
-                  <div class="mt-2 app-clamp-3" style="white-space: pre-wrap;">{{ it.text }}</div>
-                {% endif %}
-                {% if it.reactions_summary %}
-                  <div class="small text-muted mt-1">Реакции: {{ it.reactions_summary }}</div>
-                {% endif %}
-              </a>
-              <div class="d-flex flex-column align-items-end gap-2 flex-shrink-0">
-                {% if it.link %}
-                  <span class="text-muted small mono">↗</span>
-                {% endif %}
-                <button
-                  class="btn btn-sm btn-outline-danger app-icon-btn"
-                  type="button"
-                  data-confirm-action="{{ it.delete_url }}"
-                  data-confirm-title="Удалить запись?"
-                  data-confirm-body="Действие нельзя отменить."
-                  data-confirm-label="Удалить"
-                  data-bs-toggle="tooltip"
-                  data-bs-title="Удалить"
-                  aria-label="Удалить"
-                  title="Удалить"
-                >
-                  <i class="bi bi-trash" aria-hidden="true"></i>
-                </button>
               </div>
-            </div>
-          {% endfor %}
-        </div>
+            {% endfor %}
+          </div>
+        </form>
       {% endif %}
     </div>
   </div>

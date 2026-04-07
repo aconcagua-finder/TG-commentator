@@ -52,7 +52,7 @@ class TestInboxBadgeReset(unittest.TestCase):
             except Exception:
                 pass
 
-    def test_dialogs_page_marks_incoming_messages_as_read_after_render_data_loaded(self) -> None:
+    def test_dialogs_page_does_not_mark_incoming_messages_as_read_on_render(self) -> None:
         with self._client_context() as (client, helpers):
             created_at = datetime.now(timezone.utc).isoformat()
             with helpers._db_connect() as conn:
@@ -82,9 +82,82 @@ class TestInboxBadgeReset(unittest.TestCase):
                     ("Telegram17", "chat-1"),
                 ).fetchone()
             self.assertIsNotNone(row)
+            # Rendering /dialogs MUST NOT auto-mark messages as read.
+            self.assertEqual(row["is_read"], 0)
+
+    def test_dialogs_mark_all_read_endpoint_marks_messages_as_read(self) -> None:
+        with self._client_context() as (client, helpers):
+            created_at = datetime.now(timezone.utc).isoformat()
+            with helpers._db_connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO inbox_messages (
+                        kind, direction, status, created_at,
+                        session_name, chat_id, msg_id,
+                        sender_name, chat_title, text, is_read
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("dm", "in", "received", created_at, "Telegram17", "chat-1", 101, "Alice", "Alice", "hello", 0),
+                )
+                conn.commit()
+
+            response = client.post("/dialogs/mark-all-read", data={"session_name": ""}, follow_redirects=False)
+            self.assertEqual(response.status_code, 303)
+
+            with helpers._db_connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT is_read
+                    FROM inbox_messages
+                    WHERE kind='dm' AND direction='in' AND session_name=? AND chat_id=?
+                    """,
+                    ("Telegram17", "chat-1"),
+                ).fetchone()
+            self.assertIsNotNone(row)
             self.assertEqual(row["is_read"], 1)
 
-    def test_quotes_page_marks_incoming_quotes_as_read_after_render_data_loaded(self) -> None:
+    def test_dialogs_bulk_delete_endpoint_removes_selected_threads(self) -> None:
+        with self._client_context() as (client, helpers):
+            created_at = datetime.now(timezone.utc).isoformat()
+            with helpers._db_connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO inbox_messages (
+                        kind, direction, status, created_at,
+                        session_name, chat_id, msg_id,
+                        sender_name, chat_title, text, is_read
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("dm", "in", "received", created_at, "Telegram17", "chat-1", 101, "Alice", "Alice", "hi", 0),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO inbox_messages (
+                        kind, direction, status, created_at,
+                        session_name, chat_id, msg_id,
+                        sender_name, chat_title, text, is_read
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("dm", "in", "received", created_at, "Telegram17", "chat-2", 102, "Bob", "Bob", "yo", 0),
+                )
+                conn.commit()
+
+            response = client.post(
+                "/dialogs/bulk-delete",
+                data={"thread_keys": ["Telegram17|chat-1"], "session_name": ""},
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 303)
+
+            with helpers._db_connect() as conn:
+                rows = conn.execute(
+                    "SELECT chat_id FROM inbox_messages WHERE kind='dm' AND session_name=?",
+                    ("Telegram17",),
+                ).fetchall()
+            remaining_chats = {r["chat_id"] for r in rows}
+            self.assertEqual(remaining_chats, {"chat-2"})
+
+    def test_quotes_page_does_not_mark_incoming_quotes_as_read_on_render(self) -> None:
         with self._client_context() as (client, helpers):
             created_at = datetime.now(timezone.utc).isoformat()
             with helpers._db_connect() as conn:
@@ -127,7 +200,94 @@ class TestInboxBadgeReset(unittest.TestCase):
                     ("Telegram17", "-100123"),
                 ).fetchone()
             self.assertIsNotNone(row)
+            # Rendering /quotes MUST NOT auto-mark quotes as read.
+            self.assertEqual(row["is_read"], 0)
+
+    def test_quotes_mark_all_read_endpoint_marks_quotes_as_read(self) -> None:
+        with self._client_context() as (client, helpers):
+            created_at = datetime.now(timezone.utc).isoformat()
+            with helpers._db_connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO inbox_messages (
+                        kind, direction, status, created_at,
+                        session_name, chat_id, msg_id,
+                        sender_name, chat_title, text, replied_to_text, is_read
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "quote",
+                        "in",
+                        "received",
+                        created_at,
+                        "Telegram17",
+                        "-100123",
+                        202,
+                        "Bob",
+                        "Group",
+                        "reply text",
+                        "original message",
+                        0,
+                    ),
+                )
+                conn.commit()
+
+            response = client.post("/quotes/mark-all-read", data={"session_name": ""}, follow_redirects=False)
+            self.assertEqual(response.status_code, 303)
+
+            with helpers._db_connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT is_read
+                    FROM inbox_messages
+                    WHERE kind='quote' AND direction='in' AND session_name=? AND chat_id=?
+                    """,
+                    ("Telegram17", "-100123"),
+                ).fetchone()
+            self.assertIsNotNone(row)
             self.assertEqual(row["is_read"], 1)
+
+    def test_quotes_bulk_delete_endpoint_removes_selected_quotes(self) -> None:
+        with self._client_context() as (client, helpers):
+            created_at = datetime.now(timezone.utc).isoformat()
+            with helpers._db_connect() as conn:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO inbox_messages (
+                        kind, direction, status, created_at,
+                        session_name, chat_id, msg_id,
+                        sender_name, chat_title, text, is_read
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("quote", "in", "received", created_at, "Telegram17", "-100123", 301, "Bob", "Group", "a", 0),
+                )
+                quote_id_to_delete = cursor.lastrowid
+                conn.execute(
+                    """
+                    INSERT INTO inbox_messages (
+                        kind, direction, status, created_at,
+                        session_name, chat_id, msg_id,
+                        sender_name, chat_title, text, is_read
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    ("quote", "in", "received", created_at, "Telegram17", "-100123", 302, "Eve", "Group", "b", 0),
+                )
+                conn.commit()
+
+            response = client.post(
+                "/quotes/bulk-delete",
+                data={"inbox_ids": [str(quote_id_to_delete)], "session_name": ""},
+                follow_redirects=False,
+            )
+            self.assertEqual(response.status_code, 303)
+
+            with helpers._db_connect() as conn:
+                rows = conn.execute(
+                    "SELECT msg_id FROM inbox_messages WHERE kind='quote' AND session_name=?",
+                    ("Telegram17",),
+                ).fetchall()
+            remaining = {r["msg_id"] for r in rows}
+            self.assertEqual(remaining, {302})
 
 
 if __name__ == "__main__":

@@ -18,52 +18,95 @@
     </form>
   </div>
 
+  {% if threads|length > 0 %}
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+      <form method="post" action="{{ mark_all_url }}" class="d-inline">
+        <input type="hidden" name="session_name" value="{{ selected_session }}" />
+        <button class="btn btn-sm btn-outline-primary" type="submit" {% if not has_unread %}disabled{% endif %}>
+          <i class="bi bi-check2-all me-1" aria-hidden="true"></i>Прочитать все
+        </button>
+      </form>
+      <span class="text-muted small">·</span>
+      <button class="btn btn-sm btn-outline-secondary" type="button" data-bulk-toggle="all" data-target="#dialogsBulkForm">
+        Выбрать все
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" type="button" data-bulk-toggle="none" data-target="#dialogsBulkForm">
+        Снять выбор
+      </button>
+      <button
+        class="btn btn-sm btn-outline-danger ms-auto"
+        type="button"
+        id="dialogsBulkDeleteBtn"
+        disabled
+        data-bulk-confirm-form="#dialogsBulkForm"
+        data-confirm-title="Удалить выбранные переписки?"
+        data-confirm-body="Вся история выбранных диалогов будет удалена. Действие нельзя отменить."
+        data-confirm-label="Удалить"
+      >
+        <i class="bi bi-trash me-1" aria-hidden="true"></i>Удалить выбранные (<span data-bulk-count="#dialogsBulkForm">0</span>)
+      </button>
+    </div>
+  {% endif %}
+
   <div class="card">
     <div class="card-body">
       {% if threads|length == 0 %}
         <div class="alert alert-info mb-0">Пока нет сообщений. Как только кто-то напишет в личку — диалог появится здесь.</div>
       {% else %}
-        <div class="list-group">
-          {% for t in threads %}
-            <div class="list-group-item d-flex justify-content-between align-items-start gap-3">
-              <a class="flex-grow-1 text-decoration-none text-reset" href="{{ t.url }}" style="min-width: 0;">
-                <div class="d-flex justify-content-between align-items-center gap-2">
-                  <div class="d-flex flex-wrap align-items-center gap-2" style="min-width: 0;">
-                    <span class="badge text-bg-light border mono">#{{ t.session_name }}</span>
-                    <span class="fw-semibold app-clamp-1">{{ t.title }}</span>
-                  </div>
-                  <span class="text-muted small mono flex-shrink-0">{{ t.last_at|human_dt }}</span>
+        <form id="dialogsBulkForm" method="post" action="{{ bulk_delete_url }}" data-bulk-form>
+          <input type="hidden" name="session_name" value="{{ selected_session }}" />
+          <div class="list-group">
+            {% for t in threads %}
+              <div class="list-group-item d-flex justify-content-between align-items-start gap-3">
+                <div class="form-check d-flex align-items-center pt-1">
+                  <input
+                    class="form-check-input"
+                    type="checkbox"
+                    name="thread_keys"
+                    value="{{ t.thread_key }}"
+                    aria-label="Выбрать переписку {{ t.title }}"
+                    data-bulk-item
+                  />
                 </div>
-                <div class="text-muted small mt-1 mono">{{ t.chat_id }}</div>
-                {% if t.last_text %}
-                  <div class="mt-2 app-clamp-2">{{ t.last_text }}</div>
-                {% endif %}
-                {% if t.reactions_summary %}
-                  <div class="small text-muted mt-1">Реакции: {{ t.reactions_summary }}</div>
-                {% endif %}
-              </a>
-              <div class="d-flex flex-column align-items-end gap-2">
-                {% if t.unread %}
-                  <span class="badge text-bg-danger rounded-pill flex-shrink-0">{{ t.unread }}</span>
-                {% endif %}
-                <button
-                  class="btn btn-sm btn-outline-danger app-icon-btn"
-                  type="button"
-                  data-confirm-action="{{ t.delete_url }}"
-                  data-confirm-title="Удалить переписку?"
-                  data-confirm-body="Вся история сообщений в этом диалоге будет удалена."
-                  data-confirm-label="Удалить"
-                  data-bs-toggle="tooltip"
-                  data-bs-title="Удалить"
-                  aria-label="Удалить"
-                  title="Удалить"
-                >
-                  <i class="bi bi-trash" aria-hidden="true"></i>
-                </button>
+                <a class="flex-grow-1 text-decoration-none text-reset" href="{{ t.url }}" style="min-width: 0;">
+                  <div class="d-flex justify-content-between align-items-center gap-2">
+                    <div class="d-flex flex-wrap align-items-center gap-2" style="min-width: 0;">
+                      <span class="badge text-bg-light border mono">#{{ t.session_name }}</span>
+                      <span class="fw-semibold app-clamp-1">{{ t.title }}</span>
+                    </div>
+                    <span class="text-muted small mono flex-shrink-0">{{ t.last_at|human_dt }}</span>
+                  </div>
+                  <div class="text-muted small mt-1 mono">{{ t.chat_id }}</div>
+                  {% if t.last_text %}
+                    <div class="mt-2 app-clamp-2">{{ t.last_text }}</div>
+                  {% endif %}
+                  {% if t.reactions_summary %}
+                    <div class="small text-muted mt-1">Реакции: {{ t.reactions_summary }}</div>
+                  {% endif %}
+                </a>
+                <div class="d-flex flex-column align-items-end gap-2">
+                  {% if t.unread %}
+                    <span class="badge text-bg-danger rounded-pill flex-shrink-0">{{ t.unread }}</span>
+                  {% endif %}
+                  <button
+                    class="btn btn-sm btn-outline-danger app-icon-btn"
+                    type="button"
+                    data-confirm-action="{{ t.delete_url }}"
+                    data-confirm-title="Удалить переписку?"
+                    data-confirm-body="Вся история сообщений в этом диалоге будет удалена."
+                    data-confirm-label="Удалить"
+                    data-bs-toggle="tooltip"
+                    data-bs-title="Удалить"
+                    aria-label="Удалить"
+                    title="Удалить"
+                  >
+                    <i class="bi bi-trash" aria-hidden="true"></i>
+                  </button>
+                </div>
               </div>
-            </div>
-          {% endfor %}
-        </div>
+            {% endfor %}
+          </div>
+        </form>
       {% endif %}
     </div>
   </div>

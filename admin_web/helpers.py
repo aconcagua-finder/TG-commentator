@@ -972,6 +972,136 @@ def _mark_warning_keys_seen(keys: List[str]) -> None:
         conn.commit()
 
 
+def _load_dismissed_warning_keys(keys: List[str]) -> Dict[str, float]:
+    """Return a mapping of warning key -> dismissed_at timestamp."""
+    keys = [str(k).strip() for k in keys if k]
+    if not keys:
+        return {}
+    placeholders = ",".join("?" for _ in keys)
+    with _db_connect() as conn:
+        rows = conn.execute(
+            f"SELECT key, dismissed_at FROM warning_dismissed WHERE key IN ({placeholders})",
+            tuple(keys),
+        ).fetchall()
+    result: Dict[str, float] = {}
+    for row in rows:
+        key = str(row["key"] or "").strip()
+        if not key:
+            continue
+        try:
+            result[key] = float(row["dismissed_at"] or 0.0)
+        except (TypeError, ValueError):
+            result[key] = 0.0
+    return result
+
+
+def _mark_warning_keys_dismissed(keys: List[str]) -> None:
+    """Mark a set of warning keys as dismissed (hidden from the warnings page)."""
+    keys = [str(k).strip() for k in keys if k]
+    if not keys:
+        return
+    now = time.time()
+    rows = [(k, now) for k in dict.fromkeys(keys)]
+    with _db_connect() as conn:
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO warning_dismissed(key, dismissed_at)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                  dismissed_at = excluded.dismissed_at
+                """,
+                row,
+            )
+        conn.commit()
+
+
+def _clear_dismissed_warning_keys(keys: List[str]) -> None:
+    keys = [str(k).strip() for k in keys if k]
+    if not keys:
+        return
+    placeholders = ",".join("?" for _ in keys)
+    with _db_connect() as conn:
+        conn.execute(
+            f"DELETE FROM warning_dismissed WHERE key IN ({placeholders})",
+            tuple(keys),
+        )
+        conn.commit()
+
+
+def _load_active_warning_history_created_at(keys: List[str]) -> Dict[str, float]:
+    """For each key, return the created_at of its currently-active warning history entry."""
+    keys = [str(k).strip() for k in keys if k]
+    if not keys:
+        return {}
+    placeholders = ",".join("?" for _ in keys)
+    with _db_connect() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT key, MAX(created_at) AS created_at
+            FROM warning_history
+            WHERE resolved_at IS NULL AND key IN ({placeholders})
+            GROUP BY key
+            """,
+            tuple(keys),
+        ).fetchall()
+    result: Dict[str, float] = {}
+    for row in rows:
+        key = str(row["key"] or "").strip()
+        if not key:
+            continue
+        try:
+            result[key] = float(row["created_at"] or 0.0)
+        except (TypeError, ValueError):
+            result[key] = 0.0
+    return result
+
+
+def _filter_dismissed_warnings(warnings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Hide warnings that have been dismissed by the user.
+
+    A warning stays hidden until either it disappears (resolved) or a new
+    occurrence happens AFTER the dismissal moment. We compare dismissed_at
+    against the created_at of the active warning_history row for the same key.
+    """
+    keys = [str(w.get("key") or "").strip() for w in warnings]
+    keys = [k for k in keys if k]
+    if not keys:
+        return warnings
+
+    dismissed = _load_dismissed_warning_keys(keys)
+    if not dismissed:
+        return warnings
+
+    active_created = _load_active_warning_history_created_at(list(dismissed.keys()))
+
+    filtered: List[Dict[str, Any]] = []
+    stale_dismissed: List[str] = []
+    for warning in warnings:
+        key = str(warning.get("key") or "").strip()
+        if key and key in dismissed:
+            dismissed_at = dismissed[key]
+            created_at = active_created.get(key, 0.0)
+            # If the active occurrence is older than (or equal to) the dismissal,
+            # the warning is the same one the user already hid -> skip it.
+            if created_at and created_at > dismissed_at:
+                # New occurrence after dismissal -> show again, clear stale flag.
+                stale_dismissed.append(key)
+                filtered.append(warning)
+            else:
+                continue
+        else:
+            filtered.append(warning)
+
+    if stale_dismissed:
+        try:
+            _clear_dismissed_warning_keys(stale_dismissed)
+        except Exception:
+            pass
+
+    return filtered
+
+
 def _humanize_failure_kind(kind: str) -> str:
     k = str(kind or "").strip().lower()
     return {
@@ -1328,6 +1458,7 @@ def _collect_warnings(accounts: List[Dict[str, Any]], settings: Dict[str, Any]) 
 def _warnings_count(accounts: List[Dict[str, Any]], settings: Dict[str, Any]) -> int:
     try:
         warnings = _collect_warnings(accounts, settings)
+        warnings = _filter_dismissed_warnings(warnings)
         keys = [w.get("key") for w in warnings if w.get("key")]
         seen = _load_seen_warning_keys(keys)
         return sum(1 for k in keys if k not in seen)

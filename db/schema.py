@@ -321,6 +321,15 @@ def _table_warning_history() -> str:
     """
 
 
+def _table_warning_dismissed() -> str:
+    return """
+    CREATE TABLE IF NOT EXISTS warning_dismissed (
+        key TEXT PRIMARY KEY,
+        dismissed_at REAL NOT NULL
+    )
+    """
+
+
 def _table_spam_rules() -> str:
     return f"""
     CREATE TABLE IF NOT EXISTS spam_rules (
@@ -433,6 +442,7 @@ def init_database(conn) -> None:
         _table_manual_tasks,
         _table_warning_seen,
         _table_warning_history,
+        _table_warning_dismissed,
         _table_spam_rules,
         _table_spam_log,
         _table_spam_bans,

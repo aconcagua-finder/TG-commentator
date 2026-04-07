@@ -544,22 +544,163 @@
       });
 
       // Confirmation modal: <button data-confirm-action="/url" data-confirm-title="Title" data-confirm-body="Body" data-confirm-label="Action" data-confirm-class="btn-danger">
+      // Or, for confirming submission of an existing bulk form:
+      //   <button data-bulk-confirm-form="#formId" data-confirm-title="..." data-confirm-body="..." data-confirm-label="..." data-confirm-class="btn-danger">
       (() => {
         const modal = document.getElementById("appConfirmModal");
         if (!modal) return;
         const bsModal = bootstrap.Modal.getOrCreateInstance(modal);
+        const modalForm = document.getElementById("appConfirmModalForm");
+        const actionBtn = document.getElementById("appConfirmModalAction");
+
+        let pendingBulkSubmit = null;
+
+        const resetModalForm = () => {
+          modalForm.action = "";
+          modalForm.removeAttribute("data-bulk-mode");
+        };
+
+        modalForm.addEventListener("submit", (ev) => {
+          if (pendingBulkSubmit) {
+            ev.preventDefault();
+            const target = pendingBulkSubmit;
+            pendingBulkSubmit = null;
+            bsModal.hide();
+            try {
+              if (typeof target.requestSubmit === "function") {
+                target.requestSubmit();
+              } else {
+                target.submit();
+              }
+            } catch (_) {
+              target.submit();
+            }
+          }
+        });
+
         document.addEventListener("click", (ev) => {
+          const bulkBtn = ev.target.closest("[data-bulk-confirm-form]");
+          if (bulkBtn) {
+            ev.preventDefault();
+            const selector = bulkBtn.getAttribute("data-bulk-confirm-form") || "";
+            const form = selector ? document.querySelector(selector) : null;
+            if (!form) return;
+            const checked = form.querySelectorAll('[data-bulk-item]:checked');
+            if (!checked || checked.length === 0) return;
+            pendingBulkSubmit = form;
+            document.getElementById("appConfirmModalLabel").textContent = bulkBtn.getAttribute("data-confirm-title") || "Подтверждение";
+            const body = (bulkBtn.getAttribute("data-confirm-body") || "").replace("{count}", checked.length);
+            document.getElementById("appConfirmModalBody").textContent = body;
+            modalForm.action = "";
+            modalForm.setAttribute("data-bulk-mode", "true");
+            actionBtn.textContent = bulkBtn.getAttribute("data-confirm-label") || "Удалить";
+            actionBtn.className = "btn " + (bulkBtn.getAttribute("data-confirm-class") || "btn-danger");
+            bsModal.show();
+            return;
+          }
+
           const btn = ev.target.closest("[data-confirm-action]");
           if (!btn) return;
           ev.preventDefault();
+          pendingBulkSubmit = null;
           document.getElementById("appConfirmModalLabel").textContent = btn.getAttribute("data-confirm-title") || "Подтверждение";
           document.getElementById("appConfirmModalBody").textContent = btn.getAttribute("data-confirm-body") || "";
-          const form = document.getElementById("appConfirmModalForm");
-          form.action = btn.getAttribute("data-confirm-action") || "";
-          const actionBtn = document.getElementById("appConfirmModalAction");
+          modalForm.action = btn.getAttribute("data-confirm-action") || "";
+          modalForm.removeAttribute("data-bulk-mode");
           actionBtn.textContent = btn.getAttribute("data-confirm-label") || "Удалить";
           actionBtn.className = "btn " + (btn.getAttribute("data-confirm-class") || "btn-danger");
           bsModal.show();
+        });
+
+        modal.addEventListener("hidden.bs.modal", () => {
+          if (!pendingBulkSubmit) {
+            resetModalForm();
+          }
+        });
+      })();
+
+      // Bulk selection helpers for forms with checkboxes [data-bulk-item].
+      // Buttons:
+      //   <button data-bulk-toggle="all|none" data-target="#formSelector">…</button>
+      //   <button id="…" data-bulk-confirm-form="#formSelector">…<span data-bulk-count="#formSelector">0</span></button>
+      (() => {
+        const updateBulkUi = (formSelector) => {
+          const form = formSelector ? document.querySelector(formSelector) : null;
+          if (!form) return;
+          const items = form.querySelectorAll('[data-bulk-item]');
+          const checked = form.querySelectorAll('[data-bulk-item]:checked');
+          const checkedCount = checked.length;
+
+          document
+            .querySelectorAll(`[data-bulk-count="${formSelector}"]`)
+            .forEach((el) => {
+              el.textContent = String(checkedCount);
+            });
+
+          document
+            .querySelectorAll(`[data-bulk-confirm-form="${formSelector}"]`)
+            .forEach((btn) => {
+              btn.disabled = checkedCount === 0;
+            });
+
+          // Sync any "select all" checkboxes targeting this form.
+          document
+            .querySelectorAll(`[data-bulk-select-all="${formSelector}"]`)
+            .forEach((master) => {
+              if (items.length === 0) {
+                master.checked = false;
+                master.indeterminate = false;
+                return;
+              }
+              if (checkedCount === 0) {
+                master.checked = false;
+                master.indeterminate = false;
+              } else if (checkedCount === items.length) {
+                master.checked = true;
+                master.indeterminate = false;
+              } else {
+                master.checked = false;
+                master.indeterminate = true;
+              }
+            });
+        };
+
+        document.querySelectorAll('[data-bulk-form]').forEach((form) => {
+          const id = form.id ? `#${form.id}` : null;
+          if (!id) return;
+          form.addEventListener("change", (ev) => {
+            if (ev.target && ev.target.matches('[data-bulk-item]')) {
+              updateBulkUi(id);
+            }
+          });
+          updateBulkUi(id);
+        });
+
+        document.querySelectorAll('[data-bulk-toggle]').forEach((btn) => {
+          btn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            const mode = btn.getAttribute("data-bulk-toggle") || "";
+            const selector = btn.getAttribute("data-target") || "";
+            const form = selector ? document.querySelector(selector) : null;
+            if (!form) return;
+            form.querySelectorAll('[data-bulk-item]').forEach((cb) => {
+              cb.checked = mode === "all";
+            });
+            updateBulkUi(selector);
+          });
+        });
+
+        document.querySelectorAll('[data-bulk-select-all]').forEach((master) => {
+          master.addEventListener("change", () => {
+            const selector = master.getAttribute("data-bulk-select-all") || "";
+            const form = selector ? document.querySelector(selector) : null;
+            if (!form) return;
+            const shouldCheck = !!master.checked;
+            form.querySelectorAll('[data-bulk-item]').forEach((cb) => {
+              cb.checked = shouldCheck;
+            });
+            updateBulkUi(selector);
+          });
         });
       })();
 

@@ -78,17 +78,16 @@ async def dialogs_page(request: Request, session_name: str = ""):
                 """,
                 params,
             ).fetchall()
-            conn.execute(
-                f"UPDATE inbox_messages SET is_read=1 WHERE kind='dm' AND direction='in' AND is_read=0 AND session_name IN ({placeholders})",
-                tuple(active_sessions),
-            )
-            conn.commit()
 
     return_suffix = f"?session_name={quote(selected_session)}" if selected_session else ""
     return_to = f"/dialogs{return_suffix}"
     threads: List[Dict[str, Any]] = []
+    has_unread = False
     for r in rows:
         title = r["chat_title"] or r["sender_name"] or r["chat_username"] or r["sender_username"] or r["chat_id"]
+        unread_count = int(r["unread"] or 0)
+        if unread_count:
+            has_unread = True
         threads.append(
             {
                 "session_name": r["session_name"],
@@ -97,9 +96,11 @@ async def dialogs_page(request: Request, session_name: str = ""):
                 "last_text": r["text"] or "",
                 "reactions_summary": r["reactions_summary"] or "",
                 "last_at": r["created_at"],
-                "unread": int(r["unread"] or 0),
+                "unread": unread_count,
                 "url": f"/dialogs/{quote(str(r['session_name']))}/{quote(str(r['chat_id']))}",
                 "delete_url": f"/dialogs/{quote(str(r['session_name']))}/{quote(str(r['chat_id']))}/delete",
+                # thread_key encodes both session and chat for bulk operations.
+                "thread_key": f"{r['session_name']}|{r['chat_id']}",
             }
         )
 
@@ -111,8 +112,104 @@ async def dialogs_page(request: Request, session_name: str = ""):
             sessions=sessions,
             selected_session=selected_session,
             return_to=return_to,
+            has_unread=has_unread,
+            mark_all_url="/dialogs/mark-all-read",
+            bulk_delete_url="/dialogs/bulk-delete",
         ),
     )
+
+
+@router.post("/dialogs/mark-all-read")
+async def dialogs_mark_all_read(request: Request, session_name: str = Form("")):
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    accounts, _ = _load_accounts()
+    project_sessions = [
+        str(a.get("session_name"))
+        for a in _filter_accounts_by_project(accounts, project_id)
+        if a.get("session_name")
+    ]
+    selected = (session_name or "").strip()
+    target_sessions = [selected] if selected and selected in project_sessions else project_sessions
+
+    if not target_sessions:
+        _flash(request, "info", "Нет аккаунтов для пометки сообщений прочитанными.")
+        return _redirect("/dialogs")
+
+    placeholders = ", ".join(["?"] * len(target_sessions))
+    with _db_connect() as conn:
+        cursor = conn.execute(
+            f"UPDATE inbox_messages SET is_read=1 "
+            f"WHERE kind='dm' AND direction='in' AND is_read=0 "
+            f"AND session_name IN ({placeholders})",
+            tuple(target_sessions),
+        )
+        affected = cursor.rowcount or 0
+        conn.commit()
+
+    if affected:
+        _flash(request, "success", f"Помечено прочитанными: {affected}.")
+    else:
+        _flash(request, "info", "Нет непрочитанных сообщений.")
+
+    suffix = f"?session_name={quote(selected)}" if selected else ""
+    return _redirect(f"/dialogs{suffix}")
+
+
+@router.post("/dialogs/bulk-delete")
+async def dialogs_bulk_delete(request: Request):
+    form = await request.form()
+    raw_keys = form.getlist("thread_keys")
+    selected_session = str(form.get("session_name") or "").strip()
+
+    if not raw_keys:
+        _flash(request, "warning", "Выберите хотя бы одну переписку для удаления.")
+        suffix = f"?session_name={quote(selected_session)}" if selected_session else ""
+        return _redirect(f"/dialogs{suffix}")
+
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    accounts, _ = _load_accounts()
+    allowed_sessions = {
+        str(a.get("session_name"))
+        for a in accounts
+        if a.get("session_name") and _project_id_for(a) == project_id
+    }
+
+    pairs: List[tuple[str, str]] = []
+    for raw in raw_keys:
+        key = str(raw or "")
+        if "|" not in key:
+            continue
+        sess, chat_id = key.split("|", 1)
+        sess = sess.strip()
+        chat_id = chat_id.strip()
+        if not sess or not chat_id or sess not in allowed_sessions:
+            continue
+        pairs.append((sess, chat_id))
+
+    if not pairs:
+        _flash(request, "warning", "Не удалось определить переписки для удаления.")
+        suffix = f"?session_name={quote(selected_session)}" if selected_session else ""
+        return _redirect(f"/dialogs{suffix}")
+
+    deleted = 0
+    with _db_connect() as conn:
+        for sess, chat_id in pairs:
+            conn.execute(
+                "DELETE FROM inbox_messages WHERE kind='dm' AND session_name=? AND chat_id=?",
+                (sess, chat_id),
+            )
+            conn.execute(
+                "DELETE FROM outbound_queue WHERE session_name=? AND chat_id=? AND reply_to_msg_id IS NULL",
+                (sess, chat_id),
+            )
+            deleted += 1
+        conn.commit()
+
+    _flash(request, "success", f"Удалено переписок: {deleted}.")
+    suffix = f"?session_name={quote(selected_session)}" if selected_session else ""
+    return _redirect(f"/dialogs{suffix}")
 
 
 @router.get("/dialogs/{session_name}/{chat_id}", response_class=HTMLResponse)
@@ -260,23 +357,22 @@ async def quotes_page(request: Request, session_name: str = ""):
                 """,
                 tuple(active_sessions),
             ).fetchall()
-            conn.execute(
-                f"UPDATE inbox_messages SET is_read=1 WHERE kind='quote' AND direction='in' AND is_read=0 AND session_name IN ({placeholders})",
-                tuple(active_sessions),
-            )
-            conn.commit()
 
     suffix = f"?session_name={quote(selected_session)}" if selected_session else ""
     return_to = f"/quotes{suffix}"
     items: List[Dict[str, Any]] = []
+    has_unread = False
     for r in rows:
         link = _telegram_message_link(r["chat_username"], r["chat_id"], r["msg_id"])
+        is_unread = bool(r["is_read"] == 0)
+        if is_unread and r["direction"] == "in":
+            has_unread = True
         items.append(
             {
                 **dict(r),
                 "title": r["chat_title"] or r["chat_username"] or r["chat_id"],
                 "sender": r["sender_name"] or r["sender_username"] or (str(r["sender_id"]) if r["sender_id"] else ""),
-                "is_unread": bool(r["is_read"] == 0),
+                "is_unread": is_unread,
                 "link": link,
                 "url": f"/quotes/{r['id']}{suffix}",
                 "delete_url": f"/quotes/{r['id']}/delete",
@@ -291,8 +387,104 @@ async def quotes_page(request: Request, session_name: str = ""):
             sessions=sessions,
             selected_session=selected_session,
             return_to=return_to,
+            has_unread=has_unread,
+            mark_all_url="/quotes/mark-all-read",
+            bulk_delete_url="/quotes/bulk-delete",
         ),
     )
+
+
+@router.post("/quotes/mark-all-read")
+async def quotes_mark_all_read(request: Request, session_name: str = Form("")):
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    accounts, _ = _load_accounts()
+    project_sessions = [
+        str(a.get("session_name"))
+        for a in _filter_accounts_by_project(accounts, project_id)
+        if a.get("session_name")
+    ]
+    selected = (session_name or "").strip()
+    target_sessions = [selected] if selected and selected in project_sessions else project_sessions
+
+    if not target_sessions:
+        _flash(request, "info", "Нет аккаунтов для пометки цитирований прочитанными.")
+        return _redirect("/quotes")
+
+    placeholders = ", ".join(["?"] * len(target_sessions))
+    with _db_connect() as conn:
+        cursor = conn.execute(
+            f"UPDATE inbox_messages SET is_read=1 "
+            f"WHERE kind='quote' AND direction='in' AND is_read=0 "
+            f"AND session_name IN ({placeholders})",
+            tuple(target_sessions),
+        )
+        affected = cursor.rowcount or 0
+        conn.commit()
+
+    if affected:
+        _flash(request, "success", f"Помечено прочитанными: {affected}.")
+    else:
+        _flash(request, "info", "Нет непрочитанных цитирований.")
+
+    suffix = f"?session_name={quote(selected)}" if selected else ""
+    return _redirect(f"/quotes{suffix}")
+
+
+@router.post("/quotes/bulk-delete")
+async def quotes_bulk_delete(request: Request):
+    form = await request.form()
+    raw_ids = form.getlist("inbox_ids")
+    selected_session = str(form.get("session_name") or "").strip()
+
+    cleaned_ids: List[int] = []
+    for raw in raw_ids:
+        try:
+            value = int(str(raw or "").strip())
+        except (TypeError, ValueError):
+            continue
+        if value > 0:
+            cleaned_ids.append(value)
+
+    if not cleaned_ids:
+        _flash(request, "warning", "Выберите хотя бы одно цитирование для удаления.")
+        suffix = f"?session_name={quote(selected_session)}" if selected_session else ""
+        return _redirect(f"/quotes{suffix}")
+
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    accounts, _ = _load_accounts()
+    allowed_sessions = {
+        str(a.get("session_name"))
+        for a in accounts
+        if a.get("session_name") and _project_id_for(a) == project_id
+    }
+
+    deleted = 0
+    placeholders = ",".join("?" for _ in cleaned_ids)
+    with _db_connect() as conn:
+        rows = conn.execute(
+            f"SELECT id, session_name FROM inbox_messages WHERE kind='quote' AND id IN ({placeholders})",
+            tuple(cleaned_ids),
+        ).fetchall()
+        ids_to_delete = [
+            int(row["id"]) for row in rows if str(row["session_name"]) in allowed_sessions
+        ]
+        if ids_to_delete:
+            placeholders_del = ",".join("?" for _ in ids_to_delete)
+            conn.execute(
+                f"DELETE FROM inbox_messages WHERE id IN ({placeholders_del})",
+                tuple(ids_to_delete),
+            )
+            deleted = len(ids_to_delete)
+            conn.commit()
+
+    if deleted:
+        _flash(request, "success", f"Удалено цитирований: {deleted}.")
+    else:
+        _flash(request, "warning", "Не удалось удалить выбранные цитирования.")
+    suffix = f"?session_name={quote(selected_session)}" if selected_session else ""
+    return _redirect(f"/quotes{suffix}")
 
 
 @router.get("/quotes/{inbox_id}", response_class=HTMLResponse)
