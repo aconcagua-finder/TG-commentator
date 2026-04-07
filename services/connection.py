@@ -275,7 +275,7 @@ def _record_account_failure(
             conn.execute(
                 """
                 INSERT INTO account_failures (session_name, kind, count, last_error, last_attempt, last_target)
-                VALUES (?, ?, 1, ?, ?, ?)
+                VALUES (%s, %s, 1, %s, %s, %s)
                 ON CONFLICT(session_name, kind) DO UPDATE SET
                     count = account_failures.count + 1,
                     last_error = excluded.last_error,
@@ -286,11 +286,11 @@ def _record_account_failure(
             )
             # Also write to the immutable log so history is never lost.
             conn.execute(
-                "INSERT INTO account_failure_log (session_name, kind, error, target, created_at) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO account_failure_log (session_name, kind, error, target, created_at) VALUES (%s, %s, %s, %s, %s)",
                 (session_name, kind, last_error, last_target, now),
             )
             row = conn.execute(
-                "SELECT count FROM account_failures WHERE session_name = ? AND kind = ?",
+                "SELECT count FROM account_failures WHERE session_name = %s AND kind = %s",
                 (session_name, kind),
             ).fetchone()
             conn.commit()
@@ -305,7 +305,7 @@ def _clear_account_failure(session_name: str, kind: str) -> None:
     try:
         with _db_connect() as conn:
             conn.execute(
-                "DELETE FROM account_failures WHERE session_name = ? AND kind = ?",
+                "DELETE FROM account_failures WHERE session_name = %s AND kind = %s",
                 (session_name, kind),
             )
             conn.commit()
@@ -322,7 +322,7 @@ def _get_join_status(session_name: str, target_id: str) -> dict | None:
         with _db_connect() as conn:
 
             row = conn.execute(
-                "SELECT * FROM join_status WHERE session_name = ? AND target_id = ?",
+                "SELECT * FROM join_status WHERE session_name = %s AND target_id = %s",
                 (session_name, target_id),
             ).fetchone()
             return dict(row) if row else None
@@ -350,7 +350,7 @@ def _compute_slow_join_next_retry_at(target_id: str, interval_mins: int) -> floa
                 """
                 SELECT MAX(next_retry_at) AS max_scheduled
                 FROM join_status
-                WHERE target_id = ? AND status = 'scheduled' AND next_retry_at IS NOT NULL
+                WHERE target_id = %s AND status = 'scheduled' AND next_retry_at IS NOT NULL
                 """,
                 (str(target_id),),
             ).fetchone()
@@ -361,7 +361,7 @@ def _compute_slow_join_next_retry_at(target_id: str, interval_mins: int) -> floa
                 """
                 SELECT MAX(last_attempt) AS max_attempt
                 FROM join_status
-                WHERE target_id = ? AND last_attempt IS NOT NULL
+                WHERE target_id = %s AND last_attempt IS NOT NULL
                 """,
                 (str(target_id),),
             ).fetchone()
@@ -412,7 +412,7 @@ def _upsert_join_status(
                 INSERT INTO join_status (
                     session_name, target_id, status,
                     last_error, last_method, last_attempt, retry_count, next_retry_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(session_name, target_id) DO UPDATE SET
                     status=excluded.status,
                     last_error=excluded.last_error,

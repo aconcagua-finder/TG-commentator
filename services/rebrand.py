@@ -376,7 +376,7 @@ async def run_rebrand_logic(api_id, api_hash, *, current_settings: dict, active_
             if success and current_identity_user_id:
                 try:
                     with _db_connect() as conn:
-                        conn.execute("INSERT INTO used_identities (user_id, date_used) VALUES (?, ?) ON CONFLICT DO NOTHING",
+                        conn.execute("INSERT INTO used_identities (user_id, date_used) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                                      (current_identity_user_id, datetime.now(timezone.utc).isoformat()))
                         conn.commit()
                 except Exception as db_e:

@@ -82,19 +82,19 @@ async def process_outbound_queue(
                     client = temp_client
                 except Exception as e:
                     with _db_connect() as conn:
-                        conn.execute("UPDATE outbound_queue SET status = 'failed_no_client' WHERE id = ?", (t_id,))
+                        conn.execute("UPDATE outbound_queue SET status = 'failed_no_client' WHERE id = %s", (t_id,))
                     kind = "quote" if reply_id else "dm"
                     with _db_connect() as conn:
                         cur = conn.cursor()
                         cur.execute(
                             """
                             UPDATE inbox_messages
-                            SET status='error', error=?
+                            SET status='error', error=%s
                             WHERE id = (
                               SELECT id
                               FROM inbox_messages
-                              WHERE kind=? AND direction='out' AND status='queued'
-                                AND session_name=? AND chat_id=? AND text=?
+                              WHERE kind=%s AND direction='out' AND status='queued'
+                                AND session_name=%s AND chat_id=%s AND text=%s
                               ORDER BY id DESC
                               LIMIT 1
                             )
@@ -108,7 +108,7 @@ async def process_outbound_queue(
                                   kind, direction, status, created_at,
                                   session_name, chat_id, reply_to_msg_id,
                                   text, is_read, error
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                                 """,
                                 (
                                     kind,
@@ -134,7 +134,7 @@ async def process_outbound_queue(
                 logger.info(f"✅ Ручной ответ отправлен от {session_name} в {dest_chat}")
 
                 with _db_connect() as conn:
-                    conn.execute("UPDATE outbound_queue SET status = 'sent' WHERE id = ?", (t_id,))
+                    conn.execute("UPDATE outbound_queue SET status = 'sent' WHERE id = %s", (t_id,))
 
                 # Mark the queued row (if any) as sent; otherwise insert a fresh row.
                 now = datetime.now(timezone.utc).isoformat()
@@ -145,12 +145,12 @@ async def process_outbound_queue(
                     cur.execute(
                         """
                         UPDATE inbox_messages
-                        SET status='sent', msg_id=?, reply_to_msg_id=?, error=NULL
+                        SET status='sent', msg_id=%s, reply_to_msg_id=%s, error=NULL
                         WHERE id = (
                           SELECT id
                           FROM inbox_messages
-                          WHERE kind=? AND direction='out' AND status='queued'
-                            AND session_name=? AND chat_id=? AND text=?
+                          WHERE kind=%s AND direction='out' AND status='queued'
+                            AND session_name=%s AND chat_id=%s AND text=%s
                           ORDER BY id DESC
                           LIMIT 1
                         )
@@ -164,7 +164,7 @@ async def process_outbound_queue(
                               kind, direction, status, created_at,
                               session_name, chat_id, msg_id, reply_to_msg_id,
                               text, is_read
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (kind, "out", "sent", now, session_name, str(chat_id_str), msg_id, reply_id, text, 1),
                         )
@@ -173,19 +173,19 @@ async def process_outbound_queue(
             except Exception as e:
                 logger.error(f"Ошибка отправки ручного ответа (ID {t_id}): {e}")
                 with _db_connect() as conn:
-                    conn.execute("UPDATE outbound_queue SET status = 'error' WHERE id = ?", (t_id,))
+                    conn.execute("UPDATE outbound_queue SET status = 'error' WHERE id = %s", (t_id,))
                 kind = "quote" if reply_id else "dm"
                 with _db_connect() as conn:
                     cur = conn.cursor()
                     cur.execute(
                         """
                         UPDATE inbox_messages
-                        SET status='error', error=?
+                        SET status='error', error=%s
                         WHERE id = (
                           SELECT id
                           FROM inbox_messages
-                          WHERE kind=? AND direction='out' AND status='queued'
-                            AND session_name=? AND chat_id=? AND text=?
+                          WHERE kind=%s AND direction='out' AND status='queued'
+                            AND session_name=%s AND chat_id=%s AND text=%s
                           ORDER BY id DESC
                           LIMIT 1
                         )
@@ -199,7 +199,7 @@ async def process_outbound_queue(
                               kind, direction, status, created_at,
                               session_name, chat_id, msg_id, reply_to_msg_id,
                               text, is_read, error
-                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 kind,

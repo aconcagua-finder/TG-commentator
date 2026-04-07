@@ -162,9 +162,9 @@ def _claim_project_manual_tasks(project_id, limit=50):
             """
             SELECT id, project_id, chat_id, message_chat_id, post_id, overrides_json
             FROM manual_tasks
-            WHERE project_id = ? AND status = 'pending'
+            WHERE project_id = %s AND status = 'pending'
             ORDER BY id ASC
-            LIMIT ?
+            LIMIT %s
             """,
             (project_id, limit),
         ).fetchall()
@@ -173,8 +173,8 @@ def _claim_project_manual_tasks(project_id, limit=50):
             cur = conn.execute(
                 """
                 UPDATE manual_tasks
-                SET status = 'processing', started_at = ?, last_error = NULL
-                WHERE id = ? AND status = 'pending'
+                SET status = 'processing', started_at = %s, last_error = NULL
+                WHERE id = %s AND status = 'pending'
                 """,
                 (now_ts, task_id),
             )
@@ -205,8 +205,8 @@ def _set_manual_task_status(task_id, status, error=None):
             conn.execute(
                 """
                 UPDATE manual_tasks
-                SET status = 'pending', started_at = NULL, finished_at = NULL, last_error = ?
-                WHERE id = ?
+                SET status = 'pending', started_at = NULL, finished_at = NULL, last_error = %s
+                WHERE id = %s
                 """,
                 (str(error or "")[:1000] or None, int(task_id)),
             )
@@ -214,8 +214,8 @@ def _set_manual_task_status(task_id, status, error=None):
         conn.execute(
             """
             UPDATE manual_tasks
-            SET status = ?, finished_at = ?, last_error = ?
-            WHERE id = ?
+            SET status = %s, finished_at = %s, last_error = %s
+            WHERE id = %s
             """,
             (status, now_ts, str(error or "")[:1000] or None, int(task_id)),
         )
@@ -258,7 +258,7 @@ def migrate_legacy_manual_queue_to_db(current_settings, save_data_fn, settings_f
                     project_id, chat_id, message_chat_id, post_id,
                     overrides_json, status, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, 'pending', ?)
+                VALUES (%s, %s, %s, %s, %s, 'pending', %s)
                 """,
                 (
                     project_id,

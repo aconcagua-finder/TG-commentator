@@ -663,7 +663,7 @@ async def target_scenario_page(request: Request, chat_id: str):
 
     with _db_connect() as conn:
         row = conn.execute(
-            "SELECT script_content, current_index, status FROM scenarios WHERE chat_id = ?",
+            "SELECT script_content, current_index, status FROM scenarios WHERE chat_id = %s",
             (chat_id,),
         ).fetchone()
 
@@ -689,7 +689,7 @@ async def target_scenario_save(request: Request, chat_id: str, script_content: s
         conn.execute(
             """
             INSERT INTO scenarios (chat_id, script_content, current_index, status)
-            VALUES (?, ?, 0, 'stopped')
+            VALUES (%s, %s, 0, 'stopped')
             ON CONFLICT(chat_id) DO UPDATE SET
                 script_content=excluded.script_content,
                 current_index=0,
@@ -709,10 +709,10 @@ async def target_scenario_toggle(request: Request, chat_id: str):
     project_id = _active_project_id(settings)
     _, _ = _find_target_by_chat_id(settings, chat_id, project_id)
     with _db_connect() as conn:
-        row = conn.execute("SELECT status FROM scenarios WHERE chat_id = ?", (chat_id,)).fetchone()
+        row = conn.execute("SELECT status FROM scenarios WHERE chat_id = %s", (chat_id,)).fetchone()
         current = row["status"] if row else "stopped"
         new_status = "stopped" if current == "running" else "running"
-        conn.execute("UPDATE scenarios SET status = ? WHERE chat_id = ?", (new_status, chat_id))
+        conn.execute("UPDATE scenarios SET status = %s WHERE chat_id = %s", (new_status, chat_id))
         conn.commit()
     _flash(request, "success", f"Сценарий: {new_status}")
     return _redirect(f"/targets/{quote(chat_id)}/scenario")
@@ -724,7 +724,7 @@ async def target_scenario_reset(request: Request, chat_id: str):
     project_id = _active_project_id(settings)
     _, _ = _find_target_by_chat_id(settings, chat_id, project_id)
     with _db_connect() as conn:
-        conn.execute("UPDATE scenarios SET current_index = 0 WHERE chat_id = ?", (chat_id,))
+        conn.execute("UPDATE scenarios SET current_index = 0 WHERE chat_id = %s", (chat_id,))
         conn.commit()
     _flash(request, "success", "Прогресс сценария сброшен в 0.")
     return _redirect(f"/targets/{quote(chat_id)}/scenario")
@@ -749,7 +749,7 @@ async def target_triggers_page(request: Request, chat_id: str):
     _, target = _find_target_by_chat_id(settings, chat_id, project_id)
     with _db_connect() as conn:
         triggers = conn.execute(
-            "SELECT id, trigger_phrase, answer_text FROM triggers WHERE chat_id = ? ORDER BY id DESC",
+            "SELECT id, trigger_phrase, answer_text FROM triggers WHERE chat_id = %s ORDER BY id DESC",
             (chat_id,),
         ).fetchall()
     return templates.TemplateResponse(
@@ -775,7 +775,7 @@ async def target_triggers_add(
     _, _ = _find_target_by_chat_id(settings, chat_id, project_id)
     with _db_connect() as conn:
         conn.execute(
-            "INSERT INTO triggers (chat_id, trigger_phrase, answer_text) VALUES (?, ?, ?)",
+            "INSERT INTO triggers (chat_id, trigger_phrase, answer_text) VALUES (%s, %s, %s)",
             (chat_id, trigger_phrase, answer_text),
         )
         conn.commit()
@@ -789,7 +789,7 @@ async def target_triggers_delete(request: Request, chat_id: str, trigger_id: int
     project_id = _active_project_id(settings)
     _, _ = _find_target_by_chat_id(settings, chat_id, project_id)
     with _db_connect() as conn:
-        conn.execute("DELETE FROM triggers WHERE id = ?", (trigger_id,))
+        conn.execute("DELETE FROM triggers WHERE id = %s", (trigger_id,))
         conn.commit()
     _flash(request, "success", "Триггер удалён.")
     return _redirect(f"/targets/{quote(chat_id)}/triggers")

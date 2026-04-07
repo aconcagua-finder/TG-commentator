@@ -159,7 +159,7 @@ async def process_new_post(
         try:
             with _db_connect() as conn:
                 cursor = conn.cursor()
-                placeholders = ','.join('?' for _ in ids_to_check)
+                placeholders = ','.join('%s' for _ in ids_to_check)
                 query = f"SELECT chat_id, script_content, status FROM scenarios WHERE chat_id IN ({placeholders})"
                 cursor.execute(query, ids_to_check)
                 row = cursor.fetchone()
@@ -176,7 +176,7 @@ async def process_new_post(
                         has_scenario = True
                         conn.execute("""
                             INSERT INTO post_scenarios (chat_id, post_id, current_index, last_run_time)
-                            VALUES (?, ?, 0, ?)
+                            VALUES (%s, %s, 0, %s)
                             ON CONFLICT DO NOTHING
                         """, (found_chat_id, msg_id, time.time()))
                         conn.commit()

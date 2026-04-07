@@ -102,16 +102,14 @@ class DictRow(dict):
 class PgConnectionWrapper:
     """Wraps a psycopg2 connection to provide sqlite3-compatible interface.
 
-    - Translates legacy ``?`` placeholders to ``%s`` (still needed until all
-      callers migrate to ``%s`` directly).
-    - Returns ``DictRow`` objects so callers can use ``row["col"]`` and ``row[0]``.
+    Returns ``DictRow`` objects so callers can use ``row["col"]`` and ``row[0]``.
+    All SQL passed in must use ``%s`` placeholders (psycopg2 native style).
     """
 
     def __init__(self, conn):
         self._conn = conn
 
     def execute(self, sql: str, params=None):
-        sql = _translate_placeholders(sql)
         cur = self._conn.cursor()
         cur.execute(sql, params or ())
         return PgCursorWrapper(cur)
@@ -184,32 +182,6 @@ class PgCursorAsConnection:
         if self._last_result:
             return self._last_result.rowcount
         return 0
-
-
-def _translate_placeholders(sql: str) -> str:
-    """Convert SQLite-style ? placeholders to PostgreSQL-style %s.
-
-    Skips ? inside string literals. This is a transitional helper — once all
-    SQL literals in the codebase use %s directly, this function (and its call
-    site in PgConnectionWrapper.execute) can be removed.
-    """
-    result = []
-    in_string = False
-    quote_char = None
-    for ch in sql:
-        if in_string:
-            result.append(ch)
-            if ch == quote_char:
-                in_string = False
-        elif ch in ("'", '"'):
-            in_string = True
-            quote_char = ch
-            result.append(ch)
-        elif ch == "?":
-            result.append("%s")
-        else:
-            result.append(ch)
-    return "".join(result)
 
 
 # ---------------------------------------------------------------------------

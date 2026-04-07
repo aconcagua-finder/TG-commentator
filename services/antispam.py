@@ -182,7 +182,7 @@ def _insert_spam_ban(entry: dict[str, Any]) -> None:
             conn.execute(
                 """
                 INSERT INTO spam_bans(chat_id, user_id, username, display_name, reason, detection_method, banned_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(chat_id, user_id) DO UPDATE SET
                     username = excluded.username,
                     display_name = excluded.display_name,
@@ -290,7 +290,7 @@ def _load_spam_rule(chat_id: str) -> dict[str, Any] | None:
                 SELECT enabled, keywords, name_keywords, ai_enabled, ai_check_name,
                        ai_prompt, ai_model, notify_telegram
                 FROM spam_rules
-                WHERE chat_id = ?
+                WHERE chat_id = %s
                 LIMIT 1
                 """,
                 (chat_id,),
@@ -536,7 +536,7 @@ def _insert_spam_log(entry: dict[str, Any]) -> int | None:
                     message_text, detection_method, matched_keyword, ai_reason,
                     action, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (

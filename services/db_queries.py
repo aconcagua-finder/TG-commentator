@@ -36,13 +36,13 @@ def get_daily_action_count_from_db(chat_id, action_type='comment'):
             variants = [chat_id, int(chat_id_str)]
             if str(chat_id).startswith("-100") or (str(chat_id).strip().lstrip("-").isdigit() and int(chat_id) > 0):
                 variants.append(int(f"-100{chat_id_str}"))
-            placeholders = ','.join('?' for _ in variants)
+            placeholders = ','.join('%s' for _ in variants)
 
             query = f'''
                 SELECT COUNT(*) FROM logs
-                WHERE log_type = ?
+                WHERE log_type = %s
                 AND destination_chat_id IN ({placeholders})
-                AND timestamp LIKE ?
+                AND timestamp LIKE %s
             '''
 
             args = [action_type] + variants + [f"{today_str}%"]
@@ -70,11 +70,11 @@ def check_if_already_commented(destination_chat_id, post_id):
         variants.add(destination_chat_id)
         variants.add(str(destination_chat_id))
 
-        placeholders = ','.join('?' for _ in variants)
+        placeholders = ','.join('%s' for _ in variants)
 
         query = f'''
             SELECT COUNT(*) FROM logs
-            WHERE (post_id = ? OR post_id = ?)
+            WHERE (post_id = %s OR post_id = %s)
             AND destination_chat_id IN ({placeholders})
             AND log_type IN ('comment', 'comment_reply', 'forbidden')
         '''
@@ -114,7 +114,7 @@ def _db_get_last_post_time(kind: str, chat_key: str) -> datetime | None:
     try:
         with _db_connect() as conn:
             row = conn.execute(
-                "SELECT last_post_ts FROM chat_last_post_times WHERE kind = ? AND chat_key = ?",
+                "SELECT last_post_ts FROM chat_last_post_times WHERE kind = %s AND chat_key = %s",
                 (kind, chat_key),
             ).fetchone()
         if not row:
@@ -139,7 +139,7 @@ def _db_set_last_post_time(kind: str, chat_key: str, post_time: datetime) -> Non
             conn.execute(
                 """
                 INSERT INTO chat_last_post_times(kind, chat_key, last_post_ts, updated_at)
-                VALUES (?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s)
                 ON CONFLICT(kind, chat_key) DO UPDATE SET
                     last_post_ts = excluded.last_post_ts,
                     updated_at = excluded.updated_at
@@ -165,7 +165,7 @@ def _scenario_history_load(chat_id: str, post_id: int) -> dict[int, int]:
                 """
                 SELECT ref_idx, msg_id
                 FROM scenario_msg_history
-                WHERE chat_id = ? AND post_id = ?
+                WHERE chat_id = %s AND post_id = %s
                 """,
                 (chat_id, int(post_id)),
             ).fetchall()
@@ -190,7 +190,7 @@ def _scenario_history_set(chat_id: str, post_id: int, ref_idx: int, msg_id: int)
             conn.execute(
                 """
                 INSERT INTO scenario_msg_history(chat_id, post_id, ref_idx, msg_id, updated_at)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT(chat_id, post_id, ref_idx) DO UPDATE SET
                     msg_id = excluded.msg_id,
                     updated_at = excluded.updated_at
@@ -209,7 +209,7 @@ def _scenario_history_clear(chat_id: str, post_id: int) -> None:
     try:
         with _db_connect() as conn:
             conn.execute(
-                "DELETE FROM scenario_msg_history WHERE chat_id = ? AND post_id = ?",
+                "DELETE FROM scenario_msg_history WHERE chat_id = %s AND post_id = %s",
                 (chat_id, int(post_id)),
             )
             conn.commit()
@@ -233,7 +233,7 @@ def _load_post_comment_plan(chat_key: str, post_id: int) -> tuple[int, list[str]
         with _db_connect() as conn:
 
             row = conn.execute(
-                "SELECT planned_count, planned_accounts FROM post_comment_plans WHERE chat_key = ? AND post_id = ?",
+                "SELECT planned_count, planned_accounts FROM post_comment_plans WHERE chat_key = %s AND post_id = %s",
                 (str(chat_key), int(post_id)),
             ).fetchone()
             if not row:
@@ -265,7 +265,7 @@ def _save_post_comment_plan(chat_key: str, post_id: int, planned_count: int, pla
             conn.execute(
                 """
                 INSERT INTO post_comment_plans(chat_key, post_id, planned_count, planned_accounts, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT(chat_key, post_id) DO UPDATE SET
                     planned_count = excluded.planned_count,
                     planned_accounts = excluded.planned_accounts,
@@ -345,12 +345,12 @@ def _get_post_our_accounts_from_db(destination_chat_id: int, post_id: int) -> se
         if not variants_list:
             return set()
 
-        placeholders = ",".join("?" for _ in variants_list)
+        placeholders = ",".join("%s" for _ in variants_list)
         query = f"""
             SELECT DISTINCT account_session_name
             FROM logs
             WHERE destination_chat_id IN ({placeholders})
-              AND (post_id = ? OR post_id = ?)
+              AND (post_id = %s OR post_id = %s)
               AND log_type IN ('comment', 'comment_reply', 'forbidden')
               AND account_session_name IS NOT NULL
               AND account_session_name != ''
@@ -461,7 +461,7 @@ def log_action_to_db(log_entry):
                     log_type, timestamp, destination_chat_id, channel_name, channel_username,
                     source_channel_id, post_id, msg_id, account_session_name, account_first_name,
                     account_username, content
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ''', (
                 log_entry.get('type'),
                 log_entry.get('date'),
@@ -553,7 +553,7 @@ def _db_create_discussion_session(
                     status, created_at, started_at, finished_at, schedule_at,
                     operator_session_name, seed_msg_id, seed_text,
                     settings_json, participants_json, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -605,7 +605,7 @@ def _db_update_discussion_session(session_id: int, **fields) -> None:
     for key, value in fields.items():
         if key not in allowed:
             continue
-        updates.append(f"{key} = ?")
+        updates.append(f"{key} = %s")
         params.append(value)
     if not updates:
         return
@@ -613,7 +613,7 @@ def _db_update_discussion_session(session_id: int, **fields) -> None:
     try:
         with _db_connect() as conn:
             conn.execute(
-                f"UPDATE discussion_sessions SET {', '.join(updates)} WHERE id = ?",
+                f"UPDATE discussion_sessions SET {', '.join(updates)} WHERE id = %s",
                 tuple(params),
             )
             conn.commit()
@@ -646,7 +646,7 @@ def _db_add_discussion_message(
                     speaker_session_name, speaker_label,
                     msg_id, reply_to_msg_id,
                     text, prompt_info, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     int(session_id),

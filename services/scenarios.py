@@ -98,7 +98,7 @@ async def process_scenarios(
                     break
             if not has_any_target:
                 with _db_connect() as conn:
-                    conn.execute("DELETE FROM post_scenarios WHERE id = ?", (row_id,))
+                    conn.execute("DELETE FROM post_scenarios WHERE id = %s", (row_id,))
                 _scenario_history_clear(chat_id_str, post_id)
             continue
 
@@ -108,7 +108,7 @@ async def process_scenarios(
 
         if idx >= len(lines):
             with _db_connect() as conn:
-                conn.execute("DELETE FROM post_scenarios WHERE id = ?", (row_id,))
+                conn.execute("DELETE FROM post_scenarios WHERE id = %s", (row_id,))
 
             hist_key = f"{chat_id_str}_{post_id}"
             if hist_key in _msg_history:
@@ -126,7 +126,7 @@ async def process_scenarios(
         if not match:
             logger.warning(f"⚠️ [SKIP] Неверный формат строки {idx + 1}: '{line}'")
             with _db_connect() as conn:
-                conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = ?", (row_id,))
+                conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = %s", (row_id,))
             continue
 
         acc_idx_raw = int(match.group(1))
@@ -164,7 +164,7 @@ async def process_scenarios(
             else:
                 logger.error("❌ Нет активных клиентов для сценария.")
                 with _db_connect() as conn:
-                    conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = ?", (row_id,))
+                    conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = %s", (row_id,))
                 continue
 
         try:
@@ -201,7 +201,7 @@ async def process_scenarios(
             except asyncio.TimeoutError:
                 logger.error(f"❌ [{session_name}] Тайм-аут поиска чата. Пропускаю шаг.")
                 with _db_connect() as conn:
-                    conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = ?", (row_id,))
+                    conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = %s", (row_id,))
                 continue
             except Exception as e:
                 try:
@@ -209,7 +209,7 @@ async def process_scenarios(
                 except:
                     logger.error(f"❌ [{session_name}] Чат не найден: {e}")
                     with _db_connect() as conn:
-                        conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = ?",
+                        conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = %s",
                                      (row_id,))
                     continue
 
@@ -240,10 +240,10 @@ async def process_scenarios(
 
             with _db_connect() as conn:
                 conn.execute(
-                    "UPDATE post_scenarios SET current_index = current_index + 1, last_run_time = ? WHERE id = ?",
+                    "UPDATE post_scenarios SET current_index = current_index + 1, last_run_time = %s WHERE id = %s",
                     (time.time(), row_id))
 
         except Exception as e:
             logger.error(f"❌ Ошибка выполнения шага (Post {post_id}): {e}", exc_info=True)
             with _db_connect() as conn:
-                conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = ?", (row_id,))
+                conn.execute("UPDATE post_scenarios SET current_index = current_index + 1 WHERE id = %s", (row_id,))

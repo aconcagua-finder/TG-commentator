@@ -106,7 +106,7 @@ def _get_logs_for_period(period: str, page: int, items_per_page: int = 20, *, lo
 
     offset = page * items_per_page
     log_type_value = str(log_type or "").strip()
-    log_type_filter = " AND log_type = ?" if log_type_value else ""
+    log_type_filter = " AND log_type = %s" if log_type_value else ""
     params: tuple[Any, ...] = (log_type_value,) if log_type_value else ()
 
     with _db_connect() as conn:
@@ -124,7 +124,7 @@ def _get_logs_for_period(period: str, page: int, items_per_page: int = 20, *, lo
             SELECT l.* FROM logs l
             INNER JOIN ({dedup_sub}) AS sub ON l.id = sub.id
             ORDER BY l.timestamp DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
             """,
             params + (items_per_page, offset),
         ).fetchall()
@@ -651,7 +651,7 @@ async def tasks_page(request: Request):
                   discussion_target_id, discussion_target_chat_id, chat_id,
                   operator_session_name, seed_msg_id, seed_text, error
                 FROM discussion_sessions
-                WHERE project_id = ?
+                WHERE project_id = %s
                 ORDER BY id DESC
                 LIMIT 200
                 """,

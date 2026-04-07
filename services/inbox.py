@@ -63,7 +63,7 @@ def log_inbox_message_to_db(
                     text, replied_to_text,
                     reactions_summary, reactions_updated_at,
                     is_read, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT DO NOTHING
                 RETURNING id
                 """,
@@ -203,7 +203,7 @@ def _store_message_reaction_event(
                 reactions_summary, reactions_updated_at,
                 is_read
             )
-            VALUES (?, 'out', 'sent', ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            VALUES (%s, 'out', 'sent', %s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
             ON CONFLICT(session_name, chat_id, msg_id, direction) DO UPDATE SET
                 kind=excluded.kind,
                 status='sent',
@@ -246,7 +246,7 @@ def _store_message_reaction_event(
                     reactions_summary, reactions_updated_at,
                     is_read
                 )
-                VALUES (?, 'in', 'reaction', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                VALUES (%s, 'in', 'reaction', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0)
                 ON CONFLICT(session_name, chat_id, msg_id, direction) DO UPDATE SET
                     kind=excluded.kind,
                     status='reaction',
@@ -280,7 +280,7 @@ def _store_message_reaction_event(
             conn.execute(
                 """
                 DELETE FROM inbox_messages
-                WHERE session_name=? AND chat_id=? AND msg_id=? AND direction='in' AND status='reaction'
+                WHERE session_name=%s AND chat_id=%s AND msg_id=%s AND direction='in' AND status='reaction'
                 """,
                 (session_name, chat_id, int(msg_id)),
             )
@@ -308,13 +308,13 @@ def _queued_outgoing_exists(
                 """
                 SELECT 1
                 FROM inbox_messages
-                WHERE kind=?
+                WHERE kind=%s
                   AND direction='out'
                   AND status='queued'
-                  AND session_name=?
-                  AND chat_id=?
-                  AND COALESCE(text, '') = COALESCE(?, '')
-                  AND COALESCE(reply_to_msg_id, -1) = COALESCE(?, -1)
+                  AND session_name=%s
+                  AND chat_id=%s
+                  AND COALESCE(text, '') = COALESCE(%s, '')
+                  AND COALESCE(reply_to_msg_id, -1) = COALESCE(%s, -1)
                 LIMIT 1
                 """,
                 (kind, session_name, str(chat_id), text or "", reply_to_msg_id),

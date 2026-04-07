@@ -198,7 +198,7 @@ async def account_error_log(request: Request, session_name: str):
     with _db_connect() as conn:
         rows = conn.execute(
             "SELECT kind, error, target, created_at FROM account_failure_log "
-            "WHERE session_name = ? ORDER BY created_at DESC LIMIT 200",
+            "WHERE session_name = %s ORDER BY created_at DESC LIMIT 200",
             (session_name,),
         ).fetchall()
 
@@ -267,7 +267,7 @@ async def account_new_session(
             _flash(request, "warning", "Прокси: некорректный ID, будет добавлено без прокси.")
         if proxy_id_int is not None:
             with _db_connect() as conn:
-                row = conn.execute("SELECT url FROM proxies WHERE id = ?", (proxy_id_int,)).fetchone()
+                row = conn.execute("SELECT url FROM proxies WHERE id = %s", (proxy_id_int,)).fetchone()
                 if row:
                     proxy_url = row["url"]
 
@@ -382,7 +382,7 @@ async def account_new_phone_start(
             _flash(request, "warning", "Прокси: некорректный ID, вход будет без прокси.")
         if proxy_id_int is not None:
             with _db_connect() as conn:
-                row = conn.execute("SELECT url FROM proxies WHERE id = ?", (proxy_id_int,)).fetchone()
+                row = conn.execute("SELECT url FROM proxies WHERE id = %s", (proxy_id_int,)).fetchone()
                 if row:
                     proxy_url = row["url"]
 
@@ -692,7 +692,7 @@ async def account_update_proxy(
             _flash(request, "warning", "Прокси: некорректный ID, значение не изменено.")
         if proxy_id_int is not None:
             with _db_connect() as conn:
-                row = conn.execute("SELECT url FROM proxies WHERE id = ?", (proxy_id_int,)).fetchone()
+                row = conn.execute("SELECT url FROM proxies WHERE id = %s", (proxy_id_int,)).fetchone()
                 if row:
                     proxy_url = row["url"]
 

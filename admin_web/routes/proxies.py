@@ -82,7 +82,7 @@ async def proxies_add(
         with _db_connect() as conn:
             try:
                 conn.execute(
-                    "INSERT INTO proxies (url, name, ip, country, status, last_check) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO proxies (url, name, ip, country, status, last_check) VALUES (%s, %s, %s, %s, %s, %s)",
                     (url, name, res["ip"], res["country"], res["status"], datetime.now().isoformat()),
                 )
                 conn.commit()
@@ -108,7 +108,7 @@ async def proxies_check_all(request: Request):
         res = await _check_proxy_health(r["url"])
         with _db_connect() as conn:
             conn.execute(
-                "UPDATE proxies SET status=?, ip=?, country=?, last_check=? WHERE id=?",
+                "UPDATE proxies SET status=%s, ip=%s, country=%s, last_check=%s WHERE id=%s",
                 (res["status"], res["ip"], res["country"], datetime.now().isoformat(), r["id"]),
             )
             conn.commit()
@@ -124,7 +124,7 @@ async def proxies_check_all(request: Request):
 @router.post("/proxies/{proxy_id}/check")
 async def proxies_check_one(request: Request, proxy_id: int):
     with _db_connect() as conn:
-        row = conn.execute("SELECT url FROM proxies WHERE id=?", (proxy_id,)).fetchone()
+        row = conn.execute("SELECT url FROM proxies WHERE id=%s", (proxy_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Прокси не найден")
         url = row["url"]
@@ -132,7 +132,7 @@ async def proxies_check_one(request: Request, proxy_id: int):
     res = await _check_proxy_health(url)
     with _db_connect() as conn:
         conn.execute(
-            "UPDATE proxies SET status=?, ip=?, country=?, last_check=? WHERE id=?",
+            "UPDATE proxies SET status=%s, ip=%s, country=%s, last_check=%s WHERE id=%s",
             (res["status"], res["ip"], res["country"], datetime.now().isoformat(), proxy_id),
         )
         conn.commit()
@@ -145,10 +145,10 @@ async def proxies_check_one(request: Request, proxy_id: int):
 async def proxies_update_name(request: Request, proxy_id: int, name: str = Form("")):
     name = name.strip()
     with _db_connect() as conn:
-        row = conn.execute("SELECT id FROM proxies WHERE id=?", (proxy_id,)).fetchone()
+        row = conn.execute("SELECT id FROM proxies WHERE id=%s", (proxy_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Прокси не найден")
-        conn.execute("UPDATE proxies SET name=? WHERE id=?", (name or None, proxy_id))
+        conn.execute("UPDATE proxies SET name=%s WHERE id=%s", (name or None, proxy_id))
         conn.commit()
     _flash(request, "success", "Название прокси обновлено.")
     return _redirect("/proxies")
@@ -157,7 +157,7 @@ async def proxies_update_name(request: Request, proxy_id: int, name: str = Form(
 @router.post("/proxies/{proxy_id}/delete")
 async def proxies_delete_one(request: Request, proxy_id: int):
     with _db_connect() as conn:
-        conn.execute("DELETE FROM proxies WHERE id=?", (proxy_id,))
+        conn.execute("DELETE FROM proxies WHERE id=%s", (proxy_id,))
         conn.commit()
     _flash(request, "success", "Прокси удалён.")
     return _redirect("/proxies")

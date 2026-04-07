@@ -624,7 +624,7 @@ def _cleanup_inbox_for_removed_accounts(settings: Dict[str, Any]) -> None:
     if not sessions:
         return
 
-    placeholders = ", ".join(["?"] * len(sessions))
+    placeholders = ", ".join(["%s"] * len(sessions))
     with _db_connect() as conn:
         conn.execute(
             f"UPDATE inbox_messages SET is_read=1 WHERE direction='in' AND is_read=0 AND session_name NOT IN ({placeholders})",
@@ -672,7 +672,7 @@ def _list_manual_tasks(
     statuses = tuple(s for s in statuses if s)
     if not statuses:
         return []
-    placeholders = ", ".join(["?"] * len(statuses))
+    placeholders = ", ".join(["%s"] * len(statuses))
     params = [project_id, *statuses, int(limit)]
     with _db_connect() as conn:
         rows = conn.execute(
@@ -681,9 +681,9 @@ def _list_manual_tasks(
               id, project_id, chat_id, message_chat_id, post_id,
               overrides_json, status, created_at, started_at, finished_at, last_error
             FROM manual_tasks
-            WHERE project_id = ? AND status IN ({placeholders})
+            WHERE project_id = %s AND status IN ({placeholders})
             ORDER BY id DESC
-            LIMIT ?
+            LIMIT %s
             """,
             tuple(params),
         ).fetchall()
@@ -707,7 +707,7 @@ def _enqueue_manual_task(
               project_id, chat_id, message_chat_id, post_id,
               overrides_json, status, created_at
             )
-            VALUES (?, ?, ?, ?, ?, 'pending', ?)
+            VALUES (%s, %s, %s, %s, %s, 'pending', %s)
             RETURNING id
             """,
             (project_id, str(chat_id), str(message_chat_id), int(post_id), payload, now_ts),
@@ -720,11 +720,11 @@ def _clear_manual_tasks(project_id: str, *, statuses: Tuple[str, ...] = ("pendin
     statuses = tuple(s for s in statuses if s)
     if not statuses:
         return 0
-    placeholders = ", ".join(["?"] * len(statuses))
+    placeholders = ", ".join(["%s"] * len(statuses))
     params = [project_id, *statuses]
     with _db_connect() as conn:
         cur = conn.execute(
-            f"DELETE FROM manual_tasks WHERE project_id = ? AND status IN ({placeholders})",
+            f"DELETE FROM manual_tasks WHERE project_id = %s AND status IN ({placeholders})",
             tuple(params),
         )
         return int(cur.rowcount or 0)
@@ -735,8 +735,8 @@ def _move_manual_tasks(source_project_id: str, dest_project_id: str) -> int:
         cur = conn.execute(
             """
             UPDATE manual_tasks
-            SET project_id = ?
-            WHERE project_id = ? AND status IN ('pending', 'processing')
+            SET project_id = %s
+            WHERE project_id = %s AND status IN ('pending', 'processing')
             """,
             (dest_project_id, source_project_id),
         )
@@ -745,7 +745,7 @@ def _move_manual_tasks(source_project_id: str, dest_project_id: str) -> int:
 
 def _delete_manual_tasks_for_project(project_id: str) -> int:
     with _db_connect() as conn:
-        cur = conn.execute("DELETE FROM manual_tasks WHERE project_id = ?", (project_id,))
+        cur = conn.execute("DELETE FROM manual_tasks WHERE project_id = %s", (project_id,))
         return int(cur.rowcount or 0)
 
 
@@ -792,7 +792,7 @@ def _load_join_status(target_ids: List[str]) -> Dict[str, Dict[str, Dict[str, An
     target_ids = [str(t) for t in target_ids if t]
     if not target_ids:
         return join_status
-    placeholders = ",".join("?" for _ in target_ids)
+    placeholders = ",".join("%s" for _ in target_ids)
     with _db_connect() as conn:
         rows = conn.execute(
             f"SELECT session_name, target_id, status, last_error, last_method, last_attempt, retry_count, next_retry_at "
@@ -821,7 +821,7 @@ def _update_join_status(
                 INSERT INTO join_status (
                     session_name, target_id, status,
                     last_error, last_method, last_attempt, retry_count, next_retry_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(session_name, target_id) DO UPDATE SET
                     status=excluded.status,
                     last_error=excluded.last_error,
@@ -878,7 +878,7 @@ def _record_account_failure(
         conn.execute(
             """
             INSERT INTO account_failures (session_name, kind, count, last_error, last_attempt, last_target)
-            VALUES (?, ?, 1, ?, ?, ?)
+            VALUES (%s, %s, 1, %s, %s, %s)
             ON CONFLICT(session_name, kind) DO UPDATE SET
                 count = account_failures.count + 1,
                 last_error = excluded.last_error,
@@ -888,7 +888,7 @@ def _record_account_failure(
             (session_name, kind, last_error, now, last_target),
         )
         row = conn.execute(
-            "SELECT count FROM account_failures WHERE session_name = ? AND kind = ?",
+            "SELECT count FROM account_failures WHERE session_name = %s AND kind = %s",
             (session_name, kind),
         ).fetchone()
         conn.commit()
@@ -900,7 +900,7 @@ def _clear_account_failure(session_name: str, kind: str) -> None:
         return
     with _db_connect() as conn:
         conn.execute(
-            "DELETE FROM account_failures WHERE session_name = ? AND kind = ?",
+            "DELETE FROM account_failures WHERE session_name = %s AND kind = %s",
             (session_name, kind),
         )
         conn.commit()
@@ -910,13 +910,13 @@ def _load_account_failures(sessions: List[str], *, min_count: int = 1) -> List[D
     sessions = [s for s in sessions if s]
     if not sessions:
         return []
-    placeholders = ",".join("?" for _ in sessions)
+    placeholders = ",".join("%s" for _ in sessions)
     with _db_connect() as conn:
         rows = conn.execute(
             f"""
             SELECT session_name, kind, count, last_error, last_attempt, last_target
             FROM account_failures
-            WHERE session_name IN ({placeholders}) AND count >= ?
+            WHERE session_name IN ({placeholders}) AND count >= %s
             ORDER BY count DESC, last_attempt DESC
             """,
             (*sessions, min_count),
@@ -945,7 +945,7 @@ def _load_seen_warning_keys(keys: List[str]) -> set[str]:
     keys = [str(k).strip() for k in keys if k]
     if not keys:
         return set()
-    placeholders = ",".join("?" for _ in keys)
+    placeholders = ",".join("%s" for _ in keys)
     with _db_connect() as conn:
         rows = conn.execute(
             f"SELECT key FROM warning_seen WHERE key IN ({placeholders})",
@@ -965,7 +965,7 @@ def _mark_warning_keys_seen(keys: List[str]) -> None:
             conn.execute(
                 """
                 INSERT INTO warning_seen(key, seen_at)
-                VALUES (?, ?)
+                VALUES (%s, %s)
                 ON CONFLICT(key) DO UPDATE SET
                   seen_at = excluded.seen_at
                 """,
@@ -979,7 +979,7 @@ def _load_dismissed_warning_keys(keys: List[str]) -> Dict[str, float]:
     keys = [str(k).strip() for k in keys if k]
     if not keys:
         return {}
-    placeholders = ",".join("?" for _ in keys)
+    placeholders = ",".join("%s" for _ in keys)
     with _db_connect() as conn:
         rows = conn.execute(
             f"SELECT key, dismissed_at FROM warning_dismissed WHERE key IN ({placeholders})",
@@ -1009,7 +1009,7 @@ def _mark_warning_keys_dismissed(keys: List[str]) -> None:
             conn.execute(
                 """
                 INSERT INTO warning_dismissed(key, dismissed_at)
-                VALUES (?, ?)
+                VALUES (%s, %s)
                 ON CONFLICT(key) DO UPDATE SET
                   dismissed_at = excluded.dismissed_at
                 """,
@@ -1022,7 +1022,7 @@ def _clear_dismissed_warning_keys(keys: List[str]) -> None:
     keys = [str(k).strip() for k in keys if k]
     if not keys:
         return
-    placeholders = ",".join("?" for _ in keys)
+    placeholders = ",".join("%s" for _ in keys)
     with _db_connect() as conn:
         conn.execute(
             f"DELETE FROM warning_dismissed WHERE key IN ({placeholders})",
@@ -1036,7 +1036,7 @@ def _load_active_warning_history_created_at(keys: List[str]) -> Dict[str, float]
     keys = [str(k).strip() for k in keys if k]
     if not keys:
         return {}
-    placeholders = ",".join("?" for _ in keys)
+    placeholders = ",".join("%s" for _ in keys)
     with _db_connect() as conn:
         rows = conn.execute(
             f"""
@@ -1202,7 +1202,7 @@ def _sync_warning_history(warnings: List[Dict[str, Any]]) -> None:
                 INSERT INTO warning_history (
                     key, level, title, detail, session_name, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
                     key,
@@ -1220,9 +1220,9 @@ def _sync_warning_history(warnings: List[Dict[str, Any]]) -> None:
                 resolved_ids.extend(ids)
 
         if resolved_ids:
-            placeholders = ",".join("?" for _ in resolved_ids)
+            placeholders = ",".join("%s" for _ in resolved_ids)
             conn.execute(
-                f"UPDATE warning_history SET resolved_at = ? WHERE id IN ({placeholders})",
+                f"UPDATE warning_history SET resolved_at = %s WHERE id IN ({placeholders})",
                 (now, *resolved_ids),
             )
 
@@ -1235,7 +1235,7 @@ def _load_resolved_warning_history(session_names: List[str], *, limit: int = 50)
     where = ["resolved_at IS NOT NULL"]
     params: List[Any] = []
     if session_names:
-        placeholders = ",".join("?" for _ in session_names)
+        placeholders = ",".join("%s" for _ in session_names)
         where.append(f"(session_name IN ({placeholders}) OR session_name IS NULL OR session_name='')")
         params.extend(session_names)
     else:
@@ -1249,7 +1249,7 @@ def _load_resolved_warning_history(session_names: List[str], *, limit: int = 50)
             FROM warning_history
             WHERE {' AND '.join(where)}
             ORDER BY resolved_at DESC, id DESC
-            LIMIT ?
+            LIMIT %s
             """,
             tuple(params),
         ).fetchall()

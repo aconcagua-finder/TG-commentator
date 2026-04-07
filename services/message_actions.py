@@ -99,13 +99,13 @@ def _update_related_rows(
     with _db_connect() as conn:
         if deleted:
             if source == "logs" and record_id is not None:
-                conn.execute("DELETE FROM logs WHERE id = ?", (int(record_id),))
+                conn.execute("DELETE FROM logs WHERE id = %s", (int(record_id),))
             elif chat_variants:
-                placeholders = ", ".join(["?"] * len(chat_variants))
+                placeholders = ", ".join(["%s"] * len(chat_variants))
                 conn.execute(
                     f"""
                     DELETE FROM logs
-                    WHERE account_session_name = ? AND msg_id = ?
+                    WHERE account_session_name = %s AND msg_id = %s
                       AND destination_chat_id IN ({placeholders})
                     """,
                     (session_name, int(msg_id), *chat_variants),
@@ -113,7 +113,7 @@ def _update_related_rows(
 
             if source == "inbox" and record_id is not None:
                 conn.execute(
-                    "UPDATE inbox_messages SET status='deleted', error=NULL WHERE id = ?",
+                    "UPDATE inbox_messages SET status='deleted', error=NULL WHERE id = %s",
                     (int(record_id),),
                 )
             else:
@@ -121,20 +121,20 @@ def _update_related_rows(
                     """
                     UPDATE inbox_messages
                     SET status='deleted', error=NULL
-                    WHERE direction='out' AND session_name = ? AND chat_id = ? AND msg_id = ?
+                    WHERE direction='out' AND session_name = %s AND chat_id = %s AND msg_id = %s
                     """,
                     (session_name, str(chat_id), int(msg_id)),
                 )
         else:
             if source == "logs" and record_id is not None:
-                conn.execute("UPDATE logs SET content = ? WHERE id = ?", (new_text, int(record_id)))
+                conn.execute("UPDATE logs SET content = %s WHERE id = %s", (new_text, int(record_id)))
             elif chat_variants:
-                placeholders = ", ".join(["?"] * len(chat_variants))
+                placeholders = ", ".join(["%s"] * len(chat_variants))
                 conn.execute(
                     f"""
                     UPDATE logs
-                    SET content = ?
-                    WHERE account_session_name = ? AND msg_id = ?
+                    SET content = %s
+                    WHERE account_session_name = %s AND msg_id = %s
                       AND destination_chat_id IN ({placeholders})
                     """,
                     (new_text, session_name, int(msg_id), *chat_variants),
@@ -142,15 +142,15 @@ def _update_related_rows(
 
             if source == "inbox" and record_id is not None:
                 conn.execute(
-                    "UPDATE inbox_messages SET text = ?, error=NULL WHERE id = ?",
+                    "UPDATE inbox_messages SET text = %s, error=NULL WHERE id = %s",
                     (new_text, int(record_id)),
                 )
             else:
                 conn.execute(
                     """
                     UPDATE inbox_messages
-                    SET text = ?, error=NULL
-                    WHERE direction='out' AND session_name = ? AND chat_id = ? AND msg_id = ?
+                    SET text = %s, error=NULL
+                    WHERE direction='out' AND session_name = %s AND chat_id = %s AND msg_id = %s
                     """,
                     (new_text, session_name, str(chat_id), int(msg_id)),
                 )

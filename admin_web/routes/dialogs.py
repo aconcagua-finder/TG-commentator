@@ -50,7 +50,7 @@ async def dialogs_page(request: Request, session_name: str = ""):
     active_sessions = [selected_session] if selected_session else sessions
     rows = []
     if active_sessions:
-        placeholders = ", ".join(["?"] * len(active_sessions))
+        placeholders = ", ".join(["%s"] * len(active_sessions))
         params = tuple(active_sessions) + tuple(active_sessions)
         with _db_connect() as conn:
             rows = conn.execute(
@@ -136,7 +136,7 @@ async def dialogs_mark_all_read(request: Request, session_name: str = Form("")):
         _flash(request, "info", "Нет аккаунтов для пометки сообщений прочитанными.")
         return _redirect("/dialogs")
 
-    placeholders = ", ".join(["?"] * len(target_sessions))
+    placeholders = ", ".join(["%s"] * len(target_sessions))
     with _db_connect() as conn:
         cursor = conn.execute(
             f"UPDATE inbox_messages SET is_read=1 "
@@ -197,11 +197,11 @@ async def dialogs_bulk_delete(request: Request):
     with _db_connect() as conn:
         for sess, chat_id in pairs:
             conn.execute(
-                "DELETE FROM inbox_messages WHERE kind='dm' AND session_name=? AND chat_id=?",
+                "DELETE FROM inbox_messages WHERE kind='dm' AND session_name=%s AND chat_id=%s",
                 (sess, chat_id),
             )
             conn.execute(
-                "DELETE FROM outbound_queue WHERE session_name=? AND chat_id=? AND reply_to_msg_id IS NULL",
+                "DELETE FROM outbound_queue WHERE session_name=%s AND chat_id=%s AND reply_to_msg_id IS NULL",
                 (sess, chat_id),
             )
             deleted += 1
@@ -225,14 +225,14 @@ async def dialog_thread_page(request: Request, session_name: str, chat_id: str):
             """
             SELECT *
             FROM inbox_messages
-            WHERE kind='dm' AND session_name=? AND chat_id=?
+            WHERE kind='dm' AND session_name=%s AND chat_id=%s
             ORDER BY id DESC
             LIMIT 400
             """,
             (session_name, chat_id),
         ).fetchall()
         conn.execute(
-            "UPDATE inbox_messages SET is_read=1 WHERE kind='dm' AND session_name=? AND chat_id=? AND direction='in'",
+            "UPDATE inbox_messages SET is_read=1 WHERE kind='dm' AND session_name=%s AND chat_id=%s AND direction='in'",
             (session_name, chat_id),
         )
         conn.commit()
@@ -280,14 +280,14 @@ async def dialog_send_message(request: Request, session_name: str, chat_id: str,
                 kind, direction, status, created_at,
                 session_name, chat_id,
                 text, is_read
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             ("dm", "out", "queued", now, session_name, chat_id, text, 1),
         )
         conn.execute(
             """
             INSERT INTO outbound_queue (chat_id, reply_to_msg_id, session_name, text, status)
-            VALUES (?, ?, ?, ?, 'pending')
+            VALUES (%s, %s, %s, %s, 'pending')
             """,
             (chat_id, None, session_name, text),
         )
@@ -311,9 +311,9 @@ async def dialog_delete_thread(
         raise HTTPException(status_code=404, detail="Аккаунт не найден в текущем проекте")
 
     with _db_connect() as conn:
-        conn.execute("DELETE FROM inbox_messages WHERE kind='dm' AND session_name=? AND chat_id=?", (session_name, chat_id))
+        conn.execute("DELETE FROM inbox_messages WHERE kind='dm' AND session_name=%s AND chat_id=%s", (session_name, chat_id))
         conn.execute(
-            "DELETE FROM outbound_queue WHERE session_name=? AND chat_id=? AND reply_to_msg_id IS NULL",
+            "DELETE FROM outbound_queue WHERE session_name=%s AND chat_id=%s AND reply_to_msg_id IS NULL",
             (session_name, chat_id),
         )
         conn.commit()
@@ -345,7 +345,7 @@ async def quotes_page(request: Request, session_name: str = ""):
     active_sessions = [selected_session] if selected_session else sessions
     rows = []
     if active_sessions:
-        placeholders = ", ".join(["?"] * len(active_sessions))
+        placeholders = ", ".join(["%s"] * len(active_sessions))
         with _db_connect() as conn:
             rows = conn.execute(
                 f"""
@@ -411,7 +411,7 @@ async def quotes_mark_all_read(request: Request, session_name: str = Form("")):
         _flash(request, "info", "Нет аккаунтов для пометки цитирований прочитанными.")
         return _redirect("/quotes")
 
-    placeholders = ", ".join(["?"] * len(target_sessions))
+    placeholders = ", ".join(["%s"] * len(target_sessions))
     with _db_connect() as conn:
         cursor = conn.execute(
             f"UPDATE inbox_messages SET is_read=1 "
@@ -461,7 +461,7 @@ async def quotes_bulk_delete(request: Request):
     }
 
     deleted = 0
-    placeholders = ",".join("?" for _ in cleaned_ids)
+    placeholders = ",".join("%s" for _ in cleaned_ids)
     with _db_connect() as conn:
         rows = conn.execute(
             f"SELECT id, session_name FROM inbox_messages WHERE kind='quote' AND id IN ({placeholders})",
@@ -471,7 +471,7 @@ async def quotes_bulk_delete(request: Request):
             int(row["id"]) for row in rows if str(row["session_name"]) in allowed_sessions
         ]
         if ids_to_delete:
-            placeholders_del = ",".join("?" for _ in ids_to_delete)
+            placeholders_del = ",".join("%s" for _ in ids_to_delete)
             conn.execute(
                 f"DELETE FROM inbox_messages WHERE id IN ({placeholders_del})",
                 tuple(ids_to_delete),
@@ -490,7 +490,7 @@ async def quotes_bulk_delete(request: Request):
 @router.get("/quotes/{inbox_id}", response_class=HTMLResponse)
 async def quote_detail_page(request: Request, inbox_id: int, session_name: str = ""):
     with _db_connect() as conn:
-        row = conn.execute("SELECT * FROM inbox_messages WHERE id = ? AND kind='quote'", (inbox_id,)).fetchone()
+        row = conn.execute("SELECT * FROM inbox_messages WHERE id = %s AND kind='quote'", (inbox_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Сообщение не найдено")
         settings, _ = _load_settings()
@@ -500,7 +500,7 @@ async def quote_detail_page(request: Request, inbox_id: int, session_name: str =
             a.get("session_name") == row["session_name"] and _project_id_for(a) == project_id for a in accounts
         ):
             raise HTTPException(status_code=404, detail="Сообщение не найдено в текущем проекте")
-        conn.execute("UPDATE inbox_messages SET is_read=1 WHERE id = ?", (inbox_id,))
+        conn.execute("UPDATE inbox_messages SET is_read=1 WHERE id = %s", (inbox_id,))
         conn.commit()
 
     link = _telegram_message_link(row["chat_username"], row["chat_id"], row["msg_id"])
@@ -525,7 +525,7 @@ async def quote_reply(request: Request, inbox_id: int, text: str = Form(...)):
         return _redirect(f"/quotes/{inbox_id}")
 
     with _db_connect() as conn:
-        row = conn.execute("SELECT * FROM inbox_messages WHERE id = ? AND kind='quote'", (inbox_id,)).fetchone()
+        row = conn.execute("SELECT * FROM inbox_messages WHERE id = %s AND kind='quote'", (inbox_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Сообщение не найдено")
         settings, _ = _load_settings()
@@ -544,18 +544,18 @@ async def quote_reply(request: Request, inbox_id: int, text: str = Form(...)):
                 session_name, chat_id,
                 reply_to_msg_id,
                 text, is_read
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             ("quote", "out", "queued", now, row["session_name"], row["chat_id"], row["msg_id"], text, 1),
         )
         conn.execute(
             """
             INSERT INTO outbound_queue (chat_id, reply_to_msg_id, session_name, text, status)
-            VALUES (?, ?, ?, ?, 'pending')
+            VALUES (%s, %s, %s, %s, 'pending')
             """,
             (row["chat_id"], row["msg_id"], row["session_name"], text),
         )
-        conn.execute("UPDATE inbox_messages SET is_read=1 WHERE id = ?", (inbox_id,))
+        conn.execute("UPDATE inbox_messages SET is_read=1 WHERE id = %s", (inbox_id,))
         conn.commit()
 
     _flash(request, "success", "Ответ поставлен в очередь на отправку.")
@@ -565,7 +565,7 @@ async def quote_reply(request: Request, inbox_id: int, text: str = Form(...)):
 @router.post("/quotes/{inbox_id}/delete")
 async def quote_delete(request: Request, inbox_id: int, return_to: str = Form("/quotes")):
     with _db_connect() as conn:
-        row = conn.execute("SELECT * FROM inbox_messages WHERE id = ? AND kind='quote'", (inbox_id,)).fetchone()
+        row = conn.execute("SELECT * FROM inbox_messages WHERE id = %s AND kind='quote'", (inbox_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Сообщение не найдено")
         settings, _ = _load_settings()
@@ -575,7 +575,7 @@ async def quote_delete(request: Request, inbox_id: int, return_to: str = Form("/
             a.get("session_name") == row["session_name"] and _project_id_for(a) == project_id for a in accounts
         ):
             raise HTTPException(status_code=404, detail="Сообщение не найдено в текущем проекте")
-        conn.execute("DELETE FROM inbox_messages WHERE id = ?", (inbox_id,))
+        conn.execute("DELETE FROM inbox_messages WHERE id = %s", (inbox_id,))
         conn.commit()
 
     _flash(request, "success", "Запись удалена.")

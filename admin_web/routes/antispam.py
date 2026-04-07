@@ -61,7 +61,7 @@ def _load_rule(chat_id: str) -> Dict[str, Any]:
             SELECT enabled, keywords, name_keywords, ai_enabled, ai_check_name,
                    ai_prompt, ai_model, notify_telegram
             FROM spam_rules
-            WHERE chat_id = ?
+            WHERE chat_id = %s
             LIMIT 1
             """,
             (chat_id,),
@@ -125,7 +125,7 @@ def _load_spam_logs(chat_id: str, *, page: int, per_page: int) -> Tuple[List[Any
     offset = page * per_page
     with _db_connect() as conn:
         total_row = conn.execute(
-            "SELECT COUNT(*) AS c FROM spam_log WHERE chat_id = ?",
+            "SELECT COUNT(*) AS c FROM spam_log WHERE chat_id = %s",
             (chat_id,),
         ).fetchone()
         total = int(total_row["c"] or 0) if total_row else 0
@@ -133,9 +133,9 @@ def _load_spam_logs(chat_id: str, *, page: int, per_page: int) -> Tuple[List[Any
             """
             SELECT *
             FROM spam_log
-            WHERE chat_id = ?
+            WHERE chat_id = %s
             ORDER BY id DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
             """,
             (chat_id, per_page, offset),
         ).fetchall()
@@ -159,7 +159,7 @@ def _upsert_spam_rule(
             """
             INSERT INTO spam_rules(chat_id, enabled, keywords, name_keywords, ai_enabled, ai_check_name,
                                    ai_prompt, ai_model, notify_telegram, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(chat_id) DO UPDATE SET
                 enabled = excluded.enabled,
                 keywords = excluded.keywords,
@@ -408,7 +408,7 @@ async def antispam_target_log_page(request: Request, chat_id: str, page: int = 0
 async def antispam_target_log_restore(request: Request, chat_id: str, log_id: int):
     try:
         with _db_connect() as conn:
-            conn.execute("UPDATE spam_log SET action = 'restored' WHERE id = ?", (int(log_id),))
+            conn.execute("UPDATE spam_log SET action = 'restored' WHERE id = %s", (int(log_id),))
             conn.commit()
     except Exception:
         pass
@@ -430,7 +430,7 @@ def _load_spam_bans(chat_id: str, *, page: int, per_page: int):
     offset = page * per_page
     with _db_connect() as conn:
         total_row = conn.execute(
-            "SELECT COUNT(*) AS c FROM spam_bans WHERE chat_id = ?",
+            "SELECT COUNT(*) AS c FROM spam_bans WHERE chat_id = %s",
             (chat_id,),
         ).fetchone()
         total = int(total_row["c"] or 0) if total_row else 0
@@ -438,9 +438,9 @@ def _load_spam_bans(chat_id: str, *, page: int, per_page: int):
             """
             SELECT *
             FROM spam_bans
-            WHERE chat_id = ?
+            WHERE chat_id = %s
             ORDER BY banned_at DESC
-            LIMIT ? OFFSET ?
+            LIMIT %s OFFSET %s
             """,
             (chat_id, per_page, offset),
         ).fetchall()
@@ -495,7 +495,7 @@ async def antispam_target_unban_user(request: Request, chat_id: str, user_id: in
         try:
             with _db_connect() as conn:
                 conn.execute(
-                    "UPDATE spam_bans SET unbanned_at = ? WHERE chat_id = ? AND user_id = ?",
+                    "UPDATE spam_bans SET unbanned_at = %s WHERE chat_id = %s AND user_id = %s",
                     (_now_iso(), target_chat_id, user_id),
                 )
                 conn.commit()

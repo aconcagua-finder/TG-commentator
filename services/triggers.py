@@ -67,7 +67,7 @@ async def process_trigger(
         with _db_connect() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT trigger_phrase, answer_text FROM triggers WHERE chat_id = ?",
+                "SELECT trigger_phrase, answer_text FROM triggers WHERE chat_id = %s",
                 (chat_id_target,)
             )
             rows = cursor.fetchall()

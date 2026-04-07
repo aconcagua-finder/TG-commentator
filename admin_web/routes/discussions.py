@@ -60,7 +60,7 @@ async def discussions_page(request: Request, sort: str = ""):
     try:
         target_ids = [str(t.get("id") or "").strip() for t in targets_view if str(t.get("id") or "").strip()]
         if target_ids:
-            placeholders = ", ".join(["?"] * len(target_ids))
+            placeholders = ", ".join(["%s"] * len(target_ids))
             with _db_connect() as conn:
                 rows = conn.execute(
                     f"""
@@ -69,7 +69,7 @@ async def discussions_page(request: Request, sort: str = ""):
                     JOIN (
                       SELECT discussion_target_id, MAX(id) AS max_id
                       FROM discussion_sessions
-                      WHERE project_id = ? AND discussion_target_id IN ({placeholders})
+                      WHERE project_id = %s AND discussion_target_id IN ({placeholders})
                       GROUP BY discussion_target_id
                     ) x
                     ON s.discussion_target_id = x.discussion_target_id AND s.id = x.max_id
@@ -495,10 +495,10 @@ async def discussion_target_edit_page(request: Request, target_id: str):
                       s.chat_id, s.error,
                       (SELECT COUNT(*) FROM discussion_messages m WHERE m.session_id = s.id) AS messages_count
                     FROM discussion_sessions s
-                    WHERE s.project_id = ?
+                    WHERE s.project_id = %s
                       AND (
-                        s.discussion_target_id = ?
-                        OR (s.discussion_target_id IS NULL AND s.discussion_target_chat_id = ?)
+                        s.discussion_target_id = %s
+                        OR (s.discussion_target_id IS NULL AND s.discussion_target_chat_id = %s)
                       )
                     ORDER BY s.id DESC
                     LIMIT 50
@@ -515,7 +515,7 @@ async def discussion_target_edit_page(request: Request, target_id: str):
                       s.chat_id, s.error,
                       (SELECT COUNT(*) FROM discussion_messages m WHERE m.session_id = s.id) AS messages_count
                     FROM discussion_sessions s
-                    WHERE s.project_id = ? AND s.discussion_target_id = ?
+                    WHERE s.project_id = %s AND s.discussion_target_id = %s
                     ORDER BY s.id DESC
                     LIMIT 50
                     """,
@@ -562,14 +562,14 @@ async def discussion_session_detail_page(request: Request, session_id: int):
 
     with _db_connect() as conn:
         row = conn.execute(
-            "SELECT * FROM discussion_sessions WHERE id = ? AND project_id = ?",
+            "SELECT * FROM discussion_sessions WHERE id = %s AND project_id = %s",
             (sid, project_id),
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="Сессия не найдена")
         session = dict(row)
         msg_rows = conn.execute(
-            "SELECT * FROM discussion_messages WHERE session_id = ? ORDER BY id ASC",
+            "SELECT * FROM discussion_messages WHERE session_id = %s ORDER BY id ASC",
             (sid,),
         ).fetchall()
     messages = [dict(r) for r in msg_rows]
@@ -1213,10 +1213,10 @@ async def discussion_target_start(
     if removed_session_ids:
         try:
             now = time.time()
-            placeholders = ", ".join(["?"] * len(removed_session_ids))
+            placeholders = ", ".join(["%s"] * len(removed_session_ids))
             with _db_connect() as conn:
                 conn.execute(
-                    f"UPDATE discussion_sessions SET status='canceled', finished_at=?, error=? WHERE id IN ({placeholders})",
+                    f"UPDATE discussion_sessions SET status='canceled', finished_at=%s, error=%s WHERE id IN ({placeholders})",
                     tuple([now, "replaced_by_new_start", *removed_session_ids]),
                 )
         except Exception:
@@ -1234,7 +1234,7 @@ async def discussion_target_start(
                     status, created_at, started_at, finished_at, schedule_at,
                     operator_session_name, seed_msg_id, seed_text,
                     settings_json, participants_json, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (

@@ -753,7 +753,7 @@ async def run_discussion_session(
                 row = None
                 with _db_connect() as conn:
                     row = conn.execute(
-                        "SELECT status FROM discussion_sessions WHERE id = ?",
+                        "SELECT status FROM discussion_sessions WHERE id = %s",
                         (int(session_id_int),),
                     ).fetchone()
                 cur_status = ""

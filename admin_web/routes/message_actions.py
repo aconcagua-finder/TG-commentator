@@ -36,7 +36,7 @@ def _load_message_record(source: str, record_id: int):
                     msg_id,
                     content AS text
                 FROM logs
-                WHERE id = ?
+                WHERE id = %s
                 """,
                 (record_id,),
             ).fetchone()
@@ -45,7 +45,7 @@ def _load_message_record(source: str, record_id: int):
                 """
                 SELECT id, session_name, chat_id, msg_id, text
                 FROM inbox_messages
-                WHERE id = ? AND direction = 'out'
+                WHERE id = %s AND direction = 'out'
                 """,
                 (record_id,),
             ).fetchone()
