@@ -511,6 +511,8 @@ async def antispam_target_scan_post(
     post_url: str = Form(""),
     limit: str = Form("200"),
 ):
+    from types import SimpleNamespace
+    from admin_web.telethon_utils import _get_any_authorized_client
     from services.antispam import scan_post_for_spam
 
     settings, _ = _load_settings()
@@ -527,20 +529,47 @@ async def antispam_target_scan_post(
     except Exception:
         limit_int = 200
 
-    active_clients = getattr(request.app.state, "active_clients", {}) or {}
-    if not active_clients:
-        _flash(request, "danger", "Нет активных клиентов. Запусти комментатор и попробуй снова.")
+    result: dict | None = None
+    error_text: str | None = None
+
+    async with _auto_pause_commentator(request, reason="Ручная проверка спама"):
+        try:
+            client = await _get_any_authorized_client()
+        except HTTPException as exc:
+            error_text = str(exc.detail)
+            client = None
+        except Exception as exc:
+            error_text = f"client_error: {exc}"
+            client = None
+
+        if client is not None:
+            try:
+                # Wrap the temp client so _delete_message_any / _ban_user_via_client can use it
+                # if the antispam target uses account-based moderation (no bot_token).
+                wrapper = SimpleNamespace(session_name="manual_scan", client=client)
+                active_clients = {"manual_scan": wrapper}
+                result = await scan_post_for_spam(
+                    post_url=post_url,
+                    antispam_target=target,
+                    client=client,
+                    active_clients=active_clients,
+                    current_settings=settings,
+                    limit=limit_int,
+                )
+            except Exception as exc:
+                error_text = f"scan_error: {type(exc).__name__}: {exc}"
+            finally:
+                try:
+                    if client.is_connected():
+                        await client.disconnect()
+                except Exception:
+                    pass
+
+    if error_text and result is None:
+        _flash(request, "danger", error_text)
         return _redirect(f"/antispam-targets/{quote(chat_id)}")
 
-    result = await scan_post_for_spam(
-        post_url=post_url,
-        antispam_target=target,
-        active_clients=active_clients,
-        current_settings=settings,
-        limit=limit_int,
-    )
-
-    if result.get("ok"):
+    if result and result.get("ok"):
         _flash(
             request,
             "success",
@@ -548,18 +577,19 @@ async def antispam_target_scan_post(
             f"удалено: {result['deleted']}, забанено: {result['banned']}.",
         )
     else:
-        err = result.get("error") or "unknown_error"
+        err = (result or {}).get("error") or "unknown_error"
         error_messages = {
             "invalid_url": "Не удалось разобрать ссылку. Пример: https://t.me/channel/123",
             "no_target_chat_id": "У цели нет chat_id.",
             "no_spam_rule": "Для этого чата нет правил антиспама. Сначала сохрани правила.",
-            "no_connected_clients": "Нет подключённых аккаунтов для этой цели.",
+            "no_client": "Нет авторизованного аккаунта. Добавь хотя бы один аккаунт в проект.",
             "no_discussion_thread": "Не удалось найти обсуждение под этим постом (возможно, нет комментариев или канал без linked-группы).",
-            "discussion_entity_failed": "Не удалось получить группу обсуждений.",
+            "discussion_entity_failed": "Не удалось получить группу обсуждений (аккаунт не состоит в чате?).",
         }
         msg = error_messages.get(err) or f"Ошибка: {err}"
-        if result.get("checked"):
-            msg += f" (проверено до ошибки: {result['checked']})"
+        checked = (result or {}).get("checked") or 0
+        if checked:
+            msg += f" (проверено до ошибки: {checked})"
         _flash(request, "danger", msg)
 
     return _redirect(f"/antispam-targets/{quote(chat_id)}")

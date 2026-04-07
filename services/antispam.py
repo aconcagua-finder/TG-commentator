@@ -988,7 +988,8 @@ async def scan_post_for_spam(
     *,
     post_url: str,
     antispam_target: dict[str, Any],
-    active_clients: dict,
+    client,
+    active_clients: dict | None = None,
     current_settings: dict,
     spam_blocked_msgs: set | None = None,
     spam_blocked_msgs_order: deque | None = None,
@@ -996,6 +997,15 @@ async def scan_post_for_spam(
     limit: int = 200,
 ) -> dict[str, Any]:
     """Manually scan all comments under a Telegram post for spam.
+
+    Args:
+        client: A connected and authorized Telethon TelegramClient used to
+            read the channel and discussion messages. The caller is responsible
+            for connecting/disconnecting it.
+        active_clients: Optional dict of active client wrappers. Used only by
+            _handle_detected_spam → _delete_message_any / _ban_user_via_client
+            when the antispam target uses user-account moderation. Pass {} when
+            the target uses bot_token-based moderation (or runs from admin_web).
 
     Resolves the post URL → channel → discussion thread, iterates the
     last `limit` comments, and runs the same spam classifier+handler.
@@ -1015,23 +1025,11 @@ async def scan_post_for_spam(
     if not rule:
         return {"ok": False, "error": "no_spam_rule", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
 
-    # Pick a connected client (prefer assigned_accounts, fallback to any).
-    assigned = antispam_target.get("assigned_accounts") or []
-    wrappers = list(active_clients.values()) if isinstance(active_clients, dict) else []
-    if assigned:
-        allowed_set = set(assigned)
-        candidates = [w for w in wrappers if str(getattr(w, "session_name", "") or "").strip() in allowed_set]
-    else:
-        candidates = wrappers
-    candidates = [
-        w for w in candidates
-        if getattr(w, "client", None) is not None and w.client.is_connected()
-    ]
-    if not candidates:
-        return {"ok": False, "error": "no_connected_clients", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
+    if client is None:
+        return {"ok": False, "error": "no_client", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
 
-    wrapper = candidates[0]
-    client = wrapper.client
+    if active_clients is None:
+        active_clients = {}
 
     # Resolve the source channel entity.
     try:
