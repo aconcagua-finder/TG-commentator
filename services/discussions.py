@@ -280,6 +280,16 @@ async def run_discussion_session(
             v = str((scene or {}).get("vector_prompt") or "").strip()
             return v if v else base_vector
 
+        def _str_setting_from(scene: dict, key: str, default: str) -> str:
+            raw = None
+            if isinstance(scene, dict) and key in scene:
+                raw = scene.get(key)
+            if raw is None or (isinstance(raw, str) and not raw.strip()):
+                raw = target.get(key, default)
+            if raw is None or (isinstance(raw, str) and not raw.strip()):
+                raw = default
+            return str(raw).strip()
+
         def _assigned_accounts_for(scene: dict) -> list[str]:
             raw = (scene or {}).get("assigned_accounts")
             if isinstance(raw, list):
@@ -361,6 +371,7 @@ async def run_discussion_session(
         last_speaker = "Оператор"
         history: list[dict[str, str]] = []
         reply_to_msg_id: int = int(seed_msg_id)
+        last_operator_msg_id: int | None = int(seed_msg_id)
         last_sender_session: str | None = None
 
         def _truncate_memory_line(value: str, limit: int = 280) -> str:
@@ -441,7 +452,13 @@ async def run_discussion_session(
                     )
                     break
 
-                prev_reply_to = int(reply_to_msg_id) if reply_to_msg_id else None
+                quote_mode = _str_setting_from(scene, "operator_quote_mode", "operator_prev")
+                if quote_mode == "operator_prev":
+                    prev_reply_to = int(last_operator_msg_id) if last_operator_msg_id else None
+                elif quote_mode == "none":
+                    prev_reply_to = None
+                else:
+                    prev_reply_to = int(reply_to_msg_id) if reply_to_msg_id else None
                 op_wrapper = active_clients.get(scene_operator) if scene_operator else None
                 temp_client = None
                 op_client = None
@@ -508,6 +525,7 @@ async def run_discussion_session(
                         pass
 
                 reply_to_msg_id = int(op_msg_id)
+                last_operator_msg_id = int(op_msg_id)
                 last_speaker = "Оператор"
                 scene_seed_text = operator_text
                 history.append({"speaker": "Оператор", "text": operator_text.strip()})

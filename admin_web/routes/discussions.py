@@ -308,6 +308,7 @@ async def discussions_new_submit(
         scene_title_list = list(form.getlist("scene_title"))
         scene_operator_list = list(form.getlist("scene_operator_text"))
         scene_operator_session_list = list(form.getlist("scene_operator_session_name"))
+        scene_operator_quote_mode_list = list(form.getlist("scene_operator_quote_mode"))
         scene_vector_list = list(form.getlist("scene_vector_prompt"))
         scene_turns_min_list = list(form.getlist("scene_turns_min"))
         scene_turns_max_list = list(form.getlist("scene_turns_max"))
@@ -321,6 +322,7 @@ async def discussions_new_submit(
             scene_title_list,
             scene_operator_list,
             scene_operator_session_list,
+            scene_operator_quote_mode_list,
             scene_vector_list,
             scene_turns_min_list,
             scene_turns_max_list,
@@ -338,6 +340,7 @@ async def discussions_new_submit(
             stitle = (scene_title_list[i] if i < len(scene_title_list) else "") or ""
             sop = (scene_operator_list[i] if i < len(scene_operator_list) else "") or ""
             sop_session = (scene_operator_session_list[i] if i < len(scene_operator_session_list) else "") or ""
+            sqm = (scene_operator_quote_mode_list[i] if i < len(scene_operator_quote_mode_list) else "") or ""
             svector = (scene_vector_list[i] if i < len(scene_vector_list) else "") or ""
             stmin = (scene_turns_min_list[i] if i < len(scene_turns_min_list) else "") or ""
             stmax = (scene_turns_max_list[i] if i < len(scene_turns_max_list) else "") or ""
@@ -349,6 +352,9 @@ async def discussions_new_submit(
             stitle = str(stitle or "").strip()
             sop = str(sop or "").strip()
             sop_session = str(sop_session or "").strip()
+            sqm = str(sqm or "").strip()
+            if sqm not in ("operator_prev", "last_reply", "none"):
+                sqm = "operator_prev"
             svector = str(svector or "").strip()
 
             has_any = any(
@@ -373,6 +379,7 @@ async def discussions_new_submit(
                 "title": stitle,
                 "operator_text": sop,
                 "vector_prompt": svector,
+                "operator_quote_mode": sqm,
             }
             if sop_session and sop_session in allowed_set:
                 scene_obj["operator_session_name"] = sop_session
@@ -636,6 +643,7 @@ async def discussion_target_edit_save(
     scene_title: Optional[List[str]] = Form(None),
     scene_operator_text: Optional[List[str]] = Form(None),
     scene_operator_session_name: Optional[List[str]] = Form(None),
+    scene_operator_quote_mode: Optional[List[str]] = Form(None),
     scene_vector_prompt: Optional[List[str]] = Form(None),
     scene_turns_min: Optional[List[str]] = Form(None),
     scene_turns_max: Optional[List[str]] = Form(None),
@@ -747,6 +755,7 @@ async def discussion_target_edit_save(
         or scene_title is not None
         or scene_operator_text is not None
         or scene_operator_session_name is not None
+        or scene_operator_quote_mode is not None
         or scene_vector_prompt is not None
         or scene_turns_min is not None
         or scene_turns_max is not None
@@ -761,6 +770,7 @@ async def discussion_target_edit_save(
             scene_title or [],
             scene_operator_text or [],
             scene_operator_session_name or [],
+            scene_operator_quote_mode or [],
             scene_vector_prompt or [],
             scene_turns_min or [],
             scene_turns_max or [],
@@ -777,6 +787,10 @@ async def discussion_target_edit_save(
             sop = (scene_operator_text[i] if scene_operator_text and i < len(scene_operator_text) else "") or ""
             sop_session = (
                 (scene_operator_session_name[i] if scene_operator_session_name and i < len(scene_operator_session_name) else "")
+                or ""
+            )
+            sqm = (
+                (scene_operator_quote_mode[i] if scene_operator_quote_mode and i < len(scene_operator_quote_mode) else "")
                 or ""
             )
             svector = (scene_vector_prompt[i] if scene_vector_prompt and i < len(scene_vector_prompt) else "") or ""
@@ -802,6 +816,9 @@ async def discussion_target_edit_save(
             stitle = str(stitle or "").strip()
             sop = str(sop or "").strip()
             sop_session = str(sop_session or "").strip()
+            sqm = str(sqm or "").strip()
+            if sqm not in ("operator_prev", "last_reply", "none"):
+                sqm = "operator_prev"
             svector = str(svector or "").strip()
 
             has_any = any(
@@ -826,6 +843,7 @@ async def discussion_target_edit_save(
                 "title": stitle,
                 "operator_text": sop,
                 "vector_prompt": svector,
+                "operator_quote_mode": sqm,
             }
             if sop_session and sop_session in allowed_set:
                 scene_obj["operator_session_name"] = sop_session

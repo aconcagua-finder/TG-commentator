@@ -77,39 +77,46 @@
     </div>
   </div>
 
-		  <div class="card mb-3">
-		    <div class="card-body">
-	      <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-	        <div>
-	          <div class="d-flex align-items-center gap-2 flex-wrap">
-	            <span class="badge text-bg-primary">Сцена 1</span>
-	            <h2 class="h5 mb-0">Старт обсуждения</h2>
-	          </div>
-	          <div class="text-muted small mt-1">
-	            Сообщение будет отправлено в чат обсуждений (linked) от аккаунта оператора:
-	            <span class="mono">{{ target.get('operator_session_name','') or '—' }}</span>.
-	            Сцены 2+ настраиваются ниже.
-	          </div>
-	        </div>
-	      </div>
+  <div class="card mb-3">
+    <div class="card-body">
+      <h2 class="h5 mb-1">Сцены обсуждения</h2>
+      <div class="text-muted small mb-3">
+        Сцена 1 — стартовая (отправляется по кнопке «Запустить»). Сцены 2+ запускаются автоматически после предыдущей.
+        Оператор, тайминги и участники сцены 1 берутся из блока «Настройки цели» ниже.
+      </div>
 
-		      <form method="post" action="/discussions/targets/{{ target.id }}/start" class="row g-3 mt-1">
-		        <div class="col-12">
-		          <label class="form-label app-label" for="discussion_seed_text">
-		            <span class="app-label-text">Фраза оператора (сцена 1)</span>
-		            {{ ui.tip("Это сообщение уйдёт в чат и станет «мыслью» для обсуждения (сцена 1). Боты начнут отвечать по настройкам цели. Если обсуждение уже идёт — текущее будет остановлено и начнётся новое.") }}
-		          </label>
-		          <textarea class="form-control" id="discussion_seed_text" name="seed_text" rows="3" required placeholder="Напишите мысль/тезис…">{{ target.get('scene1_operator_text','') }}</textarea>
-		        </div>
-
-        <div class="col-12">
-          <button class="btn btn-primary" type="submit">
-            <i class="bi bi-chat-dots me-1"></i>Отправить и запустить
-          </button>
+      <div class="border rounded-3 p-3 bg-body-tertiary" data-scene-1>
+        <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span class="badge text-bg-primary">Сцена 1</span>
+            <span class="h6 mb-0">Старт обсуждения</span>
+          </div>
+          <div class="text-muted small">
+            Оператор: <span class="mono">{{ target.get('operator_session_name','') or '—' }}</span>
+          </div>
         </div>
-      </form>
-		    </div>
-		  </div>
+
+        <form method="post" action="/discussions/targets/{{ target.id }}/start" class="row g-2 mt-1">
+          <div class="col-12">
+            <label class="form-label app-label mb-1" for="discussion_seed_text">
+              <span class="app-label-text">Фраза оператора (сцена 1)</span>
+              {{ ui.tip("Это сообщение уйдёт в чат и станет «мыслью» для обсуждения (сцена 1). Боты начнут отвечать по настройкам цели. Если обсуждение уже идёт — текущее будет остановлено и начнётся новое.") }}
+            </label>
+            <textarea class="form-control" id="discussion_seed_text" name="seed_text" rows="3" required placeholder="Напишите мысль/тезис…">{{ target.get('scene1_operator_text','') }}</textarea>
+          </div>
+
+          <div class="col-12">
+            <button class="btn btn-primary" type="submit">
+              <i class="bi bi-chat-dots me-1"></i>Отправить и запустить
+            </button>
+            <span class="text-muted small ms-2">Остальные параметры сцены 1 — в «Настройках цели» ниже.</span>
+          </div>
+        </form>
+      </div>
+
+      <div id="scene1_anchor" class="mt-3"></div>
+    </div>
+  </div>
 
 		  <div class="card mb-3">
 		    <div class="card-body">
@@ -276,35 +283,24 @@
 	          </div>
 
 			          <div class="col-12">
-			            <hr class="my-2" />
-			            <div class="accordion" id="discussionGoalAccordion">
-			              <div class="accordion-item">
-			                <h2 class="accordion-header" id="discussionParticipantsHeading">
-			                  <button
-			                    class="accordion-button collapsed"
-			                    type="button"
-			                    data-bs-toggle="collapse"
-			                    data-bs-target="#discussionParticipantsCollapse"
-			                    aria-expanded="false"
-			                    aria-controls="discussionParticipantsCollapse"
-			                  >
-			                    Участники (сцена 1)
-			                  </button>
-			                </h2>
-			                <div id="discussionParticipantsCollapse" class="accordion-collapse collapse" aria-labelledby="discussionParticipantsHeading">
-			                  <div class="accordion-body">
-			                    <div class="d-flex align-items-center gap-3 flex-wrap mb-2">
-			                      <div class="form-check">
-			                        <input class="form-check-input" type="checkbox" name="select_all" value="1" id="select_all_accounts" {% if all_selected %}checked{% endif %} />
-			                        <label class="form-check-label" for="select_all_accounts">Выбрать все</label>
-			                      </div>
-			                      <button class="btn btn-sm btn-outline-primary" type="submit" formaction="/discussions/targets/{{ target.id }}/join" formmethod="post">Повторить вступление</button>
-			                      <div class="text-muted small d-flex align-items-center gap-2">
-			                        <span>Если ничего не выбрано — обсуждение не запустится.</span>
-			                        {{ ui.tip("Эти аккаунты будут участниками диалога, который запускается сообщением оператора (сцена 1).") }}
-			                      </div>
-			                    </div>
-			                    <div class="text-muted small mb-2">При повторном вступлении комментатор будет временно остановлен и запущен снова (если он сейчас работает).</div>
+            <hr class="my-2" />
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+              <div>
+                <h3 class="h6 mb-1">Участники (сцена 1)</h3>
+                <div class="text-muted small">
+                  Эти аккаунты будут участниками диалога, который запускается сообщением оператора (сцена 1).
+                  Если ничего не выбрано — обсуждение не запустится.
+                </div>
+              </div>
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="select_all" value="1" id="select_all_accounts" {% if all_selected %}checked{% endif %} />
+                  <label class="form-check-label" for="select_all_accounts">Выбрать все</label>
+                </div>
+                <button class="btn btn-sm btn-outline-primary" type="submit" formaction="/discussions/targets/{{ target.id }}/join" formmethod="post">Повторить вступление</button>
+              </div>
+            </div>
+            <div class="text-muted small mb-2">При повторном вступлении комментатор будет временно остановлен и запущен снова (если он сейчас работает).</div>
 			                    <div class="row g-2">
 			                      {% for a in accounts %}
 			                        <div class="col-12 col-md-4">
@@ -344,38 +340,26 @@
 			                          {% if st_linked and st_linked.get('status') != 'joined' and st_linked.get('last_error') %}
 			                            <div class="text-danger small">{{ st_linked.get('last_error') }}</div>
 			                          {% endif %}
-			                          <button class="btn btn-sm btn-outline-secondary mt-1" type="submit" name="session_name" value="{{ a.session_name }}" formaction="/discussions/targets/{{ target.id }}/join" formmethod="post">Повторить</button>
-			                        </div>
-			                      {% endfor %}
-			                    </div>
-			                  </div>
-			                </div>
-			              </div>
-			              <div class="accordion-item">
-			                <h2 class="accordion-header" id="discussionScenesHeading">
-			                  <button
-			                    class="accordion-button"
-		                    type="button"
-		                    data-bs-toggle="collapse"
-		                    data-bs-target="#discussionScenesCollapse"
-		                    aria-expanded="true"
-		                    aria-controls="discussionScenesCollapse"
-		                  >
-		                    Сцены 2+ (продолжение беседы)
-		                  </button>
-		                </h2>
-		                <div id="discussionScenesCollapse" class="accordion-collapse collapse show" aria-labelledby="discussionScenesHeading">
-		                  <div class="accordion-body">
-		                    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
-		                      <div class="text-muted small">
-		                        Сцена 1 — стартовая фраза (карточка выше). Здесь можно добавить сцены 2+:
-		                        система отправит фразу оператора и продолжит обсуждение с новыми настройками.
-		                        Пустые поля = использовать настройки цели.
-		                      </div>
-			                      <button class="btn btn-sm btn-outline-primary js-add-scene-btn" type="button" data-add-scene-btn="1">
-			                        <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Добавить сцену
-			                      </button>
-			                    </div>
+                          <button class="btn btn-sm btn-outline-secondary mt-1" type="submit" name="session_name" value="{{ a.session_name }}" formaction="/discussions/targets/{{ target.id }}/join" formmethod="post">Повторить</button>
+                        </div>
+                      {% endfor %}
+                    </div>
+          </div>
+
+          <div class="col-12">
+            <hr class="my-2" />
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+              <div>
+                <h3 class="h6 mb-1">Сцены 2+ (продолжение беседы)</h3>
+                <div class="text-muted small">
+                  Каждая сцена отправляет новую фразу оператора и продолжает обсуждение с новыми настройками.
+                  Пустые поля = использовать настройки цели.
+                </div>
+              </div>
+              <button class="btn btn-sm btn-outline-primary js-add-scene-btn" type="button" data-add-scene-btn="1">
+                <i class="bi bi-plus-circle me-1" aria-hidden="true"></i>Добавить сцену
+              </button>
+            </div>
 
 		                    {% set scenes = target.get('scenes', []) %}
 		                    <div id="scenes_container" class="d-flex flex-column gap-2 mt-3">
@@ -423,18 +407,31 @@
 			                                      >
 			                                        <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
 			                                      </a>
-			                                    </div>
-			                                  </div>
-			                                </div>
-			                              </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
 
-		                              <div class="col-12">
-		                                <label class="form-label app-label mb-1">
-		                                  <span class="app-label-text">Вектор сцены (опционально)</span>
-		                                  {{ ui.tip("Если пусто — будет использован общий вектор цели. Можно менять тональность/позицию между сценами.") }}
-		                                </label>
-		                                <textarea class="form-control" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…">{{ sc.get('vector_prompt','') }}</textarea>
-		                              </div>
+                              {% set sc_qm = (sc.get('operator_quote_mode') or 'operator_prev') %}
+                              <div class="col-12 col-md-6">
+                                <label class="form-label app-label mb-1">
+                                  <span class="app-label-text">Цитирование оператора сцены</span>
+                                  {{ ui.tip("Как фраза оператора будет привязана в треде. «Предыдущего оператора» — ответ на последнюю фразу оператора (в первой такой сцене — на исходный пост). «Последнюю реплику» — старое поведение, цитирует последнее сообщение. «Без цитаты» — самостоятельное сообщение без цитаты.") }}
+                                </label>
+                                <select class="form-select form-select-sm" name="scene_operator_quote_mode">
+                                  <option value="operator_prev" {% if sc_qm == 'operator_prev' %}selected{% endif %}>Цитировать предыдущего оператора (реком.)</option>
+                                  <option value="last_reply" {% if sc_qm == 'last_reply' %}selected{% endif %}>Цитировать последнюю реплику обсуждения</option>
+                                  <option value="none" {% if sc_qm == 'none' %}selected{% endif %}>Без цитаты</option>
+                                </select>
+                              </div>
+
+                              <div class="col-12">
+                                <label class="form-label app-label mb-1">
+                                  <span class="app-label-text">Вектор сцены (опционально)</span>
+                                  {{ ui.tip("Если пусто — будет использован общий вектор цели. Можно менять тональность/позицию между сценами.") }}
+                                </label>
+                                <textarea class="form-control" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…">{{ sc.get('vector_prompt','') }}</textarea>
+                              </div>
 
 		                              <div class="col-12 col-md-3">
 		                                <label class="form-label app-label mb-1">
@@ -569,16 +566,26 @@
 			                                  >
 			                                    <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
 			                                  </a>
-			                                </div>
-			                              </div>
-			                            </div>
-			                          </div>
-		                          <div class="col-12">
-		                            <label class="form-label app-label mb-1">
-		                              <span class="app-label-text">Вектор сцены (опционально)</span>
-		                            </label>
-		                            <textarea class="form-control" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…"></textarea>
-		                          </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          <div class="col-12 col-md-6">
+                            <label class="form-label app-label mb-1">
+                              <span class="app-label-text">Цитирование оператора сцены</span>
+                            </label>
+                            <select class="form-select form-select-sm" name="scene_operator_quote_mode">
+                              <option value="operator_prev" selected>Цитировать предыдущего оператора (реком.)</option>
+                              <option value="last_reply">Цитировать последнюю реплику обсуждения</option>
+                              <option value="none">Без цитаты</option>
+                            </select>
+                          </div>
+                          <div class="col-12">
+                            <label class="form-label app-label mb-1">
+                              <span class="app-label-text">Вектор сцены (опционально)</span>
+                            </label>
+                            <textarea class="form-control" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…"></textarea>
+                          </div>
 		                          <div class="col-12 col-md-3">
 		                            <label class="form-label app-label mb-1"><span class="app-label-text">Мин. реплик</span></label>
 		                            <input class="form-control form-control-sm" type="number" min="1" max="200" step="1" inputmode="numeric" name="scene_turns_min" placeholder="(как в цели)" />
@@ -641,17 +648,13 @@
 		                          </div>
 		                        </div>
 		                      </div>
-			                    </template>
-			                  </div>
-			                </div>
-			              </div>
-			            </div>
-			          </div>
+                    </template>
+          </div>
 
-		          <div class="col-12">
-		            <button class="btn btn-primary" type="submit">Сохранить</button>
-		            <a class="btn btn-outline-secondary" href="/discussions">Назад</a>
-	          </div>
+          <div class="col-12">
+            <button class="btn btn-primary" type="submit">Сохранить</button>
+            <a class="btn btn-outline-secondary" href="/discussions">Назад</a>
+          </div>
         </div>
       </form>
 	    </div>

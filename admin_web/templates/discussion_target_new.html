@@ -235,6 +235,16 @@
                   </label>
                   <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…"></textarea>
                 </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label app-label mb-1">
+                    <span class="app-label-text">Цитирование оператора сцены</span>
+                  </label>
+                  <select class="form-select form-select-sm" name="scene_operator_quote_mode">
+                    <option value="operator_prev" selected>Цитировать предыдущего оператора (реком.)</option>
+                    <option value="last_reply">Цитировать последнюю реплику обсуждения</option>
+                    <option value="none">Без цитаты</option>
+                  </select>
+                </div>
                 <div class="col-12">
                   <label class="form-label app-label mb-1">
                     <span class="app-label-text">Вектор сцены (опционально)</span>
