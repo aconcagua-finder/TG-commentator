@@ -111,6 +111,29 @@ async def generate_comment(
             "Используй это знание только если оно уместно по роли и текущему контексту. "
             "Не обязано проявляться в каждом ответе. Не противоречь теме беседы и не выдумывай факты.\n\n"
         )
+
+    # Глобальный антиповтор: подмешиваем недавние ответы других наших аккаунтов в system_prompt,
+    # чтобы модель не повторяла яркие формулировки и опенинги между постами/обсуждениями.
+    if recent_messages:
+        try:
+            recent_list = list(recent_messages)
+        except Exception:
+            recent_list = []
+        tail = recent_list[-10:]
+        if tail:
+            try:
+                from services.text_analysis import _extract_opening_phrases, _truncate_one_line
+                openings = _extract_opening_phrases(tail)
+            except Exception:
+                openings = []
+                _truncate_one_line = lambda s, _l=160: str(s or "")[:_l]  # noqa: E731
+            system_prompt += "НЕДАВНИЕ ОТВЕТЫ ДРУГИХ НАШИХ АККАУНТОВ — НЕ ПОВТОРЯЙ ЭТИ ФОРМУЛИРОВКИ И ОПЕНИНГИ:\n"
+            for i, t in enumerate(tail[-5:], start=1):
+                system_prompt += f"  {i}) {_truncate_one_line(t, 160)}\n"
+            if openings:
+                system_prompt += 'Запрещённые начала: "' + '"; "'.join(openings) + '"\n'
+            system_prompt += "\n"
+
     system_prompt += f"ПРАВИЛА ОФОРМЛЕНИЯ ТЕКСТА:\n{custom_rules}\n"
     if global_blacklist:
         system_prompt += f"\nНЕ ИСПОЛЬЗУЙ СЛОВА: {', '.join(global_blacklist)}"

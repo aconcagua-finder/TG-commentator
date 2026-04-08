@@ -26,6 +26,7 @@ from admin_web.helpers import (
     _load_join_status,
     _load_settings,
     _parse_bool,
+    _parse_float_field,
     _parse_int_field,
     _project_id_for,
     _record_account_failure,
@@ -169,6 +170,10 @@ async def discussions_new_submit(
     delay_between_max: str = Form("80"),
     ai_provider: str = Form("default"),
     slow_join_interval_mins: str = Form("0"),
+    antirepeat_enabled: Optional[str] = Form(None),
+    antirepeat_threshold: str = Form("0.72"),
+    antirepeat_retries: str = Form("2"),
+    antirepeat_window: str = Form("0"),
     select_all: Optional[str] = Form(None),
     assigned_accounts: Optional[List[str]] = Form(None),
 ):
@@ -270,6 +275,31 @@ async def discussions_new_submit(
         "ai_provider": (ai_provider or "default").strip() or "default",
         "slow_join_interval_mins": _parse_int_field(
             request, slow_join_interval_mins, default=0, label="Медленное вступление (мин)", min_value=0
+        ),
+        "antirepeat_enabled": _parse_bool(antirepeat_enabled, default=True),
+        "antirepeat_threshold": _parse_float_field(
+            request,
+            antirepeat_threshold,
+            default=0.72,
+            label="Антиповтор: порог похожести",
+            min_value=0.5,
+            max_value=0.95,
+        ),
+        "antirepeat_retries": _parse_int_field(
+            request,
+            antirepeat_retries,
+            default=2,
+            label="Антиповтор: ретраев",
+            min_value=0,
+            max_value=5,
+        ),
+        "antirepeat_window": _parse_int_field(
+            request,
+            antirepeat_window,
+            default=0,
+            label="Антиповтор: окно памяти",
+            min_value=0,
+            max_value=500,
         ),
         "date_added": datetime.now(timezone.utc).isoformat(),
         "assigned_accounts": [],
@@ -637,6 +667,10 @@ async def discussion_target_edit_save(
     delay_between_max: str = Form(""),
     ai_provider: str = Form("default"),
     slow_join_interval_mins: str = Form(""),
+    antirepeat_enabled: Optional[str] = Form(None),
+    antirepeat_threshold: str = Form(""),
+    antirepeat_retries: str = Form(""),
+    antirepeat_window: str = Form(""),
     select_all: Optional[str] = Form(None),
     assigned_accounts: Optional[List[str]] = Form(None),
     scene_id: Optional[List[str]] = Form(None),
@@ -690,6 +724,32 @@ async def discussion_target_edit_save(
         default=int(target.get("slow_join_interval_mins", 0) or 0),
         label="Медленное вступление (мин)",
         min_value=0,
+    )
+
+    target["antirepeat_enabled"] = _parse_bool(antirepeat_enabled, default=True)
+    target["antirepeat_threshold"] = _parse_float_field(
+        request,
+        antirepeat_threshold,
+        default=float(target.get("antirepeat_threshold", 0.72) or 0.72),
+        label="Антиповтор: порог похожести",
+        min_value=0.5,
+        max_value=0.95,
+    )
+    target["antirepeat_retries"] = _parse_int_field(
+        request,
+        antirepeat_retries,
+        default=int(target.get("antirepeat_retries", 2) or 2),
+        label="Антиповтор: ретраев",
+        min_value=0,
+        max_value=5,
+    )
+    target["antirepeat_window"] = _parse_int_field(
+        request,
+        antirepeat_window,
+        default=int(target.get("antirepeat_window", 0) or 0),
+        label="Антиповтор: окно памяти",
+        min_value=0,
+        max_value=500,
     )
 
     if initial_delay_min.strip():

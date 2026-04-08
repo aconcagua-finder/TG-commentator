@@ -168,6 +168,47 @@
         </div>
 
         <div class="col-12">
+          <hr class="my-2" />
+          <h3 class="h6 mb-1">Антиповтор</h3>
+          <div class="text-muted small mb-2">
+            Защита от зацикливания на одной фразе. Если новая реплика бота слишком похожа на ранее отправленную в этой сессии — генерация повторяется.
+          </div>
+          <div class="row g-3">
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Антиповтор включён</span>
+                {{ ui.tip("Если выключено — каждая реплика отправляется как сгенерирована, без проверки.") }}
+              </label>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" name="antirepeat_enabled" id="antirepeat_enabled" checked />
+                <label class="form-check-label" for="antirepeat_enabled">Включено</label>
+              </div>
+            </div>
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Порог похожести</span>
+                {{ ui.tip("Чем ниже, тем строже. 0.72 — рекомендуемое. 0.85 — мягкое (только явные дубли). 0.60 — жёсткое.") }}
+              </label>
+              <input class="form-control" type="number" min="0.5" max="0.95" step="0.01" inputmode="decimal" name="antirepeat_threshold" value="0.72" />
+            </div>
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Ретраев при срабатывании</span>
+                {{ ui.tip("Сколько раз перегенерировать, если похоже. 2 — норма. 0 — без ретрая (только запрет в промпте).") }}
+              </label>
+              <input class="form-control" type="number" min="0" max="5" step="1" inputmode="numeric" name="antirepeat_retries" value="2" />
+            </div>
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Окно памяти</span>
+                {{ ui.tip("Сколько последних реплик ботов учитывать. 0 = вся сессия.") }}
+              </label>
+              <input class="form-control" type="number" min="0" max="500" step="1" inputmode="numeric" name="antirepeat_window" value="0" />
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
           <h2 class="h6 mt-2 mb-2">Аккаунты‑участники</h2>
           {% set assigned = [] %}
           {% set all_selected = false %}

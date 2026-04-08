@@ -40,6 +40,11 @@ from services.project import (
 from services.connection import _extract_discussion_seed_optional_prefix
 from services.joining import ensure_account_joined
 from services.sending import human_type_and_send
+from services.text_analysis import (
+    is_comment_too_similar,
+    build_comment_diversity_instructions,
+    make_emergency_comment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -370,9 +375,49 @@ async def run_discussion_session(
 
         last_speaker = "Оператор"
         history: list[dict[str, str]] = []
+        discussion_bot_texts: list[str] = []
         reply_to_msg_id: int = int(seed_msg_id)
         last_operator_msg_id: int | None = int(seed_msg_id)
         last_sender_session: str | None = None
+
+        def _float_setting_from(
+            scene: dict,
+            key: str,
+            default: float,
+            *,
+            min_value: float | None = None,
+            max_value: float | None = None,
+        ) -> float:
+            raw = None
+            if isinstance(scene, dict) and key in scene:
+                raw = scene.get(key)
+            if raw is None or (isinstance(raw, str) and str(raw).strip() == ""):
+                raw = target.get(key, default)
+            if raw is None or (isinstance(raw, str) and str(raw).strip() == ""):
+                raw = default
+            try:
+                value = float(raw)
+            except Exception:
+                value = float(default)
+            if min_value is not None:
+                value = max(value, float(min_value))
+            if max_value is not None:
+                value = min(value, float(max_value))
+            return float(value)
+
+        def _bool_setting_from(scene: dict, key: str, default: bool) -> bool:
+            raw = None
+            if isinstance(scene, dict) and key in scene:
+                raw = scene.get(key)
+            if raw is None:
+                raw = target.get(key, default)
+            if isinstance(raw, bool):
+                return raw
+            if isinstance(raw, (int, float)):
+                return bool(raw)
+            if isinstance(raw, str):
+                return raw.strip().lower() in {"1", "true", "yes", "on", "y", "t"}
+            return bool(default)
 
         def _truncate_memory_line(value: str, limit: int = 280) -> str:
             s = re.sub(r"\s+", " ", str(value or "")).strip()
@@ -623,17 +668,86 @@ async def run_discussion_session(
                 target_for_llm = {**target, **(scene or {})}
                 target_for_llm["vector_prompt"] = scene_vector
 
-                reply_text, prompt_info = await generate_comment(
-                    post_text,
-                    target_for_llm,
-                    client_wrapper.session_name,
-                    image_bytes=None,
-                    is_reply_mode=True,
-                    reply_to_name=last_speaker,
-                    extra_instructions=extra_instructions,
-                    current_settings=current_settings,
-                    recent_messages=recent_generated_messages,
+                antirepeat_enabled = _bool_setting_from(scene, "antirepeat_enabled", True)
+                antirepeat_threshold = _float_setting_from(
+                    scene, "antirepeat_threshold", 0.72, min_value=0.5, max_value=0.95
                 )
+                antirepeat_retries = _int_setting_from(
+                    scene, "antirepeat_retries", 2, min_value=0, max_value=5
+                )
+                antirepeat_window = _int_setting_from(
+                    scene, "antirepeat_window", 0, min_value=0, max_value=500
+                )
+
+                if antirepeat_window <= 0:
+                    existing_for_check = list(discussion_bot_texts)
+                else:
+                    existing_for_check = list(discussion_bot_texts[-antirepeat_window:])
+
+                diversity_block = ""
+                if antirepeat_enabled and existing_for_check:
+                    diversity_block = build_comment_diversity_instructions(existing_for_check)
+
+                reply_text = None
+                prompt_info = None
+                retry_total = max(int(antirepeat_retries), 0) + 1
+                for ar_attempt in range(retry_total):
+                    extra_with_diversity = extra_instructions
+                    if diversity_block:
+                        extra_with_diversity = f"{extra_instructions}\n\n{diversity_block}"
+
+                    candidate, pinfo = await generate_comment(
+                        post_text,
+                        target_for_llm,
+                        client_wrapper.session_name,
+                        image_bytes=None,
+                        is_reply_mode=True,
+                        reply_to_name=last_speaker,
+                        extra_instructions=extra_with_diversity,
+                        current_settings=current_settings,
+                        recent_messages=recent_generated_messages,
+                    )
+                    if not candidate:
+                        prompt_info = pinfo
+                        break
+
+                    if not antirepeat_enabled or not existing_for_check:
+                        reply_text, prompt_info = candidate, pinfo
+                        break
+
+                    too_similar, score, _best = is_comment_too_similar(
+                        candidate, existing_for_check, antirepeat_threshold
+                    )
+                    if not too_similar:
+                        reply_text, prompt_info = candidate, pinfo
+                        break
+
+                    logger.info(
+                        f"♻️ [{client_wrapper.session_name}] discussion reply too similar "
+                        f"(score={score:.2f}), retry {ar_attempt + 1}/{antirepeat_retries}"
+                    )
+                    diversity_block = build_comment_diversity_instructions(
+                        existing_for_check,
+                        strict=True,
+                        previous_candidate=candidate,
+                    )
+                    reply_text, prompt_info = None, pinfo
+
+                if not reply_text and antirepeat_enabled and existing_for_check:
+                    try:
+                        emg = make_emergency_comment(
+                            post_text=post_text,
+                            session_name=client_wrapper.session_name,
+                            msg_id=int(seed_msg_id),
+                            existing_comments=existing_for_check,
+                            threshold=antirepeat_threshold,
+                        )
+                    except Exception:
+                        emg = ""
+                    if emg:
+                        reply_text = emg
+                        prompt_info = (prompt_info or "discussion") + " · EMG"
+
                 if not reply_text:
                     logger.warning(f"⚠️ [{client_wrapper.session_name}] discussion turn skipped: {prompt_info}")
                     _record_account_failure(
@@ -739,6 +853,7 @@ async def run_discussion_session(
 
                 speaker_label = labels.get(client_wrapper.session_name, "Участник")
                 history.append({"speaker": speaker_label, "text": reply_text.strip()})
+                discussion_bot_texts.append(reply_text.strip())
                 last_speaker = speaker_label
                 last_sender_session = client_wrapper.session_name
     except asyncio.CancelledError:
