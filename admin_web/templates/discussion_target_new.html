@@ -84,7 +84,7 @@
             <span class="app-label-text">Запустить обсуждение (необязательно)</span>
             {{ ui.tip("Если нажать «Добавить и запустить» — эта фраза будет отправлена от аккаунта оператора в чат обсуждений, и боты начнут диалог по этим настройкам. При наличии фразы «Старт без префикса» включится автоматически.") }}
           </label>
-          <textarea class="form-control" id="discussion_seed_text" name="seed_text" rows="3" placeholder="Мысль/тезис…"></textarea>
+          <textarea class="form-control js-autoresize" id="discussion_seed_text" name="seed_text" rows="3" placeholder="Мысль/тезис…"></textarea>
         </div>
 
         <div class="col-12 col-md-6">
@@ -111,7 +111,7 @@
             <span class="app-label-text">Общий вектор (необязательно)</span>
             {{ ui.tip("Например: спорьте мягко, приводите аргументы 'за/против', держите нейтральный тон, избегайте токсичности и т.д.") }}
           </label>
-          <textarea class="form-control" name="vector_prompt" rows="4" placeholder="Направление обсуждения…"></textarea>
+          <textarea class="form-control js-autoresize" name="vector_prompt" rows="4" placeholder="Направление обсуждения…"></textarea>
         </div>
 
         <div class="col-12 col-md-3">
@@ -233,7 +233,7 @@
                   <label class="form-label app-label mb-1">
                     <span class="app-label-text">Фраза оператора</span>
                   </label>
-                  <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…"></textarea>
+                  <textarea class="form-control js-autoresize" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…"></textarea>
                 </div>
                 <div class="col-12 col-md-6">
                   <label class="form-label app-label mb-1">
@@ -249,7 +249,7 @@
                   <label class="form-label app-label mb-1">
                     <span class="app-label-text">Вектор сцены (опционально)</span>
                   </label>
-                  <textarea class="form-control" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…"></textarea>
+                  <textarea class="form-control js-autoresize" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…"></textarea>
                 </div>
                 <div class="col-12 col-md-3">
                   <label class="form-label app-label mb-1"><span class="app-label-text">Мин. реплик</span></label>
@@ -390,6 +390,32 @@
       maybeEnable();
     })();
 
+    window.__initDiscussionAutoresize = (root) => {
+      const scope = root || document;
+      const items = Array.from(scope.querySelectorAll("textarea.js-autoresize"));
+      const fit = (ta) => {
+        ta.style.height = "auto";
+        const next = Math.max(ta.scrollHeight, 0);
+        if (next > 0) ta.style.height = next + "px";
+      };
+      items.forEach((ta) => {
+        if (ta.dataset.autoresizeInit === "1") return;
+        ta.dataset.autoresizeInit = "1";
+        ta.style.overflow = "hidden";
+        ta.style.resize = "vertical";
+        ta.addEventListener("input", () => fit(ta));
+        fit(ta);
+      });
+    };
+    window.__initDiscussionAutoresize(document);
+    window.addEventListener("load", () => {
+      document.querySelectorAll("textarea.js-autoresize").forEach((ta) => {
+        ta.style.height = "auto";
+        const next = Math.max(ta.scrollHeight, 0);
+        if (next > 0) ta.style.height = next + "px";
+      });
+    });
+
     (() => {
       const scenesContainer = document.getElementById("scenes_container");
       const scenesTpl = document.getElementById("scene_row_tpl");
@@ -525,6 +551,10 @@
         }
         scenesContainer.appendChild(frag);
         updateSceneNumbers();
+        const lastRow = scenesContainer.querySelector("[data-scene-row]:last-child");
+        if (lastRow && typeof window.__initDiscussionAutoresize === "function") {
+          window.__initDiscussionAutoresize(lastRow);
+        }
         const last = scenesContainer.querySelector("[data-scene-row]:last-child textarea[name='scene_operator_text']");
         if (last) last.focus();
       };

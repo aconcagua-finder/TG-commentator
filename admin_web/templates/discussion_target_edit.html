@@ -102,7 +102,7 @@
               <span class="app-label-text">Фраза оператора (сцена 1)</span>
               {{ ui.tip("Это сообщение уйдёт в чат и станет «мыслью» для обсуждения (сцена 1). Боты начнут отвечать по настройкам цели. Если обсуждение уже идёт — текущее будет остановлено и начнётся новое.") }}
             </label>
-            <textarea class="form-control" id="discussion_seed_text" name="seed_text" rows="3" required placeholder="Напишите мысль/тезис…">{{ target.get('scene1_operator_text','') }}</textarea>
+            <textarea class="form-control js-autoresize" id="discussion_seed_text" name="seed_text" rows="3" required placeholder="Напишите мысль/тезис…">{{ target.get('scene1_operator_text','') }}</textarea>
           </div>
 
           <div class="col-12">
@@ -218,7 +218,7 @@
               <span class="app-label-text">Общий вектор (необязательно)</span>
               {{ ui.tip("Направление обсуждения: стиль, тональность, позиция, рамки. Добавляется в промпт всем участникам.") }}
             </label>
-            <textarea class="form-control" name="vector_prompt" rows="4" placeholder="Направление обсуждения…">{{ target.get('vector_prompt','') }}</textarea>
+            <textarea class="form-control js-autoresize" name="vector_prompt" rows="4" placeholder="Направление обсуждения…">{{ target.get('vector_prompt','') }}</textarea>
           </div>
 
           <div class="col-12 col-md-3">
@@ -383,7 +383,7 @@
 			                                </label>
 			                                <div class="row g-2">
 			                                  <div class="col-12 col-md-8">
-			                                    <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…">{{ sc.get('operator_text','') }}</textarea>
+			                                    <textarea class="form-control js-autoresize" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…">{{ sc.get('operator_text','') }}</textarea>
 			                                  </div>
 			                                  <div class="col-12 col-md-4">
 			                                    <label class="form-label app-label mb-1">
@@ -430,7 +430,7 @@
                                   <span class="app-label-text">Вектор сцены (опционально)</span>
                                   {{ ui.tip("Если пусто — будет использован общий вектор цели. Можно менять тональность/позицию между сценами.") }}
                                 </label>
-                                <textarea class="form-control" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…">{{ sc.get('vector_prompt','') }}</textarea>
+                                <textarea class="form-control js-autoresize" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…">{{ sc.get('vector_prompt','') }}</textarea>
                               </div>
 
 		                              <div class="col-12 col-md-3">
@@ -543,7 +543,7 @@
 			                            </label>
 			                            <div class="row g-2">
 			                              <div class="col-12 col-md-8">
-			                                <textarea class="form-control" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…"></textarea>
+			                                <textarea class="form-control js-autoresize" name="scene_operator_text" rows="2" placeholder="Например: а теперь давайте обсудим цену…"></textarea>
 			                              </div>
 			                              <div class="col-12 col-md-4">
 			                                <label class="form-label app-label mb-1">
@@ -584,7 +584,7 @@
                             <label class="form-label app-label mb-1">
                               <span class="app-label-text">Вектор сцены (опционально)</span>
                             </label>
-                            <textarea class="form-control" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…"></textarea>
+                            <textarea class="form-control js-autoresize" name="scene_vector_prompt" rows="2" placeholder="Направление сцены…"></textarea>
                           </div>
 		                          <div class="col-12 col-md-3">
 		                            <label class="form-label app-label mb-1"><span class="app-label-text">Мин. реплик</span></label>
@@ -919,6 +919,31 @@
 	        updateSceneNumbers();
 	      };
 
+	      const autoresizeTextarea = (ta) => {
+	        if (!ta) return;
+	        ta.style.height = "auto";
+	        const next = Math.max(ta.scrollHeight, 0);
+	        if (next > 0) ta.style.height = next + "px";
+	      };
+
+	      const initAutoresize = (root) => {
+	        const scope = root || document;
+	        const items = Array.from(scope.querySelectorAll("textarea.js-autoresize"));
+	        items.forEach((ta) => {
+	          if (ta.dataset.autoresizeInit === "1") return;
+	          ta.dataset.autoresizeInit = "1";
+	          ta.style.overflow = "hidden";
+	          ta.style.resize = "vertical";
+	          ta.addEventListener("input", () => autoresizeTextarea(ta));
+	          autoresizeTextarea(ta);
+	        });
+	      };
+
+	      // Recompute heights once fonts/layout settle (initial scrollHeight can be off in hidden ancestors).
+	      window.addEventListener("load", () => {
+	        document.querySelectorAll("textarea.js-autoresize").forEach((ta) => autoresizeTextarea(ta));
+	      });
+
 		      const addScene = () => {
 		        if (!scenesContainer || !scenesTpl) return;
 		        const frag = scenesTpl.content.cloneNode(true);
@@ -932,6 +957,8 @@
 		        }
 		        scenesContainer.appendChild(frag);
 		        updateSceneNumbers();
+		        const lastRow = scenesContainer.querySelector("[data-scene-row]:last-child");
+		        if (lastRow) initAutoresize(lastRow);
 		        const last = scenesContainer.querySelector("[data-scene-row]:last-child textarea[name='scene_operator_text']");
 		        if (last) last.focus();
 		      };
@@ -945,6 +972,7 @@
 	          initSceneOperator(row);
 	        });
 	      }
+	      initAutoresize(document);
 
 	      if (operatorSelect) {
 	        operatorSelect.addEventListener("change", () => {
