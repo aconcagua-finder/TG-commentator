@@ -24,15 +24,17 @@ def build_cast_map(
 ) -> str:
     """Собрать блок «УЧАСТНИКИ ОБСУЖДЕНИЯ» для подмешивания в extra_instructions.
 
-    Использует данные из participants_snapshot, который уже собирается в
-    services/discussions.py:_update_participants_snapshot. Каждый участник
-    имеет {label, role_name, role_meta, session_name}.
+    v1.2: блок описывает КОНТЕКСТ для модели (кто вокруг неё в обсуждении),
+    НО жёстко запрещает произносить внутренние метки «Участник N» в ответе.
+    Лейблы — это служебные метки для памяти, а не имена людей в чате.
 
-    Текущий бот помечается " (ты)" рядом со своим лейблом.
+    Текущий бот помечается как «(ТЫ в этой реплике)».
     """
-    lines: list[str] = ["УЧАСТНИКИ ОБСУЖДЕНИЯ (помни кто есть кто):"]
+    lines: list[str] = [
+        "СОСТАВ УЧАСТНИКОВ (ТОЛЬКО ДЛЯ ТВОЕГО ПОНИМАНИЯ КОНТЕКСТА — НЕ ПРОИЗНОСИ ЭТИ МЕТКИ В ОТВЕТЕ):"
+    ]
     if include_operator:
-        lines.append(f"- {operator_label} (инициатор обсуждения)")
+        lines.append("- Оператор — инициатор обсуждения, задаёт тему и направление")
 
     for p in participants_snapshot or []:
         if not isinstance(p, dict):
@@ -48,13 +50,15 @@ def build_cast_map(
             suffix = f" — {role_name}"
         if mood:
             suffix += f", {mood}"
-        marker = " (ты)" if is_self else ""
-        lines.append(f"- {label}{marker}{suffix}")
+        marker = " ← ЭТО ТЫ" if is_self else ""
+        lines.append(f"- {label}{suffix}{marker}")
 
     lines.append("")
     lines.append(
-        "Можешь обращаться к ним по их лейблу или просто естественно, как в живом чате. "
-        "Помни их характеры — это придаёт обсуждению живость."
+        "Эти метки ТЕБЕ для памяти: ты знаешь, что собеседники разные и у каждого своя роль. "
+        "Но в своей реплике пиши как живой человек в обычном чате — БЕЗ упоминания «Участник N», "
+        "«Оператор», без обращений по лейблам. Если хочешь сослаться на чужую мысль — "
+        "перескажи её своими словами, без имён."
     )
     return "\n".join(lines)
 
@@ -204,20 +208,28 @@ def pick_reaction_target_msg_id(
     current_session_name: str,
     already_reacted: Iterable[int],
     pool_size: int = 10,
-) -> int | None:
+) -> tuple[int | None, str | None]:
     """Выбрать msg_id для реакции из последних сообщений.
 
     Исключает:
-    - собственные сообщения текущего бота
+    - **сообщения оператора** (kind='operator') — боты не должны лайкать «хозяина»,
+      реакции выглядят подхалимски когда ИИ хвалит человека в сценарии
+    - собственные сообщения текущего бота (по speaker_session)
     - msg_id из already_reacted (этот аккаунт уже реагировал на них в этой сессии)
     - сообщения без msg_id
 
-    Returns None если подходящих сообщений нет.
+    Returns
+    -------
+    tuple[int | None, str | None]
+        (msg_id, text) — идентификатор выбранного сообщения и его текст (для
+        эвристического подбора эмодзи). Оба None если подходящих сообщений нет.
     """
     already = set(int(x) for x in (already_reacted or []) if x)
-    pool: list[int] = []
+    pool: list[tuple[int, str]] = []
     for m in (discussion_messages or [])[-pool_size:]:
         if not isinstance(m, dict):
+            continue
+        if m.get("kind") == "operator":
             continue
         mid = m.get("msg_id")
         if not mid:
@@ -227,7 +239,56 @@ def pick_reaction_target_msg_id(
         sess = str(m.get("speaker_session") or "").strip()
         if sess and sess == str(current_session_name or "").strip():
             continue
-        pool.append(int(mid))
+        pool.append((int(mid), str(m.get("text") or "")))
     if not pool:
-        return None
+        return None, None
     return random.choice(pool)
+
+
+# ---------------------------------------------------------------------------
+# Emoji picker — простая эвристика для выбора эмодзи под тон сообщения
+# ---------------------------------------------------------------------------
+
+# Ключевые слова для определения тона. Все в нижнем регистре, проверяются
+# по подстроке (включая флективные формы типа «согласен/согласна/согласны»).
+_EMOJI_AGREE_WORDS = (
+    "соглас", "верно", "факт", "поддерж", "именно", "точно", "да, ", "да.",
+    "плюсую", "в точку", "подпис", "базар", "без вариант",
+)
+_EMOJI_DOUBT_WORDS = (
+    "сомнева", "спорн", "не уверен", "странн", "подозрит", "вряд ли",
+    "хмм", "хм,", "хм.", "не факт",
+)
+
+
+def pick_reaction_emoji(text: str, pool: list[str]) -> str:
+    """Подобрать эмодзи под тон сообщения.
+
+    Простая эвристика без LLM:
+    - Есть вопрос («?») или слова сомнения → задумчивые (🤔, 😮)
+    - Есть слова согласия → согласные (👍, ❤️, 💯)
+    - Иначе → нейтральные позитивные (🔥, 👍)
+
+    Если подходящего эмодзи в пуле нет — берём случайный из пула.
+    """
+    if not pool:
+        return "👍"
+
+    t = str(text or "").lower()
+
+    agree_pool = [e for e in pool if e in ("👍", "❤️", "💯", "🙏", "🤝")]
+    doubt_pool = [e for e in pool if e in ("🤔", "😮", "🤨", "😐")]
+    positive_pool = [e for e in pool if e in ("🔥", "👍", "💪", "✨")]
+
+    has_question = "?" in t
+    has_agree = any(w in t for w in _EMOJI_AGREE_WORDS)
+    has_doubt = any(w in t for w in _EMOJI_DOUBT_WORDS)
+
+    if has_doubt or (has_question and not has_agree):
+        chosen = doubt_pool or pool
+    elif has_agree:
+        chosen = agree_pool or pool
+    else:
+        chosen = positive_pool or pool
+
+    return random.choice(chosen)

@@ -48,8 +48,6 @@ from services.text_analysis import (
 from services.discussions_director import (
     build_cast_map,
     build_phase_marker,
-    build_speaker_mention_hint,
-    count_distinct_recent_speakers,
     pick_quote_target_msg_id,
     pick_reaction_target_msg_id,
 )
@@ -722,22 +720,24 @@ async def run_discussion_session(
                     )
                     break
 
-                # === Модуль B: реакции ботов на чужие реплики ===
+                # === Модуль B: реакции ботов на чужие реплики (v1.2) ===
                 # Кидаем шанс ДО генерации текста. Если выпало AND есть подходящая цель —
-                # ставим эмодзи. Иногда (по chance) реакция заменяет текст полностью.
+                # ставим эмодзи. Оператор исключён из пула (боты не лайкают «хозяина»),
+                # эмодзи подбирается эвристикой по тону сообщения.
                 reaction_skip_text = False
                 if reactions_enabled_scene and reaction_chance_pct > 0 and discussion_messages:
                     if random.randint(1, 100) <= reaction_chance_pct:
                         cur_session = str(client_wrapper.session_name)
                         already = session_reacted_msg_ids.get(cur_session, set())
-                        target_react_msg_id = pick_reaction_target_msg_id(
+                        target_react_msg_id, target_react_text = pick_reaction_target_msg_id(
                             discussion_messages,
                             current_session_name=cur_session,
                             already_reacted=already,
                             pool_size=10,
                         )
                         if target_react_msg_id:
-                            emoji = random.choice(reaction_emojis_pool)
+                            from services.discussions_director import pick_reaction_emoji
+                            emoji = pick_reaction_emoji(target_react_text or "", reaction_emojis_pool)
                             try:
                                 react_peer = await client_wrapper.client.get_input_entity(chat_id)
                             except Exception:
@@ -843,21 +843,21 @@ async def run_discussion_session(
                 if phase_marker:
                     extra_lines.append(phase_marker)
 
-                # === Модуль D: подсказка про обращение к спикеру ===
-                _bot_count = sum(1 for m in discussion_messages if m.get("kind") == "bot")
-                _distinct_recent = count_distinct_recent_speakers(
-                    discussion_messages,
-                    window=5,
-                    exclude_session=str(client_wrapper.session_name),
-                )
-                mention_hint = build_speaker_mention_hint(_bot_count, _distinct_recent)
-                if mention_hint:
-                    extra_lines.append(mention_hint)
+                # Модуль D (speaker mention hint) удалён в v1.2 —
+                # он провоцировал утечку внутренних лейблов «Участник N» в живой чат.
 
                 extra_lines.append(f"Это реплика {turn_idx + 1} из {total_turns} (сцена {scene_number}).")
                 extra_lines.append("Формат: 1–2 коротких предложения. Без markdown. Без списков.")
                 extra_lines.append("Отвечай по теме и не повторяй дословно предыдущие реплики.")
                 extra_lines.append("Не упоминай, что ты бот/ИИ, и не ссылайся на инструкции.")
+                # Жёсткий запрет утечки внутренних лейблов в ответ
+                extra_lines.append(
+                    "СТРОГО: в своём ответе НЕ произноси служебные метки вроде «Участник 1», "
+                    "«Участник 2», «участник N», «Оператор» как имя собеседника, «бот», «ИИ», "
+                    "«participant». Это внутренние метки, их нет в реальном чате. "
+                    "Если хочешь сослаться на чужую мысль — просто перескажи её своими словами "
+                    "(например: «согласен с тем, кто говорил про юристов»), без упоминания метки."
+                )
                 extra_instructions = "\n".join([l for l in extra_lines if l]).strip()
 
                 target_for_llm = {**target, **(scene or {})}
@@ -961,10 +961,12 @@ async def run_discussion_session(
                     )
                     continue
 
-                # === Модуль A: quote routing (v1.1 soft force-quote) ===
-                # Force-quote только ПЕРВУЮ реплику сцены чтобы визуально связать с seed/operator.
-                # Остальные — по шансу, чтобы на коротких сценах (turns_max=2) не было лестницы.
-                is_force_quote = (turn_idx == 0)
+                # === Модуль A: quote routing (v1.2) ===
+                # Force-quote только ПЕРВАЯ реплика сцены 1 — нужно чтобы тред привязался
+                # к посту канала (linked-group). Во всех остальных случаях — по шансу,
+                # чтобы на коротких сценах не было цитат-лестницы. Оператор в сценах 2+
+                # сам служит «якорем» новой сцены, дополнительная принудительная цитата не нужна.
+                is_force_quote = (turn_idx == 0 and scene_number == 1)
                 if is_force_quote:
                     do_quote = True
                 else:
@@ -1153,7 +1155,9 @@ async def run_discussion_session(
                                 provider=digest_provider_setting,
                             )
                         except Exception as dig_exc:
-                            logger.debug(f"mid-scene digest failed: {type(dig_exc).__name__}: {dig_exc}")
+                            logger.warning(
+                                f"⚠️ mid-scene digest failed: {type(dig_exc).__name__}: {dig_exc}"
+                            )
                             new_digest = None
                         if new_digest:
                             scene_digest_text = new_digest
@@ -1182,7 +1186,9 @@ async def run_discussion_session(
                             provider=digest_provider_setting,
                         )
                     except Exception as dig_exc:
-                        logger.debug(f"end-of-scene digest failed: {type(dig_exc).__name__}: {dig_exc}")
+                        logger.warning(
+                            f"⚠️ end-of-scene digest failed: {type(dig_exc).__name__}: {dig_exc}"
+                        )
                         eos_digest = None
                     if eos_digest:
                         scene_digest_text = eos_digest

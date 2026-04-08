@@ -583,7 +583,7 @@ async def generate_digest(
     api_keys = current_settings.get("api_keys", {}) or {}
     api_key = api_keys.get(provider)
     if not api_key:
-        logger.debug(f"digest: no api_key for {provider}")
+        logger.warning(f"⚠️ digest: no api_key for provider={provider}")
         return None
 
     seed_line = str(scene_seed_text or "").strip()
@@ -616,7 +616,11 @@ async def generate_digest(
 
     timeout_sec = 20.0
     max_tokens_val = 160
-    temperature_val = 0.3
+    temperature_val: float | None = 0.3  # default, но будет убрано при необходимости
+
+    def _is_temperature_error(exc: Exception) -> bool:
+        msg = str(exc or "").lower()
+        return "temperature" in msg and ("unsupported" in msg or "does not support" in msg or "only the default" in msg)
 
     try:
         if provider in {"openai", "openrouter", "deepseek"}:
@@ -638,7 +642,7 @@ async def generate_digest(
                 model_name = candidates[0] if candidates else None
 
             if not model_name:
-                logger.debug(f"digest: no model_name for {provider}")
+                logger.warning(f"⚠️ digest: no model_name configured for provider={provider}")
                 return None
 
             client_kwargs = {"api_key": api_key}
@@ -653,23 +657,41 @@ async def generate_digest(
                 client_kwargs.pop("timeout", None)
                 client = openai.AsyncOpenAI(**client_kwargs)
 
-            create_kwargs = {
-                "model": model_name,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": temperature_val,
-            }
-            if provider == "openai":
-                create_kwargs["max_completion_tokens"] = max_tokens_val
-            else:
-                create_kwargs["max_tokens"] = max_tokens_val
+            def _build_create_kwargs(include_temperature: bool) -> dict:
+                kw = {
+                    "model": model_name,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                }
+                if include_temperature and temperature_val is not None:
+                    kw["temperature"] = temperature_val
+                if provider == "openai":
+                    kw["max_completion_tokens"] = max_tokens_val
+                else:
+                    kw["max_tokens"] = max_tokens_val
+                return kw
 
-            completion = await asyncio.wait_for(
-                client.chat.completions.create(**create_kwargs),
-                timeout=timeout_sec + 5,
-            )
+            # Попытка 1: с temperature. Если провайдер/модель не поддерживает —
+            # повторяем без неё (важно для gpt-5/*-chat-latest которые требуют default=1).
+            try:
+                completion = await asyncio.wait_for(
+                    client.chat.completions.create(**_build_create_kwargs(include_temperature=True)),
+                    timeout=timeout_sec + 5,
+                )
+            except Exception as first_exc:
+                if _is_temperature_error(first_exc):
+                    logger.info(
+                        f"📜 digest: {provider} не поддерживает temperature, повторяю без неё"
+                    )
+                    completion = await asyncio.wait_for(
+                        client.chat.completions.create(**_build_create_kwargs(include_temperature=False)),
+                        timeout=timeout_sec + 5,
+                    )
+                else:
+                    raise
+
             try:
                 raw = completion.choices[0].message.content or ""
             except Exception:
@@ -681,13 +703,14 @@ async def generate_digest(
             candidates = gemini_model_candidates(current_settings, "gemini_chat")
             model_name = candidates[0] if candidates else None
             if not model_name:
-                logger.debug("digest: no gemini model_name")
+                logger.warning("⚠️ digest: no gemini model_name configured")
                 return None
             config_kwargs = {
                 "system_instruction": system_prompt,
                 "max_output_tokens": max_tokens_val,
-                "temperature": temperature_val,
             }
+            if temperature_val is not None:
+                config_kwargs["temperature"] = temperature_val
             async with genai.Client(api_key=api_key).aio as aclient:
                 response = await asyncio.wait_for(
                     aclient.models.generate_content(
@@ -701,9 +724,12 @@ async def generate_digest(
             return text or None
 
         else:
-            logger.debug(f"digest: unsupported provider {provider}")
+            logger.warning(f"⚠️ digest: unsupported provider={provider}")
             return None
 
     except Exception as e:
-        logger.debug(f"digest failed for {provider}: {type(e).__name__}: {e}")
+        err_msg = str(e or "").replace("\n", " ").strip()
+        if len(err_msg) > 240:
+            err_msg = err_msg[:239].rstrip() + "…"
+        logger.warning(f"⚠️ digest failed for {provider}: {type(e).__name__}: {err_msg}")
         return None
