@@ -174,6 +174,14 @@ async def discussions_new_submit(
     antirepeat_threshold: str = Form("0.72"),
     antirepeat_retries: str = Form("2"),
     antirepeat_window: str = Form("0"),
+    quote_chance_pct: str = Form("35"),
+    quote_target_mode: str = Form("mixed"),
+    reactions_enabled: Optional[str] = Form(None),
+    reaction_chance_pct: str = Form("15"),
+    reaction_instead_of_text_chance_pct: str = Form("30"),
+    reaction_emojis: str = Form(""),
+    digest_every_n_turns: str = Form("5"),
+    digest_provider: str = Form("default"),
     select_all: Optional[str] = Form(None),
     assigned_accounts: Optional[List[str]] = Form(None),
 ):
@@ -301,6 +309,42 @@ async def discussions_new_submit(
             min_value=0,
             max_value=500,
         ),
+        "quote_chance_pct": _parse_int_field(
+            request,
+            quote_chance_pct,
+            default=35,
+            label="Театр: шанс цитаты (%)",
+            min_value=0,
+            max_value=100,
+        ),
+        "quote_target_mode": (quote_target_mode or "mixed").strip().lower() if (quote_target_mode or "mixed").strip().lower() in ("last", "seed", "random_recent", "mixed") else "mixed",
+        "reactions_enabled": _parse_bool(reactions_enabled, default=True),
+        "reaction_chance_pct": _parse_int_field(
+            request,
+            reaction_chance_pct,
+            default=15,
+            label="Театр: шанс реакции (%)",
+            min_value=0,
+            max_value=100,
+        ),
+        "reaction_instead_of_text_chance_pct": _parse_int_field(
+            request,
+            reaction_instead_of_text_chance_pct,
+            default=30,
+            label="Театр: реакция вместо текста (%)",
+            min_value=0,
+            max_value=100,
+        ),
+        "reaction_emojis": [s.strip() for s in (reaction_emojis or "").split(",") if s.strip()] or ["👍", "🔥", "🤔", "❤️", "💯", "😮", "🙄", "😎", "💪"],
+        "digest_every_n_turns": _parse_int_field(
+            request,
+            digest_every_n_turns,
+            default=5,
+            label="Театр: свёртка каждые N",
+            min_value=0,
+            max_value=50,
+        ),
+        "digest_provider": (digest_provider or "default").strip().lower() or "default",
         "date_added": datetime.now(timezone.utc).isoformat(),
         "assigned_accounts": [],
         "project_id": project_id,
@@ -671,6 +715,14 @@ async def discussion_target_edit_save(
     antirepeat_threshold: str = Form(""),
     antirepeat_retries: str = Form(""),
     antirepeat_window: str = Form(""),
+    quote_chance_pct: str = Form(""),
+    quote_target_mode: str = Form(""),
+    reactions_enabled: Optional[str] = Form(None),
+    reaction_chance_pct: str = Form(""),
+    reaction_instead_of_text_chance_pct: str = Form(""),
+    reaction_emojis: str = Form(""),
+    digest_every_n_turns: str = Form(""),
+    digest_provider: str = Form(""),
     select_all: Optional[str] = Form(None),
     assigned_accounts: Optional[List[str]] = Form(None),
     scene_id: Optional[List[str]] = Form(None),
@@ -751,6 +803,63 @@ async def discussion_target_edit_save(
         min_value=0,
         max_value=500,
     )
+
+    # === Театральная постановка ===
+    target["quote_chance_pct"] = _parse_int_field(
+        request,
+        quote_chance_pct,
+        default=int(target.get("quote_chance_pct", 35) or 35),
+        label="Театр: шанс цитаты (%)",
+        min_value=0,
+        max_value=100,
+    )
+    qm_in = (quote_target_mode or "").strip().lower()
+    if qm_in in ("last", "seed", "random_recent", "mixed"):
+        target["quote_target_mode"] = qm_in
+    elif qm_in == "":
+        target.setdefault("quote_target_mode", "mixed")
+    else:
+        target["quote_target_mode"] = "mixed"
+
+    target["reactions_enabled"] = _parse_bool(reactions_enabled, default=True)
+    target["reaction_chance_pct"] = _parse_int_field(
+        request,
+        reaction_chance_pct,
+        default=int(target.get("reaction_chance_pct", 15) or 15),
+        label="Театр: шанс реакции (%)",
+        min_value=0,
+        max_value=100,
+    )
+    target["reaction_instead_of_text_chance_pct"] = _parse_int_field(
+        request,
+        reaction_instead_of_text_chance_pct,
+        default=int(target.get("reaction_instead_of_text_chance_pct", 30) or 30),
+        label="Театр: реакция вместо текста (%)",
+        min_value=0,
+        max_value=100,
+    )
+    if (reaction_emojis or "").strip():
+        emojis_list = [s.strip() for s in reaction_emojis.split(",") if s.strip()]
+        if emojis_list:
+            target["reaction_emojis"] = emojis_list
+    elif "reaction_emojis" not in target:
+        target["reaction_emojis"] = ["👍", "🔥", "🤔", "❤️", "💯", "😮", "🙄", "😎", "💪"]
+
+    target["digest_every_n_turns"] = _parse_int_field(
+        request,
+        digest_every_n_turns,
+        default=int(target.get("digest_every_n_turns", 5) or 5),
+        label="Театр: свёртка каждые N",
+        min_value=0,
+        max_value=50,
+    )
+    dp_in = (digest_provider or "").strip().lower()
+    if dp_in in ("default", "openai", "gemini", "openrouter", "deepseek"):
+        target["digest_provider"] = dp_in
+    elif dp_in == "":
+        target.setdefault("digest_provider", "default")
+    else:
+        target["digest_provider"] = "default"
 
     if initial_delay_min.strip():
         target["initial_delay_min"] = _parse_int_field(

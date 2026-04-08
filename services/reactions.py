@@ -6,6 +6,7 @@ Extracted from commentator.py.
 import asyncio
 import logging
 import random
+import time
 from datetime import datetime, timezone
 
 from telethon.errors import FloodWaitError, ReactionsTooManyError
@@ -17,6 +18,66 @@ from services.connection import ensure_client_connected, _is_account_assigned, _
 from services.db_queries import get_daily_action_count_from_db, log_action_to_db
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Per-session cooldown для безопасных одиночных реакций (используется в обсуждениях).
+# Module-level state — простой rate-limiter, чтобы не плодить FloodWait'ы.
+# ---------------------------------------------------------------------------
+_LAST_REACTION_TS: dict[str, float] = {}
+
+
+async def send_single_reaction_safe(
+    client,
+    peer,
+    msg_id: int,
+    emoji: str,
+    *,
+    session_name: str,
+    min_interval_sec: float = 10.0,
+) -> bool:
+    """Поставить ОДНУ эмодзи-реакцию с учётом cooldown.
+
+    Используется из discussions.py для эпизодических лайков ботов друг
+    другу. На любой ошибке возвращает False (silent skip), не блокирует
+    основной поток обсуждения.
+
+    Returns
+    -------
+    bool
+        True если реакция реально отправлена, False если пропущена
+        (cooldown не прошёл, упал API, флуд-вейт и т.п.).
+    """
+    sess = str(session_name or "").strip()
+    if not sess or not msg_id or not emoji:
+        return False
+
+    now = time.monotonic()
+    last = _LAST_REACTION_TS.get(sess, 0.0)
+    if now - last < float(min_interval_sec):
+        return False
+
+    # Резервируем cooldown заранее, чтобы параллельные вызовы не пробивали лимит.
+    _LAST_REACTION_TS[sess] = now
+
+    try:
+        await client(
+            SendReactionRequest(
+                peer=peer,
+                msg_id=int(msg_id),
+                reaction=[ReactionEmoji(emoticon=str(emoji))],
+            )
+        )
+        return True
+    except ReactionsTooManyError:
+        logger.debug(f"reaction skipped (too many) for {sess} on msg {msg_id}")
+        return False
+    except FloodWaitError as e:
+        logger.debug(f"reaction skipped (flood wait {getattr(e, 'seconds', '?')}s) for {sess}")
+        return False
+    except Exception as e:
+        logger.debug(f"reaction skipped for {sess}: {type(e).__name__}: {e}")
+        return False
 
 
 # ---------------------------------------------------------------------------

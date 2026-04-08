@@ -325,6 +325,104 @@
 
           <div class="col-12">
             <hr class="my-2" />
+            <h3 class="h6 mb-1">Театральная постановка</h3>
+            <div class="text-muted small mb-2">
+              Делает обсуждение похожим на естественную беседу: умное цитирование (а не лестница), реакции-эмодзи между ботами, общий нарратив сцены и обращения к участникам по их роли.
+            </div>
+
+            <div class="text-muted small fw-semibold mb-1">Цитирование</div>
+            <div class="row g-3 mb-3">
+              <div class="col-12 col-md-3">
+                <label class="form-label app-label">
+                  <span class="app-label-text">Шанс цитаты (%)</span>
+                  {{ ui.tip("С какой вероятностью реплика бота будет reply на чужое сообщение. Остальные сообщения уходят в тред без цитаты. Первые 2 реплики сцены всегда цитируют seed (force-quote). 100 = старое поведение (лестница цитат). 0 = никогда не цитирует.") }}
+                </label>
+                <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="quote_chance_pct" value="{{ target.get('quote_chance_pct', 35) }}" />
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label app-label">
+                  <span class="app-label-text">Кого цитировать</span>
+                  {{ ui.tip("Если выпало «делаем цитату»: какое сообщение выбираем для reply. «Смешано» — 50/50 «последнее» и «случайное недавнее».") }}
+                </label>
+                {% set qm = target.get('quote_target_mode', 'mixed') %}
+                <select class="form-select" name="quote_target_mode">
+                  <option value="mixed" {% if qm == 'mixed' %}selected{% endif %}>Смешано (реком.)</option>
+                  <option value="last" {% if qm == 'last' %}selected{% endif %}>Последнее сообщение</option>
+                  <option value="seed" {% if qm == 'seed' %}selected{% endif %}>Исходный пост</option>
+                  <option value="random_recent" {% if qm == 'random_recent' %}selected{% endif %}>Случайное недавнее</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="text-muted small fw-semibold mb-1">Реакции</div>
+            <div class="row g-3 mb-3">
+              <div class="col-12 col-md-3">
+                <label class="form-label app-label">
+                  <span class="app-label-text">Реакции включены</span>
+                  {{ ui.tip("Боты могут эпизодически ставить эмодзи-реакции на чужие сообщения. Без этого — только текст.") }}
+                </label>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" name="reactions_enabled" id="reactions_enabled" {% if target.get('reactions_enabled', True) %}checked{% endif %} />
+                  <label class="form-check-label" for="reactions_enabled">Включено</label>
+                </div>
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label app-label">
+                  <span class="app-label-text">Шанс реакции (%)</span>
+                  {{ ui.tip("С какой вероятностью на каждом turn'е бот ставит реакцию на чьё-то предыдущее сообщение. 15 — натурально (примерно 1 реакция на 6 реплик).") }}
+                </label>
+                <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="reaction_chance_pct" value="{{ target.get('reaction_chance_pct', 15) }}" />
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label app-label">
+                  <span class="app-label-text">Реакция вместо текста (%)</span>
+                  {{ ui.tip("Если бот поставил реакцию: с этим шансом он не пишет текст в этот turn (только лайк). Иначе — лайк сверх обычного текста. Hard cap: не более total_turns/3 «молчаливых» реакций.") }}
+                </label>
+                <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="reaction_instead_of_text_chance_pct" value="{{ target.get('reaction_instead_of_text_chance_pct', 30) }}" />
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label app-label">
+                  <span class="app-label-text">Пул эмодзи</span>
+                  {{ ui.tip("Через запятую. Используется в обсуждениях, дефолт расширенный.") }}
+                </label>
+                {% set re = target.get('reaction_emojis') %}
+                {% if re is iterable and re is not string %}
+                  {% set re_str = re|join(', ') %}
+                {% else %}
+                  {% set re_str = re or '👍, 🔥, 🤔, ❤️, 💯, 😮, 🙄, 😎, 💪' %}
+                {% endif %}
+                <input class="form-control" type="text" name="reaction_emojis" value="{{ re_str }}" placeholder="👍, 🔥, 🤔, ❤️, 💯" />
+              </div>
+            </div>
+
+            <div class="text-muted small fw-semibold mb-1">Режиссура (нарратив)</div>
+            <div class="row g-3">
+              <div class="col-12 col-md-3">
+                <label class="form-label app-label">
+                  <span class="app-label-text">Свёртка каждые N реплик</span>
+                  {{ ui.tip("Каждые N успешных текстовых turn'ов делается отдельный LLM-вызов: «летопись обсуждения». Свёрнутая сводка добавляется в промпт следующих реплик, чтобы боты понимали куда движется разговор. 0 = выключено. 5 — оптимально для длинных сцен.") }}
+                </label>
+                <input class="form-control" type="number" min="0" max="50" step="1" inputmode="numeric" name="digest_every_n_turns" value="{{ target.get('digest_every_n_turns', 5) }}" />
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label app-label">
+                  <span class="app-label-text">Провайдер для сводок</span>
+                  {{ ui.tip("AI-провайдер для свёрток. «Как у обсуждения» = тот же провайдер, что и для основной генерации. Можно выбрать дешёвый/быстрый отдельно.") }}
+                </label>
+                {% set dp = target.get('digest_provider', 'default') %}
+                <select class="form-select" name="digest_provider">
+                  <option value="default" {% if dp == 'default' %}selected{% endif %}>Как у обсуждения</option>
+                  <option value="gemini" {% if dp == 'gemini' %}selected{% endif %}>Gemini</option>
+                  <option value="openai" {% if dp == 'openai' %}selected{% endif %}>OpenAI</option>
+                  <option value="openrouter" {% if dp == 'openrouter' %}selected{% endif %}>OpenRouter</option>
+                  <option value="deepseek" {% if dp == 'deepseek' %}selected{% endif %}>DeepSeek</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-12">
+            <hr class="my-2" />
             <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
               <div>
                 <h3 class="h6 mb-1">Участники (сцена 1)</h3>

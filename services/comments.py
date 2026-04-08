@@ -553,3 +553,157 @@ async def generate_comment(
 
     model_part = f"{provider}:{last_model}" if last_model else provider
     return None, f"{prompt_info} · FAIL({model_part}): {last_failure}"
+
+
+async def generate_digest(
+    messages: list[dict],
+    scene_seed_text: str,
+    current_settings: dict,
+    *,
+    provider: str = "default",
+) -> str | None:
+    """Свернуть последние реплики обсуждения в одно-два предложения.
+
+    Используется для «летописи» в театральной постановке discussions.
+    Полностью независима от generate_comment: не использует роль,
+    вектор, blacklist, custom_rules. Один прямой API-вызов, без retry.
+
+    Returns
+    -------
+    str | None
+        Свёрнутая сводка или None при любой ошибке.
+    """
+    if not messages:
+        return None
+
+    if provider == "default" or not provider:
+        provider = current_settings.get("ai_provider", "gemini")
+    provider = str(provider or "").strip().lower() or "gemini"
+
+    api_keys = current_settings.get("api_keys", {}) or {}
+    api_key = api_keys.get(provider)
+    if not api_key:
+        logger.debug(f"digest: no api_key for {provider}")
+        return None
+
+    seed_line = str(scene_seed_text or "").strip()
+    if len(seed_line) > 280:
+        seed_line = seed_line[:279].rstrip() + "…"
+
+    msg_lines: list[str] = []
+    for m in messages[-12:]:
+        speaker = str((m or {}).get("speaker_label") or (m or {}).get("speaker") or "Участник").strip() or "Участник"
+        text = str((m or {}).get("text") or "").strip()
+        if not text:
+            continue
+        if len(text) > 220:
+            text = text[:219].rstrip() + "…"
+        msg_lines.append(f"{speaker}: {text}")
+
+    if len(msg_lines) < 2:
+        return None
+
+    system_prompt = (
+        "Ты нейтральный наблюдатель чата. Сожми последние сообщения участников в одно-два предложения. "
+        'Используй формат: "Обсуждение движется от X к Y. Ключевой спор: Z." '
+        "Не добавляй оценок, эмоций, вопросов. Только факты разговора. Без markdown, без списков."
+    )
+    user_message = (
+        f"Тема обсуждения: {seed_line}\n\n"
+        "Последние сообщения:\n" + "\n".join(msg_lines) + "\n\n"
+        "Сделай свёрнутую сводку."
+    )
+
+    timeout_sec = 20.0
+    max_tokens_val = 160
+    temperature_val = 0.3
+
+    try:
+        if provider in {"openai", "openrouter", "deepseek"}:
+            base_url = None
+            default_headers = None
+            if provider == "deepseek":
+                base_url = "https://api.deepseek.com"
+                model_name = get_model_setting(current_settings, "deepseek_chat")
+            elif provider == "openrouter":
+                base_url = "https://openrouter.ai/api/v1"
+                default_headers = {
+                    "HTTP-Referer": os.getenv("OPENROUTER_REFERRER", "http://localhost"),
+                    "X-Title": os.getenv("OPENROUTER_TITLE", "AI-Центр"),
+                }
+                model_name = get_model_setting(current_settings, "openrouter_chat")
+            else:
+                # openai — берём первый кандидат
+                candidates = openai_model_candidates(current_settings, "openai_chat")
+                model_name = candidates[0] if candidates else None
+
+            if not model_name:
+                logger.debug(f"digest: no model_name for {provider}")
+                return None
+
+            client_kwargs = {"api_key": api_key}
+            if base_url:
+                client_kwargs["base_url"] = base_url
+            if default_headers:
+                client_kwargs["default_headers"] = default_headers
+            try:
+                client_kwargs["timeout"] = timeout_sec
+                client = openai.AsyncOpenAI(**client_kwargs)
+            except TypeError:
+                client_kwargs.pop("timeout", None)
+                client = openai.AsyncOpenAI(**client_kwargs)
+
+            create_kwargs = {
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                "temperature": temperature_val,
+            }
+            if provider == "openai":
+                create_kwargs["max_completion_tokens"] = max_tokens_val
+            else:
+                create_kwargs["max_tokens"] = max_tokens_val
+
+            completion = await asyncio.wait_for(
+                client.chat.completions.create(**create_kwargs),
+                timeout=timeout_sec + 5,
+            )
+            try:
+                raw = completion.choices[0].message.content or ""
+            except Exception:
+                raw = ""
+            text = str(raw or "").strip()
+            return text or None
+
+        elif provider == "gemini":
+            candidates = gemini_model_candidates(current_settings, "gemini_chat")
+            model_name = candidates[0] if candidates else None
+            if not model_name:
+                logger.debug("digest: no gemini model_name")
+                return None
+            config_kwargs = {
+                "system_instruction": system_prompt,
+                "max_output_tokens": max_tokens_val,
+                "temperature": temperature_val,
+            }
+            async with genai.Client(api_key=api_key).aio as aclient:
+                response = await asyncio.wait_for(
+                    aclient.models.generate_content(
+                        model=model_name,
+                        contents=[user_message],
+                        config=genai_types.GenerateContentConfig(**config_kwargs),
+                    ),
+                    timeout=timeout_sec + 5,
+                )
+            text = (getattr(response, "text", "") or "").strip()
+            return text or None
+
+        else:
+            logger.debug(f"digest: unsupported provider {provider}")
+            return None
+
+    except Exception as e:
+        logger.debug(f"digest failed for {provider}: {type(e).__name__}: {e}")
+        return None

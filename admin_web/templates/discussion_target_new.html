@@ -209,6 +209,96 @@
         </div>
 
         <div class="col-12">
+          <hr class="my-2" />
+          <h3 class="h6 mb-1">Театральная постановка</h3>
+          <div class="text-muted small mb-2">
+            Умное цитирование, реакции-эмодзи между ботами, общий нарратив сцены и ссылки на участников по их роли. Делает обсуждение похожим на естественную беседу.
+          </div>
+
+          <div class="text-muted small fw-semibold mb-1">Цитирование</div>
+          <div class="row g-3 mb-3">
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Шанс цитаты (%)</span>
+                {{ ui.tip("С какой вероятностью реплика бота будет reply на чужое сообщение. 100 = старая лестница цитат. 0 = никогда.") }}
+              </label>
+              <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="quote_chance_pct" value="35" />
+            </div>
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Кого цитировать</span>
+                {{ ui.tip("Если выпало «делаем цитату»: какое сообщение выбираем для reply.") }}
+              </label>
+              <select class="form-select" name="quote_target_mode">
+                <option value="mixed" selected>Смешано (реком.)</option>
+                <option value="last">Последнее сообщение</option>
+                <option value="seed">Исходный пост</option>
+                <option value="random_recent">Случайное недавнее</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="text-muted small fw-semibold mb-1">Реакции</div>
+          <div class="row g-3 mb-3">
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Реакции включены</span>
+                {{ ui.tip("Боты могут эпизодически ставить эмодзи-реакции на чужие сообщения.") }}
+              </label>
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" name="reactions_enabled" id="reactions_enabled" checked />
+                <label class="form-check-label" for="reactions_enabled">Включено</label>
+              </div>
+            </div>
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Шанс реакции (%)</span>
+                {{ ui.tip("С какой вероятностью на каждом turn'е бот ставит реакцию.") }}
+              </label>
+              <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="reaction_chance_pct" value="15" />
+            </div>
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Реакция вместо текста (%)</span>
+                {{ ui.tip("Если бот поставил реакцию: с этим шансом он не пишет текст в этот turn.") }}
+              </label>
+              <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="reaction_instead_of_text_chance_pct" value="30" />
+            </div>
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Пул эмодзи</span>
+                {{ ui.tip("Через запятую.") }}
+              </label>
+              <input class="form-control" type="text" name="reaction_emojis" value="👍, 🔥, 🤔, ❤️, 💯, 😮, 🙄, 😎, 💪" placeholder="👍, 🔥, 🤔, ❤️, 💯" />
+            </div>
+          </div>
+
+          <div class="text-muted small fw-semibold mb-1">Режиссура (нарратив)</div>
+          <div class="row g-3">
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Свёртка каждые N реплик</span>
+                {{ ui.tip("Каждые N turn'ов делается LLM-вызов «летопись обсуждения» — сводка для контекста следующих реплик. 0 = выключено.") }}
+              </label>
+              <input class="form-control" type="number" min="0" max="50" step="1" inputmode="numeric" name="digest_every_n_turns" value="5" />
+            </div>
+            <div class="col-12 col-md-3">
+              <label class="form-label app-label">
+                <span class="app-label-text">Провайдер для сводок</span>
+                {{ ui.tip("AI-провайдер для свёрток. «Как у обсуждения» = тот же.") }}
+              </label>
+              <select class="form-select" name="digest_provider">
+                <option value="default" selected>Как у обсуждения</option>
+                <option value="gemini">Gemini</option>
+                <option value="openai">OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="deepseek">DeepSeek</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-12">
           <h2 class="h6 mt-2 mb-2">Аккаунты‑участники</h2>
           {% set assigned = [] %}
           {% set all_selected = false %}

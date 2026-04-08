@@ -21,7 +21,7 @@ from services.connection import (
     _clear_account_failure,
     _channel_bare_id,
 )
-from services.comments import generate_comment
+from services.comments import generate_comment, generate_digest
 from services.db_queries import (
     _db_create_discussion_session,
     _db_update_discussion_session,
@@ -44,6 +44,14 @@ from services.text_analysis import (
     is_comment_too_similar,
     build_comment_diversity_instructions,
     make_emergency_comment,
+)
+from services.discussions_director import (
+    build_cast_map,
+    build_phase_marker,
+    build_speaker_mention_hint,
+    count_distinct_recent_speakers,
+    pick_quote_target_msg_id,
+    pick_reaction_target_msg_id,
 )
 
 logger = logging.getLogger(__name__)
@@ -374,8 +382,22 @@ async def run_discussion_session(
             return eligible
 
         last_speaker = "Оператор"
-        history: list[dict[str, str]] = []
-        discussion_bot_texts: list[str] = []
+        # Единая структура для всех сообщений сессии (operator + bot).
+        # Каждый элемент: {msg_id, text, speaker_session, speaker_label, scene_number, kind, ts}
+        # kind: "operator" | "bot"
+        discussion_messages: list[dict] = []
+
+        def _history_view() -> list[dict[str, str]]:
+            """Compat view: формат, который ожидает _build_memory_block."""
+            return [
+                {"speaker": m.get("speaker_label") or "Участник", "text": m.get("text") or ""}
+                for m in discussion_messages
+            ]
+
+        def _bot_texts_view() -> list[str]:
+            """Compat view: тексты только бот-реплик для антиповтора."""
+            return [m.get("text") or "" for m in discussion_messages if m.get("kind") == "bot"]
+
         reply_to_msg_id: int = int(seed_msg_id)
         last_operator_msg_id: int | None = int(seed_msg_id)
         last_sender_session: str | None = None
@@ -418,6 +440,22 @@ async def run_discussion_session(
             if isinstance(raw, str):
                 return raw.strip().lower() in {"1", "true", "yes", "on", "y", "t"}
             return bool(default)
+
+        DEFAULT_REACTION_EMOJIS = ["👍", "🔥", "🤔", "❤️", "💯", "😮", "🙄", "😎", "💪"]
+
+        def _emojis_setting_from(scene: dict) -> list[str]:
+            """Прочитать пул эмодзи: сначала scene → потом target → дефолт."""
+            raw = None
+            if isinstance(scene, dict) and "reaction_emojis" in scene:
+                raw = scene.get("reaction_emojis")
+            if raw is None:
+                raw = target.get("reaction_emojis")
+            items: list[str] = []
+            if isinstance(raw, list):
+                items = [str(x).strip() for x in raw if str(x).strip()]
+            elif isinstance(raw, str):
+                items = [s.strip() for s in raw.split(",") if s.strip()]
+            return items or list(DEFAULT_REACTION_EMOJIS)
 
         def _truncate_memory_line(value: str, limit: int = 280) -> str:
             s = re.sub(r"\s+", " ", str(value or "")).strip()
@@ -482,8 +520,18 @@ async def run_discussion_session(
 
             if scene_number == 1:
                 scene_seed_text = seed_text
-                if not history:
-                    history.append({"speaker": "Оператор", "text": scene_seed_text})
+                if not discussion_messages:
+                    discussion_messages.append(
+                        {
+                            "msg_id": int(seed_msg_id) if seed_msg_id else None,
+                            "text": scene_seed_text,
+                            "speaker_session": None,
+                            "speaker_label": "Оператор",
+                            "scene_number": 1,
+                            "kind": "operator",
+                            "ts": time.time(),
+                        }
+                    )
             else:
                 operator_text = str((scene or {}).get("operator_text") or "").strip()
                 if not operator_text:
@@ -573,7 +621,17 @@ async def run_discussion_session(
                 last_operator_msg_id = int(op_msg_id)
                 last_speaker = "Оператор"
                 scene_seed_text = operator_text
-                history.append({"speaker": "Оператор", "text": operator_text.strip()})
+                discussion_messages.append(
+                    {
+                        "msg_id": int(op_msg_id),
+                        "text": operator_text.strip(),
+                        "speaker_session": str(scene_operator or "").strip() or None,
+                        "speaker_label": "Оператор",
+                        "scene_number": scene_number,
+                        "kind": "operator",
+                        "ts": time.time(),
+                    }
+                )
 
             turns_min = _int_setting_from(scene, "turns_min", 6, min_value=1, max_value=200)
             turns_max = _int_setting_from(scene, "turns_max", 10, min_value=1, max_value=200)
@@ -590,6 +648,34 @@ async def run_discussion_session(
             between_delay_max = _int_setting_from(scene, "delay_between_max", 80, min_value=0, max_value=86400)
             if between_delay_max < between_delay_min:
                 between_delay_max = between_delay_min
+
+            # === Театральная постановка: настройки сцены ===
+            quote_chance_pct = _int_setting_from(scene, "quote_chance_pct", 35, min_value=0, max_value=100)
+            quote_target_mode = _str_setting_from(scene, "quote_target_mode", "mixed").lower() or "mixed"
+            if quote_target_mode not in ("last", "seed", "random_recent", "mixed"):
+                quote_target_mode = "mixed"
+
+            reactions_enabled_scene = _bool_setting_from(scene, "reactions_enabled", True)
+            reaction_chance_pct = _int_setting_from(scene, "reaction_chance_pct", 15, min_value=0, max_value=100)
+            reaction_instead_of_text_pct = _int_setting_from(
+                scene, "reaction_instead_of_text_chance_pct", 30, min_value=0, max_value=100
+            )
+            reaction_emojis_pool = _emojis_setting_from(scene)
+            reaction_hard_cap = max(2, total_turns // 3)
+
+            digest_every_n_turns = _int_setting_from(scene, "digest_every_n_turns", 5, min_value=0, max_value=50)
+            digest_min_history = _int_setting_from(scene, "digest_min_history", 4, min_value=2, max_value=50)
+            digest_provider_setting = _str_setting_from(scene, "digest_provider", "default") or "default"
+            # Авто-выключение digest на коротких сценах: невыгодно если total_turns < every_n * 1.5
+            if digest_every_n_turns > 0 and total_turns < int(digest_every_n_turns * 1.5):
+                digest_every_n_turns = 0
+
+            # Per-scene state for theater
+            session_reacted_msg_ids: dict[str, set[int]] = {}
+            consecutive_reactions_without_text = 0
+            reactions_used_instead_of_text = 0
+            scene_digest_text: str = ""
+            scene_digest_status: str = "none"  # none | fresh | stale | missing
 
             if start_delay_max > 0:
                 await asyncio.sleep(random.uniform(float(start_delay_min), float(start_delay_max)))
@@ -630,11 +716,82 @@ async def run_discussion_session(
                     )
                     break
 
+                # === Модуль B: реакции ботов на чужие реплики ===
+                # Кидаем шанс ДО генерации текста. Если выпало AND есть подходящая цель —
+                # ставим эмодзи. Иногда (по chance) реакция заменяет текст полностью.
+                reaction_skip_text = False
+                if reactions_enabled_scene and reaction_chance_pct > 0 and discussion_messages:
+                    if random.randint(1, 100) <= reaction_chance_pct:
+                        cur_session = str(client_wrapper.session_name)
+                        already = session_reacted_msg_ids.get(cur_session, set())
+                        target_react_msg_id = pick_reaction_target_msg_id(
+                            discussion_messages,
+                            current_session_name=cur_session,
+                            already_reacted=already,
+                            pool_size=10,
+                        )
+                        if target_react_msg_id:
+                            emoji = random.choice(reaction_emojis_pool)
+                            try:
+                                react_peer = await client_wrapper.client.get_input_entity(chat_id)
+                            except Exception:
+                                react_peer = None
+                            if react_peer is not None:
+                                from services.reactions import send_single_reaction_safe
+                                ok = await send_single_reaction_safe(
+                                    client_wrapper.client,
+                                    react_peer,
+                                    int(target_react_msg_id),
+                                    emoji,
+                                    session_name=cur_session,
+                                    min_interval_sec=10.0,
+                                )
+                                if ok:
+                                    session_reacted_msg_ids.setdefault(cur_session, set()).add(int(target_react_msg_id))
+                                    try:
+                                        log_action_to_db(
+                                            {
+                                                "type": "reaction",
+                                                "context": "discussion",
+                                                "post_id": int(target_react_msg_id),
+                                                "reactions": [emoji],
+                                                "date": datetime.now(timezone.utc).isoformat(),
+                                                "account": {"session_name": cur_session},
+                                                "target": {
+                                                    "chat_name": target.get("chat_name"),
+                                                    "chat_username": target.get("chat_username"),
+                                                    "destination_chat_id": chat_id,
+                                                },
+                                            }
+                                        )
+                                    except Exception:
+                                        pass
+                                    logger.info(
+                                        f"💗 [{cur_session}] discussion reaction {emoji} → msg {target_react_msg_id}"
+                                    )
+                                    # Решаем, заменит ли реакция текст этого turn'а
+                                    if (
+                                        reaction_instead_of_text_pct > 0
+                                        and random.randint(1, 100) <= reaction_instead_of_text_pct
+                                        and consecutive_reactions_without_text < 2
+                                        and reactions_used_instead_of_text < reaction_hard_cap
+                                    ):
+                                        reaction_skip_text = True
+                                        consecutive_reactions_without_text += 1
+                                        reactions_used_instead_of_text += 1
+                                    else:
+                                        consecutive_reactions_without_text = 0
+
+                if reaction_skip_text:
+                    # НЕ обновляем last_speaker / last_sender_session — это «безмолвный» turn.
+                    continue
+
                 memory_turns = _int_setting_from(scene, "memory_turns", 20, min_value=0, max_value=200)
-                memory_block = _build_memory_block(history, memory_turns, exclude_last=True)
+                history_view = _history_view()
+                memory_block = _build_memory_block(history_view, memory_turns, exclude_last=True)
                 reply_to_text = ""
                 try:
-                    reply_to_text = str((history[-1] or {}).get("text") or "").strip() if history else ""
+                    reply_to_text = str((history_view[-1] or {}).get("text") or "").strip() if history_view else ""
                 except Exception:
                     reply_to_text = ""
                 if not reply_to_text:
@@ -657,8 +814,40 @@ async def run_discussion_session(
                         "КЛЮЧЕВО: в этой реплике обязательно зацепись за вектор сцены и добавь 1 конкретику из него "
                         "(модель/сервис/проблему/аргумент), но естественно, без канцелярита."
                     )
+
+                # === Модуль C.1: cast map (участники с ролями, текущий помечен (ты)) ===
+                cast_map_text = build_cast_map(
+                    participants_snapshot,
+                    current_session_name=str(client_wrapper.session_name),
+                    include_operator=True,
+                    operator_label="Оператор",
+                )
+                if cast_map_text:
+                    extra_lines.append(cast_map_text)
+
+                # === Модуль C.2: scene digest (если уже накоплен) ===
+                if scene_digest_text:
+                    extra_lines.append(f"ЛЕТОПИСЬ ОБСУЖДЕНИЯ ДО СЕЙЧАС:\n{scene_digest_text}")
+
                 if memory_block:
                     extra_lines.append(f"ПАМЯТЬ ДИАЛОГА (последние реплики):\n{memory_block}")
+
+                # === Модуль C.3: фаза сцены (только для длинных сцен) ===
+                phase_marker = build_phase_marker(turn_idx, total_turns)
+                if phase_marker:
+                    extra_lines.append(phase_marker)
+
+                # === Модуль D: подсказка про обращение к спикеру ===
+                _bot_count = sum(1 for m in discussion_messages if m.get("kind") == "bot")
+                _distinct_recent = count_distinct_recent_speakers(
+                    discussion_messages,
+                    window=5,
+                    exclude_session=str(client_wrapper.session_name),
+                )
+                mention_hint = build_speaker_mention_hint(_bot_count, _distinct_recent)
+                if mention_hint:
+                    extra_lines.append(mention_hint)
+
                 extra_lines.append(f"Это реплика {turn_idx + 1} из {total_turns} (сцена {scene_number}).")
                 extra_lines.append("Формат: 1–2 коротких предложения. Без markdown. Без списков.")
                 extra_lines.append("Отвечай по теме и не повторяй дословно предыдущие реплики.")
@@ -679,10 +868,11 @@ async def run_discussion_session(
                     scene, "antirepeat_window", 0, min_value=0, max_value=500
                 )
 
+                bot_texts_all = _bot_texts_view()
                 if antirepeat_window <= 0:
-                    existing_for_check = list(discussion_bot_texts)
+                    existing_for_check = list(bot_texts_all)
                 else:
-                    existing_for_check = list(discussion_bot_texts[-antirepeat_window:])
+                    existing_for_check = list(bot_texts_all[-antirepeat_window:])
 
                 diversity_block = ""
                 if antirepeat_enabled and existing_for_check:
@@ -768,15 +958,67 @@ async def run_discussion_session(
                 scene_tag = f"sc{scene_number}/{total_scenes}"
                 prompt_info_str = str(prompt_info or "").strip()
                 prompt_info_out = (f"{prompt_info_str} {scene_tag}").strip()
+                if scene_digest_status == "stale":
+                    prompt_info_out += " · digest=stale"
+                elif scene_digest_status == "missing":
+                    prompt_info_out += " · digest=missing"
+                elif scene_digest_status == "fresh":
+                    prompt_info_out += " · digest=fresh"
 
-                sent_msg = await human_type_and_send(
-                    client_wrapper.client,
-                    chat_id,
-                    reply_text,
-                    reply_to_msg_id=reply_to_msg_id,
-                    split_mode="smart_ru_no_comma",
-                    humanization_settings=current_settings.get('humanization', {}),
-                )
+                # === Модуль A: quote routing ===
+                # Force-quote первые 2 turn'а сцены чтобы визуально связать с seed/operator.
+                if turn_idx < 2:
+                    do_quote = True
+                else:
+                    do_quote = random.randint(1, 100) <= quote_chance_pct
+
+                if do_quote:
+                    chosen_quote_msg_id = pick_quote_target_msg_id(
+                        discussion_messages,
+                        seed_msg_id=int(seed_msg_id) if seed_msg_id else None,
+                        last_msg_id=int(reply_to_msg_id) if reply_to_msg_id else None,
+                        quote_target_mode=quote_target_mode,
+                        current_session_name=str(client_wrapper.session_name),
+                        pool_size=10,
+                    )
+                    send_reply_to = int(chosen_quote_msg_id) if chosen_quote_msg_id else None
+                    send_thread_top = None
+                else:
+                    send_reply_to = None
+                    send_thread_top = int(seed_msg_id) if seed_msg_id else None
+
+                try:
+                    sent_msg = await human_type_and_send(
+                        client_wrapper.client,
+                        chat_id,
+                        reply_text,
+                        reply_to_msg_id=send_reply_to,
+                        thread_top_msg_id=send_thread_top,
+                        split_mode="smart_ru_no_comma",
+                        humanization_settings=current_settings.get('humanization', {}),
+                    )
+                except Exception as send_exc:
+                    # MessageIdInvalidError или другие ошибки цитаты → retry без quote
+                    err_name = type(send_exc).__name__
+                    if "MessageId" in err_name or "Invalid" in err_name:
+                        logger.info(
+                            f"♻️ [{client_wrapper.session_name}] discussion send retry without quote: {err_name}"
+                        )
+                        try:
+                            sent_msg = await human_type_and_send(
+                                client_wrapper.client,
+                                chat_id,
+                                reply_text,
+                                reply_to_msg_id=None,
+                                thread_top_msg_id=int(seed_msg_id) if seed_msg_id else None,
+                                split_mode="smart_ru_no_comma",
+                                humanization_settings=current_settings.get('humanization', {}),
+                            )
+                        except Exception as retry_exc:
+                            logger.error(f"❌ discussion send failed even without quote: {retry_exc}")
+                            sent_msg = None
+                    else:
+                        raise
                 if sent_msg is None or getattr(sent_msg, "id", None) is None:
                     _record_account_failure(
                         client_wrapper.session_name,
@@ -852,10 +1094,51 @@ async def run_discussion_session(
                         pass
 
                 speaker_label = labels.get(client_wrapper.session_name, "Участник")
-                history.append({"speaker": speaker_label, "text": reply_text.strip()})
-                discussion_bot_texts.append(reply_text.strip())
+                discussion_messages.append(
+                    {
+                        "msg_id": int(msg_id) if msg_id else None,
+                        "text": reply_text.strip(),
+                        "speaker_session": str(client_wrapper.session_name),
+                        "speaker_label": speaker_label,
+                        "scene_number": scene_number,
+                        "kind": "bot",
+                        "ts": time.time(),
+                    }
+                )
                 last_speaker = speaker_label
                 last_sender_session = client_wrapper.session_name
+                # Сбрасываем «реакции подряд», т.к. был текстовый turn
+                consecutive_reactions_without_text = 0
+
+                # === Модуль C.2: digest routing ===
+                # Делаем сводку каждые N turn'ов, начиная с N-го (turn_idx считается с 0).
+                if (
+                    digest_every_n_turns > 0
+                    and turn_idx > 0
+                    and (turn_idx + 1) % digest_every_n_turns == 0
+                ):
+                    text_msgs_for_digest = [
+                        m for m in discussion_messages if (m or {}).get("text")
+                    ]
+                    if len(text_msgs_for_digest) >= digest_min_history:
+                        try:
+                            new_digest = await generate_digest(
+                                text_msgs_for_digest,
+                                scene_seed_text,
+                                current_settings,
+                                provider=digest_provider_setting,
+                            )
+                        except Exception as dig_exc:
+                            logger.debug(f"digest call failed: {type(dig_exc).__name__}: {dig_exc}")
+                            new_digest = None
+                        if new_digest:
+                            scene_digest_text = new_digest
+                            scene_digest_status = "fresh"
+                            logger.info(
+                                f"📜 [discussion] scene digest updated (turn {turn_idx + 1}/{total_turns}): {new_digest[:120]}"
+                            )
+                        else:
+                            scene_digest_status = "stale" if scene_digest_text else "missing"
     except asyncio.CancelledError:
         if session_id_int:
             try:
