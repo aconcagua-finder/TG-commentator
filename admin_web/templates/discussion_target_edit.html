@@ -335,7 +335,7 @@
               <div class="col-12 col-md-3">
                 <label class="form-label app-label">
                   <span class="app-label-text">Шанс цитаты (%)</span>
-                  {{ ui.tip("С какой вероятностью реплика бота будет reply на чужое сообщение. Остальные сообщения уходят в тред без цитаты. Первые 2 реплики сцены всегда цитируют seed (force-quote). 100 = старое поведение (лестница цитат). 0 = никогда не цитирует.") }}
+                  {{ ui.tip("С какой вероятностью реплика бота будет reply на чужое сообщение. Остальные сообщения уходят в тред без цитаты. Первая реплика каждой сцены всегда цитирует (визуальный якорь сцены), остальные — по этому шансу. 100 = всегда цитирует (старая лестница). 0 = только первая реплика сцены.") }}
                 </label>
                 <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="quote_chance_pct" value="{{ target.get('quote_chance_pct', 35) }}" />
               </div>
@@ -369,9 +369,9 @@
               <div class="col-12 col-md-3">
                 <label class="form-label app-label">
                   <span class="app-label-text">Шанс реакции (%)</span>
-                  {{ ui.tip("С какой вероятностью на каждом turn'е бот ставит реакцию на чьё-то предыдущее сообщение. 15 — натурально (примерно 1 реакция на 6 реплик).") }}
+                  {{ ui.tip("С какой вероятностью на каждом turn'е бот ставит реакцию на чьё-то предыдущее сообщение. 25 — натурально (примерно 1 реакция на 4 реплики).") }}
                 </label>
-                <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="reaction_chance_pct" value="{{ target.get('reaction_chance_pct', 15) }}" />
+                <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="reaction_chance_pct" value="{{ target.get('reaction_chance_pct', 25) }}" />
               </div>
               <div class="col-12 col-md-3">
                 <label class="form-label app-label">
@@ -400,7 +400,7 @@
               <div class="col-12 col-md-3">
                 <label class="form-label app-label">
                   <span class="app-label-text">Свёртка каждые N реплик</span>
-                  {{ ui.tip("Каждые N успешных текстовых turn'ов делается отдельный LLM-вызов: «летопись обсуждения». Свёрнутая сводка добавляется в промпт следующих реплик, чтобы боты понимали куда движется разговор. 0 = выключено. 5 — оптимально для длинных сцен.") }}
+                  {{ ui.tip("Периодичность «летописи» обсуждения. Для длинных сцен (turns ≥ N×1.5) — свёртка каждые N turn'ов ВНУТРИ сцены. Для коротких сцен — одна свёртка в КОНЦЕ каждой сцены. Сводка копится между сценами, чтобы боты понимали общий ход беседы. 0 = выключено.") }}
                 </label>
                 <input class="form-control" type="number" min="0" max="50" step="1" inputmode="numeric" name="digest_every_n_turns" value="{{ target.get('digest_every_n_turns', 5) }}" />
               </div>

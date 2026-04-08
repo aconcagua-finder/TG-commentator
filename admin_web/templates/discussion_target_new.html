@@ -220,7 +220,7 @@
             <div class="col-12 col-md-3">
               <label class="form-label app-label">
                 <span class="app-label-text">Шанс цитаты (%)</span>
-                {{ ui.tip("С какой вероятностью реплика бота будет reply на чужое сообщение. 100 = старая лестница цитат. 0 = никогда.") }}
+                {{ ui.tip("С какой вероятностью реплика бота будет reply. Первая реплика каждой сцены всегда цитирует (якорь сцены), остальные — по этому шансу. 100 = старая лестница. 0 = только первая реплика сцены.") }}
               </label>
               <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="quote_chance_pct" value="35" />
             </div>
@@ -253,9 +253,9 @@
             <div class="col-12 col-md-3">
               <label class="form-label app-label">
                 <span class="app-label-text">Шанс реакции (%)</span>
-                {{ ui.tip("С какой вероятностью на каждом turn'е бот ставит реакцию.") }}
+                {{ ui.tip("С какой вероятностью на каждом turn'е бот ставит реакцию. 25 — натурально.") }}
               </label>
-              <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="reaction_chance_pct" value="15" />
+              <input class="form-control" type="number" min="0" max="100" step="1" inputmode="numeric" name="reaction_chance_pct" value="25" />
             </div>
             <div class="col-12 col-md-3">
               <label class="form-label app-label">
@@ -278,7 +278,7 @@
             <div class="col-12 col-md-3">
               <label class="form-label app-label">
                 <span class="app-label-text">Свёртка каждые N реплик</span>
-                {{ ui.tip("Каждые N turn'ов делается LLM-вызов «летопись обсуждения» — сводка для контекста следующих реплик. 0 = выключено.") }}
+                {{ ui.tip("Периодичность «летописи» обсуждения. Для длинных сцен — свёртка каждые N turn'ов внутри сцены. Для коротких сцен — одна свёртка в конце каждой сцены. Сводка копится между сценами. 0 = выключено.") }}
               </label>
               <input class="form-control" type="number" min="0" max="50" step="1" inputmode="numeric" name="digest_every_n_turns" value="5" />
             </div>

@@ -177,7 +177,7 @@ async def discussions_new_submit(
     quote_chance_pct: str = Form("35"),
     quote_target_mode: str = Form("mixed"),
     reactions_enabled: Optional[str] = Form(None),
-    reaction_chance_pct: str = Form("15"),
+    reaction_chance_pct: str = Form("25"),
     reaction_instead_of_text_chance_pct: str = Form("30"),
     reaction_emojis: str = Form(""),
     digest_every_n_turns: str = Form("5"),
@@ -322,7 +322,7 @@ async def discussions_new_submit(
         "reaction_chance_pct": _parse_int_field(
             request,
             reaction_chance_pct,
-            default=15,
+            default=25,
             label="Театр: шанс реакции (%)",
             min_value=0,
             max_value=100,
@@ -825,7 +825,7 @@ async def discussion_target_edit_save(
     target["reaction_chance_pct"] = _parse_int_field(
         request,
         reaction_chance_pct,
-        default=int(target.get("reaction_chance_pct", 15) or 15),
+        default=int(target.get("reaction_chance_pct", 25) or 25),
         label="Театр: шанс реакции (%)",
         min_value=0,
         max_value=100,

@@ -477,6 +477,11 @@ async def run_discussion_session(
                     lines.append(f"{speaker}: {text}")
             return "\n".join(lines).strip()
 
+        # Летопись обсуждения — persistent между сценами, чтобы боты в сцене N
+        # видели свёрнутый контекст всех предыдущих сцен.
+        scene_digest_text: str = ""
+        scene_digest_status: str = "none"  # none | fresh-mid | fresh-eos | stale | missing
+
         for scene_number, scene in enumerate([{}, *extra_scenes], start=1):
             scene_title = str((scene or {}).get("title") or "").strip()
             scene_vector = _vector_for(scene)
@@ -666,16 +671,17 @@ async def run_discussion_session(
             digest_every_n_turns = _int_setting_from(scene, "digest_every_n_turns", 5, min_value=0, max_value=50)
             digest_min_history = _int_setting_from(scene, "digest_min_history", 4, min_value=2, max_value=50)
             digest_provider_setting = _str_setting_from(scene, "digest_provider", "default") or "default"
-            # Авто-выключение digest на коротких сценах: невыгодно если total_turns < every_n * 1.5
-            if digest_every_n_turns > 0 and total_turns < int(digest_every_n_turns * 1.5):
-                digest_every_n_turns = 0
+            # v1.1: digest больше не выключается на коротких сценах — для них работает
+            # режим end-of-scene (одна сводка после turn-loop сцены).
+            digest_mid_scene_enabled = (
+                digest_every_n_turns > 0 and total_turns >= int(digest_every_n_turns * 1.5)
+            )
 
             # Per-scene state for theater
             session_reacted_msg_ids: dict[str, set[int]] = {}
             consecutive_reactions_without_text = 0
             reactions_used_instead_of_text = 0
-            scene_digest_text: str = ""
-            scene_digest_status: str = "none"  # none | fresh | stale | missing
+            # scene_digest_text / scene_digest_status — объявлены выше цикла сцен, не сбрасываются.
 
             if start_delay_max > 0:
                 await asyncio.sleep(random.uniform(float(start_delay_min), float(start_delay_max)))
@@ -744,7 +750,7 @@ async def run_discussion_session(
                                     int(target_react_msg_id),
                                     emoji,
                                     session_name=cur_session,
-                                    min_interval_sec=10.0,
+                                    min_interval_sec=6.0,
                                 )
                                 if ok:
                                     session_reacted_msg_ids.setdefault(cur_session, set()).add(int(target_react_msg_id))
@@ -955,23 +961,16 @@ async def run_discussion_session(
                     )
                     continue
 
-                scene_tag = f"sc{scene_number}/{total_scenes}"
-                prompt_info_str = str(prompt_info or "").strip()
-                prompt_info_out = (f"{prompt_info_str} {scene_tag}").strip()
-                if scene_digest_status == "stale":
-                    prompt_info_out += " · digest=stale"
-                elif scene_digest_status == "missing":
-                    prompt_info_out += " · digest=missing"
-                elif scene_digest_status == "fresh":
-                    prompt_info_out += " · digest=fresh"
-
-                # === Модуль A: quote routing ===
-                # Force-quote первые 2 turn'а сцены чтобы визуально связать с seed/operator.
-                if turn_idx < 2:
+                # === Модуль A: quote routing (v1.1 soft force-quote) ===
+                # Force-quote только ПЕРВУЮ реплику сцены чтобы визуально связать с seed/operator.
+                # Остальные — по шансу, чтобы на коротких сценах (turns_max=2) не было лестницы.
+                is_force_quote = (turn_idx == 0)
+                if is_force_quote:
                     do_quote = True
                 else:
                     do_quote = random.randint(1, 100) <= quote_chance_pct
 
+                chosen_quote_msg_id: int | None = None
                 if do_quote:
                     chosen_quote_msg_id = pick_quote_target_msg_id(
                         discussion_messages,
@@ -986,6 +985,30 @@ async def run_discussion_session(
                 else:
                     send_reply_to = None
                     send_thread_top = int(seed_msg_id) if seed_msg_id else None
+
+                # Телеметрия цитирования в prompt_info
+                if is_force_quote:
+                    quote_tag = "q=f"
+                elif do_quote and chosen_quote_msg_id:
+                    quote_tag = f"q=q→{int(chosen_quote_msg_id)}"
+                elif do_quote:
+                    quote_tag = "q=q→?"
+                else:
+                    quote_tag = "q=n"
+
+                scene_tag = f"sc{scene_number}/{total_scenes}"
+                prompt_info_str = str(prompt_info or "").strip()
+                prompt_info_out = (f"{prompt_info_str} {scene_tag} {quote_tag}").strip()
+                if scene_digest_status == "stale":
+                    prompt_info_out += " · digest=stale"
+                elif scene_digest_status == "missing":
+                    prompt_info_out += " · digest=missing"
+                elif scene_digest_status == "fresh-mid":
+                    prompt_info_out += " · digest=fresh-mid"
+                elif scene_digest_status == "fresh-eos":
+                    prompt_info_out += " · digest=fresh-eos"
+                elif scene_digest_status == "fresh":
+                    prompt_info_out += " · digest=fresh"
 
                 try:
                     sent_msg = await human_type_and_send(
@@ -1110,10 +1133,11 @@ async def run_discussion_session(
                 # Сбрасываем «реакции подряд», т.к. был текстовый turn
                 consecutive_reactions_without_text = 0
 
-                # === Модуль C.2: digest routing ===
-                # Делаем сводку каждые N turn'ов, начиная с N-го (turn_idx считается с 0).
+                # === Модуль C.2: mid-scene digest ===
+                # Для длинных сцен: сводка каждые N turn'ов внутри сцены.
+                # Для коротких сцен работает end-of-scene digest ниже (после turn-loop).
                 if (
-                    digest_every_n_turns > 0
+                    digest_mid_scene_enabled
                     and turn_idx > 0
                     and (turn_idx + 1) % digest_every_n_turns == 0
                 ):
@@ -1129,16 +1153,45 @@ async def run_discussion_session(
                                 provider=digest_provider_setting,
                             )
                         except Exception as dig_exc:
-                            logger.debug(f"digest call failed: {type(dig_exc).__name__}: {dig_exc}")
+                            logger.debug(f"mid-scene digest failed: {type(dig_exc).__name__}: {dig_exc}")
                             new_digest = None
                         if new_digest:
                             scene_digest_text = new_digest
-                            scene_digest_status = "fresh"
+                            scene_digest_status = "fresh-mid"
                             logger.info(
-                                f"📜 [discussion] scene digest updated (turn {turn_idx + 1}/{total_turns}): {new_digest[:120]}"
+                                f"📜 [discussion] mid-scene digest (turn {turn_idx + 1}/{total_turns}): {new_digest[:120]}"
                             )
                         else:
                             scene_digest_status = "stale" if scene_digest_text else "missing"
+
+            # === Модуль C.2: end-of-scene digest (v1.1) ===
+            # После завершения turn-loop сцены делаем сводку, если:
+            # - digest включён (digest_every_n_turns > 0)
+            # - накоплено достаточно истории
+            # - mid-scene digest НЕ был сделан (иначе двойная свёртка на одну сцену)
+            if digest_every_n_turns > 0 and not digest_mid_scene_enabled:
+                text_msgs_all = [m for m in discussion_messages if (m or {}).get("text")]
+                if len(text_msgs_all) >= digest_min_history:
+                    # Берём последние 8+ реплик чтобы захватить 1-2 последние сцены
+                    context_tail = text_msgs_all[-max(int(digest_min_history), 8):]
+                    try:
+                        eos_digest = await generate_digest(
+                            context_tail,
+                            scene_seed_text,
+                            current_settings,
+                            provider=digest_provider_setting,
+                        )
+                    except Exception as dig_exc:
+                        logger.debug(f"end-of-scene digest failed: {type(dig_exc).__name__}: {dig_exc}")
+                        eos_digest = None
+                    if eos_digest:
+                        scene_digest_text = eos_digest
+                        scene_digest_status = "fresh-eos"
+                        logger.info(
+                            f"📜 [discussion] end-of-scene digest (scene {scene_number}/{total_scenes}): {eos_digest[:120]}"
+                        )
+                    else:
+                        scene_digest_status = "stale" if scene_digest_text else "missing"
     except asyncio.CancelledError:
         if session_id_int:
             try:
