@@ -440,13 +440,21 @@
               </div>
             </div>
             <div class="text-muted small mb-2">При повторном вступлении комментатор будет временно остановлен и запущен снова (если он сейчас работает).</div>
+            {% set target_op_session = target.get('operator_session_name','') %}
+            {% if target_op_session %}
+              <div class="alert alert-info py-1 px-2 small mb-2 mb-2">
+                <i class="bi bi-info-circle me-1" aria-hidden="true"></i>
+                Оператор сцены 1 — <span class="mono">{{ target_op_session }}</span>. Он сам не будет отвечать в этой сцене как бот (исключается автоматически), даже если его галочка отмечена.
+              </div>
+            {% endif %}
 			                    <div class="row g-2">
 			                      {% for a in accounts %}
+			                        {% set is_scene1_operator = (a.session_name == target_op_session) %}
 			                        <div class="col-12 col-md-4">
-				                          <div class="form-check">
-				                            <input class="form-check-input js-account-checkbox" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %}/>
-				                            <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
-				                            <a class="text-muted ms-2" href="/accounts/{{ a.session_name }}" target="_blank" rel="noopener" aria-label="Открыть аккаунт" title="Открыть аккаунт">
+				                          <div class="form-check" {% if is_scene1_operator %}style="pointer-events: none; opacity: 0.55;"{% endif %}>
+				                            <input class="form-check-input js-account-checkbox" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" {% if a.session_name in assigned %}checked{% endif %} />
+				                            <label class="form-check-label mono {% if is_scene1_operator %}text-muted{% endif %}" for="acc_{{ a.session_name }}">{{ a.session_name }}{% if is_scene1_operator %} <span class="badge text-bg-secondary ms-1" title="Оператор сцены 1 — исключается из участников сцены автоматически">оператор сцены 1</span>{% endif %}</label>
+				                            <a class="text-muted ms-2" href="/accounts/{{ a.session_name }}" target="_blank" rel="noopener" aria-label="Открыть аккаунт" title="Открыть аккаунт" style="pointer-events: auto;">
 				                              <i class="bi bi-box-arrow-up-right" aria-hidden="true"></i>
 				                            </a>
 				                          </div>
@@ -614,8 +622,13 @@
 		                              <div class="col-12">
 		                                <label class="form-label app-label mb-1">
 		                                  <span class="app-label-text">Аккаунты‑участники сцены</span>
-		                                  {{ ui.tip("По умолчанию выбраны как в цели. Можно переопределить состав участников только для этой сцены.") }}
+		                                  {{ ui.tip("По умолчанию выбраны как в цели. Можно переопределить состав участников только для этой сцены. Оператор сцены будет автоматически исключён из участников — он не отвечает сам на свои реплики.") }}
 		                                </label>
+
+		                                <div class="alert alert-info py-1 px-2 small mb-2">
+		                                  <i class="bi bi-info-circle me-1" aria-hidden="true"></i>
+		                                  Оператор этой сцены автоматически исключён из списка участников — он не отвечает сам на свои реплики как бот.
+		                                </div>
 
 		                                {% set saccts = sc.get('assigned_accounts') %}
 		                                {% set scene_selected = saccts if saccts else assigned %}
@@ -753,6 +766,10 @@
 		                            <label class="form-label app-label mb-1">
 		                              <span class="app-label-text">Аккаунты‑участники сцены</span>
 		                            </label>
+		                            <div class="alert alert-info py-1 px-2 small mb-2">
+		                              <i class="bi bi-info-circle me-1" aria-hidden="true"></i>
+		                              Оператор этой сцены автоматически исключён из списка участников — он не отвечает сам на свои реплики как бот.
+		                            </div>
 		                            <div class="d-flex align-items-center gap-3 flex-wrap mb-1">
 		                              <div class="form-check">
 		                                <input class="form-check-input js-scene-select-all" type="checkbox" id="scene_select_all___SCENE_ID__" data-scene-id="__SCENE_ID__" data-scene-select-all-template="1" />
@@ -931,14 +948,64 @@
 			        setAccountLink(link, chosen || getTargetOperatorSession());
 			      };
 
+			      // Визуально блокирует чекбокс участника, который сейчас является оператором
+			      // этой сцены. НЕ используем disabled — иначе значение пропадёт при сохранении
+			      // формы. Используем pointer-events:none + opacity + badge «оператор сцены».
+			      // Если сцена использует "(как в цели)" — блокируется target-level оператор.
+			      const applySceneOperatorLockoutUi = (row) => {
+			        if (!row) return;
+			        const select = row.querySelector(".js-scene-operator-select");
+			        const chosen = String(select?.value || "").trim() || getTargetOperatorSession();
+			        const boxes = Array.from(row.querySelectorAll(".js-scene-account-checkbox"));
+			        boxes.forEach((b) => {
+			          const sess = String(b.value || "").trim();
+			          const wrap = b.closest(".form-check");
+			          const label = row.querySelector(`label[for="${b.id}"]`);
+			          const isLocked = Boolean(chosen) && sess === chosen;
+			          if (isLocked) {
+			            b.dataset.lockedByOperator = "1";
+			            if (wrap) {
+			              wrap.style.pointerEvents = "none";
+			              wrap.style.opacity = "0.55";
+			            }
+			            if (label) {
+			              label.classList.add("text-muted");
+			              if (!label.querySelector(".badge-operator-lock")) {
+			                const badge = document.createElement("span");
+			                badge.className = "badge text-bg-secondary ms-1 badge-operator-lock";
+			                badge.textContent = "оператор сцены";
+			                badge.title = "Оператор этой сцены — исключается из участников автоматически";
+			                label.appendChild(badge);
+			              }
+			            }
+			          } else if (b.dataset.lockedByOperator === "1") {
+			            delete b.dataset.lockedByOperator;
+			            if (wrap) {
+			              wrap.style.pointerEvents = "";
+			              wrap.style.opacity = "";
+			            }
+			            if (label) {
+			              label.classList.remove("text-muted");
+			              const badge = label.querySelector(".badge-operator-lock");
+			              if (badge) badge.remove();
+			            }
+			          }
+			        });
+			        updateSceneParticipantsUi(row);
+			      };
+
 			      const initSceneOperator = (row) => {
 			        if (!row) return;
 			        const select = row.querySelector(".js-scene-operator-select");
 			        if (select && !select.dataset.operatorLinkInit) {
 			          select.dataset.operatorLinkInit = "1";
-			          select.addEventListener("change", () => updateSceneOperatorLink(row));
+			          select.addEventListener("change", () => {
+			            updateSceneOperatorLink(row);
+			            applySceneOperatorLockoutUi(row);
+			          });
 			        }
 			        updateSceneOperatorLink(row);
+			        applySceneOperatorLockoutUi(row);
 			      };
 
 		      const genSceneId = () => {
@@ -1117,7 +1184,10 @@
 	        operatorSelect.addEventListener("change", () => {
 	          updateTargetOperatorLink();
 	          if (scenesContainer) {
-	            Array.from(scenesContainer.querySelectorAll("[data-scene-row]")).forEach((row) => updateSceneOperatorLink(row));
+	            Array.from(scenesContainer.querySelectorAll("[data-scene-row]")).forEach((row) => {
+	              updateSceneOperatorLink(row);
+	              applySceneOperatorLockoutUi(row);
+	            });
 	          }
 	        });
 	      }

@@ -42,7 +42,7 @@
             <span class="app-label-text">Оператор</span>
             {{ ui.tip("Аккаунт, с которого человек отправляет фразу‑старт. Только его сообщения могут запускать обсуждение.") }}
           </label>
-          <select class="form-select" name="operator_session_name" required>
+          <select class="form-select" name="operator_session_name" id="operator_session_name_select" required>
             <option value="" selected disabled>Выберите аккаунт…</option>
             {% for a in accounts %}
               <option value="{{ a.session_name }}">{{ a.session_name }}</option>
@@ -299,7 +299,11 @@
         </div>
 
         <div class="col-12">
-          <h2 class="h6 mt-2 mb-2">Аккаунты‑участники</h2>
+          <h2 class="h6 mt-2 mb-2">Аккаунты‑участники (сцена 1)</h2>
+          <div class="alert alert-info py-1 px-2 small mb-2">
+            <i class="bi bi-info-circle me-1" aria-hidden="true"></i>
+            Оператор цели автоматически исключается из участников сцены 1 — он не отвечает сам на свои реплики как бот. Его галочка подсвечена серым ниже.
+          </div>
           {% set assigned = [] %}
           {% set all_selected = false %}
           <div class="d-flex align-items-center gap-3 flex-wrap mb-2">
@@ -312,7 +316,7 @@
           <div class="row g-2">
             {% for a in accounts %}
               <div class="col-12 col-md-4">
-                <div class="form-check">
+                <div class="form-check" data-account-session="{{ a.session_name }}">
                   <input class="form-check-input js-account-checkbox" type="checkbox" name="assigned_accounts" value="{{ a.session_name }}" id="acc_{{ a.session_name }}" />
                   <label class="form-check-label mono" for="acc_{{ a.session_name }}">{{ a.session_name }}</label>
                 </div>
@@ -519,6 +523,49 @@
       };
       seed.addEventListener("input", maybeEnable);
       maybeEnable();
+    })();
+
+    // Lockout target-operator в блоке участников (visual-only, runtime всё равно его исключает)
+    (() => {
+      const opSelect = document.getElementById("operator_session_name_select");
+      if (!opSelect) return;
+      const applyLockout = () => {
+        const chosen = String(opSelect.value || "").trim();
+        Array.from(document.querySelectorAll(".js-account-checkbox")).forEach((b) => {
+          const sess = String(b.value || "").trim();
+          const wrap = b.closest(".form-check");
+          const label = document.querySelector(`label[for="${b.id}"]`);
+          const isLocked = Boolean(chosen) && sess === chosen;
+          if (isLocked) {
+            if (wrap) {
+              wrap.style.pointerEvents = "none";
+              wrap.style.opacity = "0.55";
+            }
+            if (label) {
+              label.classList.add("text-muted");
+              if (!label.querySelector(".badge-operator-lock")) {
+                const badge = document.createElement("span");
+                badge.className = "badge text-bg-secondary ms-1 badge-operator-lock";
+                badge.textContent = "оператор цели";
+                badge.title = "Оператор цели — исключается из участников сцены 1 автоматически";
+                label.appendChild(badge);
+              }
+            }
+          } else {
+            if (wrap) {
+              wrap.style.pointerEvents = "";
+              wrap.style.opacity = "";
+            }
+            if (label) {
+              label.classList.remove("text-muted");
+              const badge = label.querySelector(".badge-operator-lock");
+              if (badge) badge.remove();
+            }
+          }
+        });
+      };
+      opSelect.addEventListener("change", applyLockout);
+      applyLockout();
     })();
 
     window.__initDiscussionAutoresize = (root) => {

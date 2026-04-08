@@ -364,7 +364,20 @@ async def run_discussion_session(
                 except Exception:
                     pass
 
-        def _eligible_clients_for(assigned_list: list[str]) -> list:
+        def _eligible_clients_for(
+            assigned_list: list[str],
+            *,
+            exclude_session_name: str | None = None,
+        ) -> list:
+            """Отобрать активных клиентов-ботов, готовых участвовать в сцене.
+
+            v1.2: исключает из списка оператора ТЕКУЩЕЙ сцены
+            (`exclude_session_name`). Target-level operator больше не исключается
+            глобально — он может быть обычным участником в сценах, где его
+            переопределяет другой scene-level operator. Если exclude_session_name
+            не задан — используется target-level operator как фолбэк.
+            """
+            to_exclude = str(exclude_session_name or operator_session or "").strip()
             eligible: list = []
             for client_wrapper in list(active_clients.values()):
                 session_name = str(getattr(client_wrapper, "session_name", "") or "").strip()
@@ -372,7 +385,7 @@ async def run_discussion_session(
                     continue
                 if session_name in excluded_sessions:
                     continue
-                if operator_session and session_name == operator_session:
+                if to_exclude and session_name == to_exclude:
                     continue
                 acc_conf = account_by_session.get(session_name)
                 if acc_conf and is_bot_awake(acc_conf):
@@ -485,6 +498,17 @@ async def run_discussion_session(
             scene_vector = _vector_for(scene)
             assigned = _assigned_accounts_for(scene)
 
+            # Определяем оператора ТЕКУЩЕЙ сцены до фильтрации eligible.
+            # Сцена 1 всегда использует target-level operator.
+            # Сцены 2+ могут переопределить через scene.operator_session_name.
+            if scene_number == 1:
+                current_scene_operator = operator_session
+            else:
+                current_scene_operator = (
+                    str((scene or {}).get("operator_session_name") or "").strip()
+                    or operator_session
+                )
+
             if not assigned:
                 logger.info(f"⏭ [discussion] чат {chat_bare_id}: нет assigned_accounts — обсуждение не запускаю")
                 if session_id_int and scene_number == 1:
@@ -499,7 +523,14 @@ async def run_discussion_session(
                         pass
                 return
 
-            eligible_clients = _eligible_clients_for(assigned)
+            # Логируем если оператор сцены был случайно в assigned — runtime его уберёт
+            if current_scene_operator and current_scene_operator in assigned:
+                logger.info(
+                    f"ℹ️ [discussion] сцена {scene_number}/{total_scenes}: оператор '{current_scene_operator}' "
+                    f"был в assigned_accounts, исключён из участников сцены автоматически"
+                )
+
+            eligible_clients = _eligible_clients_for(assigned, exclude_session_name=current_scene_operator)
             if not eligible_clients:
                 if scene_number == 1:
                     logger.info(f"⏭ [discussion] чат {chat_bare_id}: нет доступных аккаунтов‑участников")
@@ -541,7 +572,7 @@ async def run_discussion_session(
                     logger.info(f"⏭ [discussion] сцена {scene_number}/{total_scenes} пропущена: пустая фраза оператора")
                     continue
 
-                scene_operator = str((scene or {}).get("operator_session_name") or "").strip() or operator_session
+                scene_operator = current_scene_operator
                 if not scene_operator:
                     logger.warning(
                         f"⚠️ [discussion] сцена {scene_number}/{total_scenes}: не задан operator_session_name — остановка"
