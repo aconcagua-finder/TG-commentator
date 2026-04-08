@@ -140,6 +140,7 @@ async def targets_new_submit(
     accounts_per_post_max: str = Form("0"),
     daily_comment_limit: str = Form("50"),
     ai_provider: str = Form("default"),
+    vector_prompt: str = Form(""),
     min_word_count: str = Form("0"),
     min_post_interval_mins: str = Form("0"),
     min_meaningful_words: str = Form("2"),
@@ -191,6 +192,7 @@ async def targets_new_submit(
             request, daily_comment_limit, default=50, label="Лимит комментариев/сутки", min_value=0
         ),
         "ai_provider": ai_provider,
+        "vector_prompt": (vector_prompt or "").strip(),
         "date_added": datetime.now(timezone.utc).isoformat(),
         "min_word_count": _parse_int_field(request, min_word_count, default=0, label="Мин. слов", min_value=0),
         "min_post_interval_mins": _parse_int_field(
@@ -240,6 +242,7 @@ async def target_edit_save(
     chat_id: str,
     ai_enabled: Optional[str] = Form(None),
     ai_provider: str = Form("default"),
+    vector_prompt: str = Form(""),
     slow_join_interval_mins: str = Form(""),
     initial_comment_delay: str = Form(""),
     delay_between_accounts: str = Form(""),
@@ -270,6 +273,7 @@ async def target_edit_save(
 
     target["ai_enabled"] = bool(ai_enabled)
     target["ai_provider"] = ai_provider
+    target["vector_prompt"] = (vector_prompt or "").strip()
 
     if slow_join_interval_mins.strip():
         target["slow_join_interval_mins"] = _parse_int_field(

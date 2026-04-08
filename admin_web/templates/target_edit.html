@@ -69,6 +69,14 @@
                     </div>
                     <div class="text-muted small">Если выключить — бот не будет писать в этот чат вообще (ни комментарии к постам, ни ответы в обсуждении).</div>
                   </div>
+
+                  <div class="col-12">
+                    <label class="form-label app-label" for="vector_prompt">
+                      <span class="app-label-text">Вектор / тема (необязательно)</span>
+                      {{ ui.tip("Подмешивается в системный промпт ВСЕХ генераций для этого чата (комментарии к постам и ответы на сообщения). Можно перечислить ключевые объекты/модели/сервисы/проблемы — модель будет естественно их упоминать. Пусто = только базовая роль и общие правила.") }}
+                    </label>
+                    <textarea class="form-control" id="vector_prompt" name="vector_prompt" rows="4" placeholder="Например: фокус на ИИ-инструментах для маркетинга, упоминай Claude, ChatGPT, Perplexity по месту…">{{ target.get('vector_prompt','') }}</textarea>
+                  </div>
                 </div>
               </div>
             </div>

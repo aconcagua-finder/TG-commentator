@@ -138,6 +138,13 @@
                       <option value="deepseek">DeepSeek</option>
                     </select>
                   </div>
+                  <div class="col-12">
+                    <label class="form-label app-label" for="vector_prompt_new">
+                      <span class="app-label-text">Вектор / тема (необязательно)</span>
+                      {{ ui.tip("Подмешивается в системный промпт ВСЕХ генераций для этого чата (комментарии к постам и ответы). Можно перечислить ключевые объекты/модели/сервисы — модель будет естественно их упоминать. Пусто = только базовая роль и общие правила.") }}
+                    </label>
+                    <textarea class="form-control" id="vector_prompt_new" name="vector_prompt" rows="3" placeholder="Например: фокус на ИИ-инструментах для маркетинга, упоминай Claude, ChatGPT, Perplexity по месту…"></textarea>
+                  </div>
                   <div class="col-12 col-md-3">
                     <label class="form-label app-label">
                       <span class="app-label-text">Мин. слов (фильтр)</span>

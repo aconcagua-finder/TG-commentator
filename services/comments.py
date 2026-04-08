@@ -112,6 +112,31 @@ async def generate_comment(
             "Не обязано проявляться в каждом ответе. Не противоречь теме беседы и не выдумывай факты.\n\n"
         )
 
+    # Per-target кастомный промпт: общий "default" для чата + опциональный персональный для конкретного session_name.
+    # Хранится в target.prompts ({"default": "...", "<session_name>": "..."}). Редактируется на странице
+    # /targets/{chat_id}/prompts. Персональный имеет приоритет; если нет — берём default.
+    target_prompts_map = {}
+    try:
+        raw_prompts = (target_chat or {}).get("prompts")
+        if isinstance(raw_prompts, dict):
+            target_prompts_map = raw_prompts
+    except Exception:
+        target_prompts_map = {}
+
+    target_default_prompt = str(target_prompts_map.get("default") or "").strip()
+    target_personal_prompt = str(target_prompts_map.get(str(session_name) or "") or "").strip()
+
+    if target_default_prompt:
+        system_prompt += (
+            "ДОПОЛНИТЕЛЬНЫЕ ИНСТРУКЦИИ ДЛЯ ЭТОГО ЧАТА:\n"
+            f"{target_default_prompt}\n\n"
+        )
+    if target_personal_prompt:
+        system_prompt += (
+            "ПЕРСОНАЛЬНЫЕ ИНСТРУКЦИИ ДЛЯ ЭТОГО АККАУНТА В ЭТОМ ЧАТЕ (приоритет над общими):\n"
+            f"{target_personal_prompt}\n\n"
+        )
+
     # Глобальный антиповтор: подмешиваем недавние ответы других наших аккаунтов в system_prompt,
     # чтобы модель не повторяла яркие формулировки и опенинги между постами/обсуждениями.
     if recent_messages:
