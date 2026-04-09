@@ -70,11 +70,18 @@ async def human_type_and_send(
     original_reply_id = reply_to_msg_id
 
     async def _send_to_thread_without_quote(part_text: str, top_id: int):
+        # Для комментария в тред поста канала InputReplyToMessage требует
+        # валидный reply_to_msg_id (reply_to_msg_id=0 Telegram молча игнорирует и
+        # отправляет сообщение как обычное без привязки к треду — из-за этого
+        # комментарии «без цитаты» ранее терялись вместо появления под постом).
+        # Передаём reply_to_msg_id = top_id: это корректная форма reply на корень
+        # дискуссионного треда. В UI комментариев под постом плашка-цитата не
+        # показывается — сам пост уже отображён сверху.
         peer = await _run_with_soft_timeout(client.get_input_entity(chat_id), SEND_ATTEMPT_TIMEOUT_SECONDS)
         req = functions.messages.SendMessageRequest(
             peer=peer,
             message=part_text,
-            reply_to=types.InputReplyToMessage(reply_to_msg_id=0, top_msg_id=int(top_id)),
+            reply_to=types.InputReplyToMessage(reply_to_msg_id=int(top_id), top_msg_id=int(top_id)),
             random_id=helpers.generate_random_long(),
         )
         res = await _run_with_soft_timeout(client(req), SEND_ATTEMPT_TIMEOUT_SECONDS)
