@@ -636,6 +636,10 @@ async def process_new_post(
                     thread_top_msg_id=thread_top_id,
                     split_mode="smart_ru_no_comma",
                     humanization_settings=current_settings.get('humanization', {}),
+                    # Комментарии к постам канала всегда идут в linked-группу
+                    # как тред поста — нужен корректный reply header,
+                    # иначе no-quote комментарии не попадают под пост.
+                    is_channel_thread=True,
                 )
                 any_comment_sent = True
                 me = await client_wrapper.client.get_me()

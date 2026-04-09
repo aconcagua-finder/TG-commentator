@@ -256,6 +256,22 @@ async def run_discussion_session(
         operator_session = str(target.get("operator_session_name") or "").strip()
         base_vector = str(target.get("vector_prompt") or "").strip()
 
+        # Дискуссия крутится в linked-группе канала, если у таргета
+        # linked_chat_id отличается от chat_id (канала). В таком случае
+        # seed_msg_id — это ID корня дискуссионного треда поста, и для
+        # no-quote реплик нужно отправлять SendMessageRequest с
+        # reply_to_msg_id=top_id, чтобы сообщение оставалось в треде.
+        # В обычных группах (chat_id == linked_chat_id) seed — это просто
+        # сообщение в чате, и «без цитаты» означает отправку без reply.
+        try:
+            _t_main_id = str(target.get("chat_id") or "").strip()
+            _t_linked_id = str(target.get("linked_chat_id") or "").strip()
+            _target_is_channel_thread = bool(
+                _t_main_id and _t_linked_id and _t_main_id != _t_linked_id
+            )
+        except Exception:
+            _target_is_channel_thread = False
+
         extra_scenes_raw = target.get("scenes")
         extra_scenes: list[dict] = []
         if isinstance(extra_scenes_raw, list):
@@ -1052,6 +1068,7 @@ async def run_discussion_session(
                         thread_top_msg_id=send_thread_top,
                         split_mode="smart_ru_no_comma",
                         humanization_settings=current_settings.get('humanization', {}),
+                        is_channel_thread=_target_is_channel_thread,
                     )
                 except Exception as send_exc:
                     # MessageIdInvalidError или другие ошибки цитаты → retry без quote
@@ -1069,6 +1086,7 @@ async def run_discussion_session(
                                 thread_top_msg_id=int(seed_msg_id) if seed_msg_id else None,
                                 split_mode="smart_ru_no_comma",
                                 humanization_settings=current_settings.get('humanization', {}),
+                                is_channel_thread=_target_is_channel_thread,
                             )
                         except Exception as retry_exc:
                             logger.error(f"❌ discussion send failed even without quote: {retry_exc}")

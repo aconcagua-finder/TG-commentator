@@ -27,6 +27,7 @@ async def human_type_and_send(
     split_mode: Literal["legacy", "smart_ru_no_comma", "off"] = "legacy",
     *,
     humanization_settings: dict | None = None,
+    is_channel_thread: bool = False,
 ):
     """Send a message with typing simulation and optional text humanization.
 
@@ -35,6 +36,16 @@ async def human_type_and_send(
     humanization_settings : dict | None
         The ``current_settings.get('humanization', {})`` dict.
         When *None* an empty dict is used (no transformations / no splitting).
+    is_channel_thread : bool
+        When *True* and the call provides ``thread_top_msg_id`` without a
+        quoted ``reply_to_msg_id``, the message is delivered as a comment
+        attached to the discussion thread of a channel post (i.e. the chat
+        is a linked discussion group of a broadcast channel). This is the
+        only mode where a reply header with ``top_msg_id`` is added — in
+        plain groups the same "no-quote" path just sends the message without
+        any reply, matching the pre-fix behaviour so autonomous discussions
+        in ordinary chats don't suddenly acquire a visible quote stripe on
+        every reply.
     """
     if not text:
         return
@@ -69,14 +80,15 @@ async def human_type_and_send(
     last_msg = None
     original_reply_id = reply_to_msg_id
 
-    async def _send_to_thread_without_quote(part_text: str, top_id: int):
-        # Для комментария в тред поста канала InputReplyToMessage требует
-        # валидный reply_to_msg_id (reply_to_msg_id=0 Telegram молча игнорирует и
-        # отправляет сообщение как обычное без привязки к треду — из-за этого
-        # комментарии «без цитаты» ранее терялись вместо появления под постом).
-        # Передаём reply_to_msg_id = top_id: это корректная форма reply на корень
-        # дискуссионного треда. В UI комментариев под постом плашка-цитата не
-        # показывается — сам пост уже отображён сверху.
+    async def _send_to_channel_thread(part_text: str, top_id: int):
+        # Комментарий в тред поста канала. InputReplyToMessage требует
+        # валидный reply_to_msg_id: передача reply_to_msg_id=0 приводит к
+        # тому, что Telegram молча игнорирует reply header и отправляет
+        # сообщение как обычное в linked-группу, минуя комментарии под
+        # постом. Передаём reply_to_msg_id = top_id — корректная форма
+        # reply на корень дискуссионного треда. В UI комментариев под
+        # постом плашка-цитата не показывается, так как сам пост уже
+        # отображён сверху.
         peer = await _run_with_soft_timeout(client.get_input_entity(chat_id), SEND_ATTEMPT_TIMEOUT_SECONDS)
         req = functions.messages.SendMessageRequest(
             peer=peer,
@@ -113,16 +125,24 @@ async def human_type_and_send(
             await asyncio.sleep(typing_time)
 
         try:
-            if original_reply_id is None and thread_top_msg_id:
+            if original_reply_id is None and thread_top_msg_id and is_channel_thread:
+                # Канал-тред: нужно попасть в комментарии под постом без
+                # видимой цитаты — отдельный SendMessageRequest с корректным
+                # reply_to_msg_id = top_id (см. _send_to_channel_thread).
                 try:
-                    last_msg = await _send_to_thread_without_quote(part, int(thread_top_msg_id))
+                    last_msg = await _send_to_channel_thread(part, int(thread_top_msg_id))
                 except Exception:
-                    # Fallback to plain reply to the thread root (may show quote, but stays in thread).
+                    # Fallback: обычный reply на корень — плашка будет видна,
+                    # но сообщение останется в треде поста.
                     last_msg = await _run_with_soft_timeout(
                         client.send_message(chat_id, part, reply_to=int(thread_top_msg_id)),
                         SEND_ATTEMPT_TIMEOUT_SECONDS,
                     )
             else:
+                # Обычный путь: reply на конкретное сообщение (если задано)
+                # или отправка без reply. Для дискуссий в простых группах
+                # thread_top_msg_id игнорируется — «без цитаты» означает
+                # буквально сообщение в общей ленте чата.
                 last_msg = await _run_with_soft_timeout(
                     client.send_message(chat_id, part, reply_to=original_reply_id),
                     SEND_ATTEMPT_TIMEOUT_SECONDS,
