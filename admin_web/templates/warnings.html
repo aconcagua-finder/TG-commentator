@@ -100,19 +100,19 @@
       <h2 class="h5 mb-3">Решённые предупреждения</h2>
       <div class="list-group">
         {% for w in resolved_warnings %}
-          <div class="list-group-item bg-light text-secondary">
+          <div class="list-group-item" style="opacity:.7">
             <div class="d-flex align-items-center gap-2 mb-1">
               <span class="badge text-bg-secondary">{{ w.get('level','warning') }}</span>
-              <strong>{{ w.get('title','') }}</strong>
+              <strong class="text-body">{{ w.get('title','') }}</strong>
             </div>
             {% if w.get('detail_lines') %}
               {% for line in w.get('detail_lines') %}
-                <div class="small text-muted">{{ line }}</div>
+                <div class="small text-body-secondary">{{ line }}</div>
               {% endfor %}
             {% elif w.get('detail') %}
-              <div class="small text-muted">{{ w.get('detail') }}</div>
+              <div class="small text-body-secondary">{{ w.get('detail') }}</div>
             {% endif %}
-            <div class="small mt-2">
+            <div class="small text-body-secondary mt-2">
               {{ w.get('created_at')|human_dt }} → {{ w.get('resolved_at')|human_dt }}
             </div>
           </div>
