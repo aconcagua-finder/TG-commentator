@@ -1473,11 +1473,14 @@ def _collect_warnings_for_scope(
                 "detail_lines": [
                     f"Канал: {target_label}",
                     f"Ошибка: {err}",
-                    "Нужно перевступить — нажмите «Вступить» на странице цели.",
                 ],
                 "session_name": sess,
                 "key": wkey,
-                "action": {"label": "Открыть аккаунт", "url": f"/accounts/{quote(sess)}"},
+                "action": {
+                    "label": "Перевступить все",
+                    "url": "/health-check/rejoin-stale",
+                    "method": "post",
+                },
             })
     except Exception:
         pass

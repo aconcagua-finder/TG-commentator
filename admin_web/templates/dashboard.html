@@ -82,6 +82,13 @@
         <div class="d-flex align-items-center gap-1">
           <i class="bi bi-x-circle text-danger"></i>
           <span class="small">Вступления: {% if js %}<span class="text-danger fw-semibold">{{ js }} потеряно</span>{% endif %}{% if js and jf %}, {% endif %}{% if jf %}<span class="text-warning fw-semibold">{{ jf }} ошибок</span>{% endif %}</span>
+          {% if js > 0 %}
+          <form method="post" action="/health-check/rejoin-stale" class="d-inline ms-1">
+            <button class="btn btn-sm btn-outline-danger py-0 px-1" type="submit" style="font-size:.75rem" title="Перевступить потерянные аккаунты">
+              <i class="bi bi-arrow-repeat"></i> Перевступить
+            </button>
+          </form>
+          {% endif %}
         </div>
         {% endif %}
         {# Warnings #}

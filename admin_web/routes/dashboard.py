@@ -14,6 +14,7 @@ from admin_web.helpers import (
     _active_project_id,
     _filter_by_project,
     _filter_accounts_by_project,
+    _update_join_status,
     _db_connect,
     _collect_warnings,
     _collect_warnings_for_scope,
@@ -231,6 +232,131 @@ async def warnings_bulk_dismiss(request: Request):
     _mark_warning_keys_dismissed(keys_to_dismiss)
     _flash(request, "success", f"Скрыто предупреждений: {len(keys_to_dismiss)}.")
     return _redirect("/warnings")
+
+
+@router.post("/health-check/rejoin-stale")
+async def rejoin_stale(request: Request):
+    """Re-join all accounts that have stale join_status."""
+    import asyncio
+    from admin_web.telethon_utils import (
+        _attempt_join_target,
+        _telethon_credentials,
+        _resolve_account_session,
+        _resolve_account_credentials,
+        _resolve_account_proxy,
+        device_kwargs,
+    )
+    from services.connection import _record_account_failure
+
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    accounts, _ = _load_accounts()
+    accounts = _filter_accounts_by_project(accounts, project_id)
+    all_targets = _filter_by_project(settings.get("targets") or [], project_id)
+
+    # Build target lookup by chat_id and linked_chat_id
+    target_by_id: Dict[str, dict] = {}
+    for t in all_targets:
+        for key in ("chat_id", "linked_chat_id"):
+            tid = str(t.get(key) or "").strip()
+            if tid:
+                target_by_id[tid] = t
+
+    # Get stale rows
+    with _db_connect() as conn:
+        stale_rows = conn.execute(
+            "SELECT session_name, target_id FROM join_status WHERE status = 'stale'"
+        ).fetchall()
+
+    if not stale_rows:
+        _flash(request, "info", "Нет аккаунтов для перевступления.")
+        return _redirect("/")
+
+    api_id_default, api_hash_default = _telethon_credentials()
+    blocked = {"banned", "frozen", "limited", "human_check", "unauthorized", "missing_session", "unavailable"}
+
+    total_ok = 0
+    total_fail = 0
+    processed_sessions: set = set()
+
+    # Group by session_name to reuse connection
+    from collections import defaultdict
+    by_session: Dict[str, List[str]] = defaultdict(list)
+    for row in stale_rows:
+        by_session[row["session_name"]].append(row["target_id"])
+
+    for session_name, target_ids in by_session.items():
+        acc = next((a for a in accounts if a.get("session_name") == session_name), None)
+        if not acc:
+            total_fail += len(target_ids)
+            continue
+        status = str(acc.get("status") or "active").lower().strip()
+        if status in blocked:
+            total_fail += len(target_ids)
+            continue
+        session = _resolve_account_session(acc)
+        if not session:
+            total_fail += len(target_ids)
+            continue
+
+        api_id, api_hash = _resolve_account_credentials(acc, api_id_default, api_hash_default)
+        proxy_tuple = _resolve_account_proxy(acc)
+        from telethon import TelegramClient
+        client = TelegramClient(session, api_id, api_hash, proxy=proxy_tuple, **device_kwargs(acc))
+
+        try:
+            await asyncio.wait_for(client.connect(), timeout=15.0)
+            if not await asyncio.wait_for(client.is_user_authorized(), timeout=15.0):
+                for tid in target_ids:
+                    _update_join_status(session_name, tid, "failed", last_error="unauthorized")
+                total_fail += len(target_ids)
+                continue
+
+            for tid in target_ids:
+                target = target_by_id.get(tid)
+                if not target:
+                    _update_join_status(session_name, tid, "failed", last_error="target_not_found")
+                    total_fail += 1
+                    continue
+                try:
+                    joined, last_error, last_method = await _attempt_join_target(
+                        client, session_name, target, tid
+                    )
+                    if joined:
+                        _update_join_status(session_name, tid, "joined")
+                        total_ok += 1
+                    else:
+                        _update_join_status(
+                            session_name, tid, "failed",
+                            last_error=last_error, last_method=last_method,
+                        )
+                        _record_account_failure(
+                            session_name, "join",
+                            last_error=str(last_error) if last_error else None,
+                            last_target=str(tid),
+                        )
+                        total_fail += 1
+                except Exception as e:
+                    _update_join_status(session_name, tid, "failed", last_error=str(e)[:500])
+                    total_fail += 1
+        except Exception as e:
+            for tid in target_ids:
+                _update_join_status(session_name, tid, "failed", last_error=str(e)[:500])
+            total_fail += len(target_ids)
+        finally:
+            try:
+                if client.is_connected():
+                    await client.disconnect()
+            except Exception:
+                pass
+
+    if total_ok and not total_fail:
+        _flash(request, "success", f"Перевступили: {total_ok} аккаунт(ов)")
+    elif total_ok:
+        _flash(request, "warning", f"Перевступили: {total_ok}, не удалось: {total_fail}")
+    else:
+        _flash(request, "danger", f"Не удалось перевступить: {total_fail}")
+    return _redirect("/")
 
 
 @router.post("/health-check")
