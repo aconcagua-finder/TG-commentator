@@ -471,13 +471,13 @@
 			                            <div class="small mt-1">
 			                              {% if st_main %}
 			                                {% set sm = st_main.get('status','') %}
-			                                {% set sm_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка"}.get(sm, sm) %}
-                                <span class="badge text-bg-{{ 'success' if sm=='joined' else 'warning' }}">основной: {{ sm_label }}</span>
+			                                {% set sm_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка", "stale": "потерян доступ"}.get(sm, sm) %}
+                                <span class="badge text-bg-{{ 'success' if sm=='joined' else ('danger' if sm=='stale' else 'warning') }}">основной: {{ sm_label }}</span>
 			                              {% endif %}
 			                              {% if st_linked %}
 			                                {% set sl = st_linked.get('status','') %}
-			                                {% set sl_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка"}.get(sl, sl) %}
-			                                <span class="badge text-bg-{{ 'success' if sl=='joined' else 'warning' }}">обсуждение: {{ sl_label }}</span>
+			                                {% set sl_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка", "stale": "потерян доступ"}.get(sl, sl) %}
+			                                <span class="badge text-bg-{{ 'success' if sl=='joined' else ('danger' if sl=='stale' else 'warning') }}">обсуждение: {{ sl_label }}</span>
 			                              {% endif %}
 			                            </div>
 			                          {% endif %}

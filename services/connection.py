@@ -438,6 +438,65 @@ def _upsert_join_status(
 
 
 # ---------------------------------------------------------------------------
+# Join-status invalidation (phantom join detection)
+# ---------------------------------------------------------------------------
+
+# Error patterns that indicate the account is not actually in the chat
+# despite join_status showing "joined".
+_JOIN_ERROR_PATTERNS = (
+    "channel_invalid",
+    "chat_write_forbidden",
+    "user_not_participant",
+    "not a member",
+    "not participant",
+    "could not find the input entity",
+    "peer id invalid",
+)
+
+
+def is_join_error(error: Exception | str) -> bool:
+    """Check if an error indicates a phantom/stale join status."""
+    err_lower = str(error).lower()
+    return any(p in err_lower for p in _JOIN_ERROR_PATTERNS)
+
+
+def invalidate_join_status(
+    session_name: str,
+    target_chat: dict,
+    error: str,
+) -> None:
+    """Mark join_status as 'stale' for all target IDs of the given chat.
+
+    Called when a send fails with a join-related error, signaling that the
+    DB says "joined" but the account can't actually access the chat.
+    """
+    target_ids = set()
+    for key in ("chat_id", "linked_chat_id"):
+        val = str(target_chat.get(key) or "").strip()
+        if val:
+            target_ids.add(val)
+
+    for tid in target_ids:
+        try:
+            _upsert_join_status(
+                session_name,
+                tid,
+                "stale",
+                last_error=str(error)[:500],
+                retry_count=0,
+                next_retry_at=None,
+            )
+            logger.warning(
+                "🔓 [%s] join_status → stale для %s: %s",
+                session_name,
+                tid,
+                str(error)[:120],
+            )
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Misc helpers
 # ---------------------------------------------------------------------------
 

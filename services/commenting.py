@@ -16,7 +16,10 @@ from services.connection import (
     _is_account_assigned,
     _record_account_failure,
     _clear_account_failure,
+    is_join_error,
+    invalidate_join_status,
 )
+from services.joining import ensure_account_joined
 from services.db_queries import (
     get_daily_action_count_from_db,
     _dt_to_utc,
@@ -651,7 +654,28 @@ async def process_new_post(
                     except Exception as _send_exc:
                         send_error = _send_exc
                         _err_lower = str(_send_exc).lower()
-                        if _send_attempt == 0 and ("disconnected" in _err_lower or "not connected" in _err_lower):
+                        _retryable = False
+                        if _send_attempt == 0:
+                            if "disconnected" in _err_lower or "not connected" in _err_lower:
+                                _retryable = True
+                            elif is_join_error(_send_exc):
+                                invalidate_join_status(
+                                    client_wrapper.session_name,
+                                    target_chat,
+                                    str(_send_exc),
+                                )
+                                try:
+                                    _rejoin_cache: set = set()
+                                    await ensure_account_joined(
+                                        client_wrapper,
+                                        target_chat,
+                                        force=True,
+                                        joined_cache=_rejoin_cache,
+                                    )
+                                    _retryable = True
+                                except Exception:
+                                    pass
+                        if _retryable:
                             continue
                         break
                 if send_error:
@@ -719,6 +743,12 @@ async def process_new_post(
                             "project_id": target_chat.get("project_id"),
                         },
                     )
+                    if is_join_error(e):
+                        invalidate_join_status(
+                            client_wrapper.session_name,
+                            target_chat,
+                            str(e),
+                        )
 
         if not any_comment_sent and eligible_clients:
             reason = "все аккаунты провалились при отправке"

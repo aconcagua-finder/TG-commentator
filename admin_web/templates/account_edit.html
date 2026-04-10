@@ -195,14 +195,14 @@
                                     <div class="d-flex flex-wrap gap-2 align-items-center">
                                       {% if st_main %}
                                         {% set sm = st_main.get('status','') %}
-                                        {% set sm_badge = 'success' if sm=='joined' else ('warning' if sm=='failed' else 'secondary') %}
-                                        {% set sm_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка"}.get(sm, sm) %}
+                                        {% set sm_badge = 'success' if sm=='joined' else ('danger' if sm=='stale' else ('warning' if sm=='failed' else 'secondary')) %}
+                                        {% set sm_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка", "stale": "потерян доступ"}.get(sm, sm) %}
                                         <span class="badge text-bg-{{ sm_badge }}">основной: {{ sm_label }}</span>
                                       {% endif %}
                                       {% if st_linked %}
                                         {% set sl = st_linked.get('status','') %}
-                                        {% set sl_badge = 'success' if sl=='joined' else ('warning' if sl=='failed' else 'secondary') %}
-                                        {% set sl_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка"}.get(sl, sl) %}
+                                        {% set sl_badge = 'success' if sl=='joined' else ('danger' if sl=='stale' else ('warning' if sl=='failed' else 'secondary')) %}
+                                        {% set sl_label = {"joined": "вступил", "scheduled": "запланировано", "pending": "ожидание", "failed": "ошибка", "stale": "потерян доступ"}.get(sl, sl) %}
                                         <span class="badge text-bg-{{ sl_badge }}">обсуждение: {{ sl_label }}</span>
                                       {% endif %}
                                     </div>
