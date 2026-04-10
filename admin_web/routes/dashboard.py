@@ -17,6 +17,7 @@ from admin_web.helpers import (
     _db_connect,
     _collect_warnings,
     _collect_warnings_for_scope,
+    _collect_health_summary,
     _sync_warning_history,
     _load_resolved_warning_history,
     _load_seen_warning_keys,
@@ -52,6 +53,7 @@ async def dashboard(request: Request):
         ).fetchall()
 
     recent_activity = enrich_log_rows(raw_logs, settings)
+    health = _collect_health_summary(accounts, settings)
 
     return templates.TemplateResponse(
         "dashboard.html",
@@ -69,6 +71,7 @@ async def dashboard(request: Request):
             triggers_total=triggers_total,
             scenarios_total=scenarios_total,
             recent_activity=recent_activity,
+            health=health,
         ),
     )
 
@@ -228,6 +231,57 @@ async def warnings_bulk_dismiss(request: Request):
     _mark_warning_keys_dismissed(keys_to_dismiss)
     _flash(request, "success", f"Скрыто предупреждений: {len(keys_to_dismiss)}.")
     return _redirect("/warnings")
+
+
+@router.post("/health-check")
+async def health_check(request: Request):
+    from admin_web.health_check import run_health_check
+
+    try:
+        results = await run_health_check()
+    except Exception as e:
+        _flash(request, "danger", f"Ошибка при проверке: {e}")
+        return _redirect("/")
+
+    parts = []
+
+    # Proxies
+    pr = results.get("proxies", {})
+    if pr.get("total"):
+        if pr.get("dead"):
+            parts.append(f"Прокси: {pr['dead']} мёртвых из {pr['total']}")
+        else:
+            parts.append(f"Прокси: все {pr['total']} ОК")
+        for ch in pr.get("changed", []):
+            parts.append(f"  · {ch['name']}: {ch['old']} → {ch['new']}")
+
+    # Accounts
+    ac = results.get("accounts", {})
+    if ac.get("total"):
+        if ac.get("problems"):
+            prob_names = ", ".join(p["name"] for p in ac["problems"][:5])
+            parts.append(f"Аккаунты: {len(ac['problems'])} проблемных ({prob_names})")
+        else:
+            parts.append(f"Аккаунты: все {ac['ok']} ОК")
+
+    # Joins
+    jr = results.get("joins", {})
+    if jr.get("checked"):
+        if jr.get("stale"):
+            stale_names = ", ".join(d["chat_name"] for d in jr.get("details", [])[:5])
+            parts.append(f"Вступления: {jr['stale']} потеряно ({stale_names})")
+        else:
+            parts.append(f"Вступления: все {jr['ok']} ОК")
+    if jr.get("error"):
+        parts.append(f"Вступления: не удалось проверить ({jr['error']})")
+
+    summary = " | ".join(parts) if parts else "Проверка завершена"
+
+    has_issues = bool(
+        pr.get("dead") or ac.get("problems") or jr.get("stale")
+    )
+    _flash(request, "warning" if has_issues else "success", f"🔍 {summary}")
+    return _redirect("/")
 
 
 @router.post("/status/start")

@@ -10,7 +10,7 @@ import re
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
@@ -1449,6 +1449,60 @@ def _collect_warnings_for_scope(
             }
         )
 
+    # ── Stale join warnings ──
+    try:
+        with _db_connect() as conn:
+            stale_rows = conn.execute(
+                "SELECT session_name, target_id, last_error FROM join_status WHERE status = 'stale'"
+            ).fetchall()
+        for row in stale_rows:
+            sess = str(row["session_name"] or "")
+            tid = str(row["target_id"] or "")
+            err = str(row["last_error"] or "неизвестная ошибка")[:120]
+            # Find target name
+            target_label = tid
+            for t_map in [main_by_id, linked_by_id]:
+                if tid in t_map:
+                    t_cfg = t_map[tid]
+                    target_label = t_cfg.get("chat_name") or tid
+                    break
+            wkey = f"join_stale:{sess}:{tid}"
+            warnings.append({
+                "level": "danger",
+                "title": f"{sess}: потерян доступ к каналу",
+                "detail_lines": [
+                    f"Канал: {target_label}",
+                    f"Ошибка: {err}",
+                    "Нужно перевступить — нажмите «Вступить» на странице цели.",
+                ],
+                "session_name": sess,
+                "key": wkey,
+                "action": {"label": "Открыть аккаунт", "url": f"/accounts/{quote(sess)}"},
+            })
+    except Exception:
+        pass
+
+    # ── Dead proxy warnings ──
+    try:
+        with _db_connect() as conn:
+            dead_rows = conn.execute(
+                "SELECT id, url, name FROM proxies WHERE status = 'dead'"
+            ).fetchall()
+        for row in dead_rows:
+            pid = row["id"]
+            purl = str(row["url"] or "")
+            pname = str(row["name"] or purl)
+            wkey = f"proxy_dead:{pid}"
+            warnings.append({
+                "level": "warning",
+                "title": f"Прокси не отвечает: {pname}",
+                "detail_lines": [f"URL: {purl}", "Проверьте доступность или замените прокси."],
+                "key": wkey,
+                "action": {"label": "Управление прокси", "url": "/proxies"},
+            })
+    except Exception:
+        pass
+
     return warnings
 
 
@@ -1466,6 +1520,51 @@ def _warnings_count(accounts: List[Dict[str, Any]], settings: Dict[str, Any]) ->
         return sum(1 for k in keys if k not in seen)
     except Exception:
         return 0
+
+
+def _collect_health_summary(
+    accounts: List[Dict[str, Any]],
+    settings: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Aggregate health metrics from DB — fast, no real network checks."""
+    from services.connection import DISABLED_ACCOUNT_STATUSES
+
+    project_id = _active_project_id(settings)
+    proj_accounts = _filter_accounts_by_project(accounts, project_id)
+
+    accs_ok = sum(
+        1
+        for a in proj_accounts
+        if str(a.get("status") or "active").lower() not in DISABLED_ACCOUNT_STATUSES
+    )
+    accs_problem = len(proj_accounts) - accs_ok
+
+    try:
+        with _db_connect() as conn:
+            proxies_active = conn.execute("SELECT COUNT(*) AS c FROM proxies WHERE status='active'").fetchone()["c"]
+            proxies_dead = conn.execute("SELECT COUNT(*) AS c FROM proxies WHERE status='dead'").fetchone()["c"]
+            joins_stale = conn.execute("SELECT COUNT(*) AS c FROM join_status WHERE status='stale'").fetchone()["c"]
+            joins_failed = conn.execute("SELECT COUNT(*) AS c FROM join_status WHERE status='failed'").fetchone()["c"]
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            errors_24h = conn.execute(
+                "SELECT COUNT(*) AS c FROM logs WHERE log_type IN ('comment_failed', 'spam_failed') AND timestamp > %s",
+                (cutoff,),
+            ).fetchone()["c"]
+    except Exception:
+        proxies_active = proxies_dead = joins_stale = joins_failed = errors_24h = 0
+
+    warnings_active = _warnings_count(accounts, settings)
+
+    return {
+        "accounts_ok": accs_ok,
+        "accounts_problem": accs_problem,
+        "proxies_active": proxies_active,
+        "proxies_dead": proxies_dead,
+        "joins_stale": joins_stale,
+        "joins_failed": joins_failed,
+        "warnings_active": warnings_active,
+        "errors_24h": errors_24h,
+    }
 
 
 # ---------------------------------------------------------------------------

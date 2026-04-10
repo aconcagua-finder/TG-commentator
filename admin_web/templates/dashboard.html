@@ -46,6 +46,80 @@
     </div>
   </div>
 
+  {# ── Health card ── #}
+  {% if health is defined and health %}
+  <div class="card mb-4">
+    <div class="card-body py-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h2 class="h6 mb-0"><i class="bi bi-heart-pulse me-1"></i>Здоровье системы</h2>
+        <form method="post" action="/health-check" id="healthCheckForm">
+          <button class="btn btn-sm btn-outline-primary" type="submit" id="healthCheckBtn">
+            <i class="bi bi-arrow-repeat me-1"></i>Проверить всё
+          </button>
+        </form>
+      </div>
+      <div class="d-flex flex-wrap gap-3">
+        {# Accounts #}
+        {% set acc_ok = health.accounts_ok|default(0) %}
+        {% set acc_bad = health.accounts_problem|default(0) %}
+        <div class="d-flex align-items-center gap-1">
+          <i class="bi {{ 'bi-check-circle text-success' if acc_bad == 0 else 'bi-exclamation-triangle text-warning' }}"></i>
+          <span class="small">Аккаунты: {{ acc_ok }} ок{% if acc_bad %}, <span class="text-warning fw-semibold">{{ acc_bad }} проблем</span>{% endif %}</span>
+        </div>
+        {# Proxies #}
+        {% set px_a = health.proxies_active|default(0) %}
+        {% set px_d = health.proxies_dead|default(0) %}
+        {% if px_a + px_d > 0 %}
+        <div class="d-flex align-items-center gap-1">
+          <i class="bi {{ 'bi-check-circle text-success' if px_d == 0 else 'bi-exclamation-triangle text-warning' }}"></i>
+          <span class="small">Прокси: {{ px_a }} ок{% if px_d %}, <span class="text-warning fw-semibold">{{ px_d }} мёртвых</span>{% endif %}</span>
+        </div>
+        {% endif %}
+        {# Joins #}
+        {% set js = health.joins_stale|default(0) %}
+        {% set jf = health.joins_failed|default(0) %}
+        {% if js > 0 or jf > 0 %}
+        <div class="d-flex align-items-center gap-1">
+          <i class="bi bi-x-circle text-danger"></i>
+          <span class="small">Вступления: {% if js %}<span class="text-danger fw-semibold">{{ js }} потеряно</span>{% endif %}{% if js and jf %}, {% endif %}{% if jf %}<span class="text-warning fw-semibold">{{ jf }} ошибок</span>{% endif %}</span>
+        </div>
+        {% endif %}
+        {# Warnings #}
+        {% set wa = health.warnings_active|default(0) %}
+        {% if wa > 0 %}
+        <div class="d-flex align-items-center gap-1">
+          <i class="bi bi-bell text-warning"></i>
+          <a class="small text-reset text-decoration-none" href="/warnings"><span class="text-warning fw-semibold">{{ wa }} предупреждений</span></a>
+        </div>
+        {% endif %}
+        {# Errors 24h #}
+        {% set e24 = health.errors_24h|default(0) %}
+        {% if e24 > 0 %}
+        <div class="d-flex align-items-center gap-1">
+          <i class="bi bi-bug text-danger"></i>
+          <a class="small text-reset text-decoration-none" href="/stats"><span class="text-danger fw-semibold">{{ e24 }} ошибок за 24ч</span></a>
+        </div>
+        {% endif %}
+        {# All OK #}
+        {% if acc_bad == 0 and px_d == 0 and js == 0 and jf == 0 and wa == 0 and e24 == 0 %}
+        <div class="d-flex align-items-center gap-1">
+          <i class="bi bi-check-circle-fill text-success"></i>
+          <span class="small text-success fw-semibold">Всё в порядке</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <script>
+    document.getElementById('healthCheckForm')?.addEventListener('submit', function() {
+      var btn = document.getElementById('healthCheckBtn');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>Проверяю…';
+    });
+  </script>
+
   {# ── Info cards ── #}
   <div class="row g-3">
     <div class="col-12 col-lg-6">
