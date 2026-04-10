@@ -628,19 +628,34 @@ async def process_new_post(
                 except Exception:
                     pass
 
-                sent_msg = await human_type_and_send(
-                    client_wrapper.client,
-                    event.chat_id,
-                    generated_text,
-                    reply_to_msg_id=actual_reply_id,
-                    thread_top_msg_id=thread_top_id,
-                    split_mode="smart_ru_no_comma",
-                    humanization_settings=current_settings.get('humanization', {}),
-                    # Комментарии к постам канала всегда идут в linked-группу
-                    # как тред поста — нужен корректный reply header,
-                    # иначе no-quote комментарии не попадают под пост.
-                    is_channel_thread=True,
-                )
+                send_error = None
+                for _send_attempt in range(2):
+                    try:
+                        if _send_attempt > 0:
+                            logger.info(f"🔄 [{client_wrapper.session_name}] повторная попытка отправки для поста {msg_id}...")
+                            if not await ensure_client_connected(client_wrapper, reason="comment_retry"):
+                                send_error = ConnectionError("reconnect_failed_on_retry")
+                                break
+                        sent_msg = await human_type_and_send(
+                            client_wrapper.client,
+                            event.chat_id,
+                            generated_text,
+                            reply_to_msg_id=actual_reply_id,
+                            thread_top_msg_id=thread_top_id,
+                            split_mode="smart_ru_no_comma",
+                            humanization_settings=current_settings.get('humanization', {}),
+                            is_channel_thread=True,
+                        )
+                        send_error = None
+                        break
+                    except Exception as _send_exc:
+                        send_error = _send_exc
+                        _err_lower = str(_send_exc).lower()
+                        if _send_attempt == 0 and ("disconnected" in _err_lower or "not connected" in _err_lower):
+                            continue
+                        break
+                if send_error:
+                    raise send_error
                 any_comment_sent = True
                 me = await client_wrapper.client.get_me()
                 logger.info(f"✅ [{client_wrapper.session_name}] прокомментировал пост {msg_id} ({prompt_info})")
@@ -675,6 +690,21 @@ async def process_new_post(
                 raise
             except Exception as e:
                 logger.error(f"❌ Ошибка комментирования ({client_wrapper.session_name}): {e}")
+                log_action_to_db(
+                    {
+                        "type": "comment_failed",
+                        "post_id": msg_id,
+                        "comment": f"send_error: {e}",
+                        "date": datetime.now(timezone.utc).isoformat(),
+                        "account": {"session_name": client_wrapper.session_name},
+                        "target": {
+                            "chat_name": target_chat.get("chat_name"),
+                            "chat_username": target_chat.get("chat_username"),
+                            "channel_id": target_chat.get("chat_id"),
+                            "destination_chat_id": destination_chat_id_for_logs,
+                        },
+                    }
+                )
                 if attempted_send:
                     _record_account_failure(
                         client_wrapper.session_name,
@@ -690,8 +720,12 @@ async def process_new_post(
                         },
                     )
 
-        if any_comment_sent:
-            _mark_processed(unique_id)
+        if not any_comment_sent and eligible_clients:
+            reason = "все аккаунты провалились при отправке"
+            logger.warning(f"⚠️ Пост {msg_id}: {reason}")
+            log_comment_skip_to_db(msg_id, target_chat, destination_chat_id_for_logs, reason)
+
+        _mark_processed(unique_id)
     except asyncio.CancelledError:
         pass
     finally:
