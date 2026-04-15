@@ -703,14 +703,36 @@ async def _connect_accounts_by_session_names(
 
 async def _resolve_channel_entity(client: TelegramClient, chat_input: str) -> Tuple[Any, str | None]:
     invite_link: str | None = None
-    if "t.me/+" in chat_input or "t.me/joinchat/" in chat_input:
-        invite_hash = chat_input.split("/")[-1].replace("+", "")
+    normalized = (chat_input or "").strip()
+
+    # Invite links: t.me/+hash or t.me/joinchat/hash.
+    if "t.me/+" in normalized or "t.me/joinchat/" in normalized:
+        invite_hash = normalized.split("/")[-1].replace("+", "")
         invite_link = invite_hash
         invite_info = await client(CheckChatInviteRequest(invite_hash))
         entity = invite_info.chat
         return entity, invite_link
 
-    entity = await client.get_entity(chat_input)
+    # Post-style URLs — strip the message id so get_entity receives the chat ref,
+    # not a link to a specific message that Telethon can't resolve on its own.
+    #   https://t.me/channel/123        → channel
+    #   t.me/channel/123                → channel
+    #   https://t.me/c/2901278931/456   → private channel (PeerChannel(2901278931))
+    m_private = re.match(r"^(?:https?://)?t\.me/c/(\d+)(?:/\d+)?/?$", normalized)
+    if m_private:
+        channel_id = int(m_private.group(1))
+        entity = await client.get_entity(PeerChannel(channel_id))
+        return entity, None
+
+    m_public = re.match(r"^(?:https?://)?t\.me/([A-Za-z0-9_]+)(?:/\d+)?/?$", normalized)
+    if m_public:
+        username = m_public.group(1)
+        # Guard against accidentally matching the "+hash" invite path (already handled above).
+        if username != "c":
+            entity = await client.get_entity(username)
+            return entity, None
+
+    entity = await client.get_entity(normalized)
     return entity, None
 
 
