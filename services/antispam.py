@@ -400,20 +400,46 @@ async def _ai_check_spam(
     user_parts.append(f"Сообщение:\n{text}")
     user_content = "\n\n".join(user_parts)
 
-    client = openai.AsyncOpenAI(api_key=api_key)
-    try:
-        completion = await client.chat.completions.create(
-            model=str(model or "gpt-5-nano"),
-            messages=[
+    def _is_temperature_error(exc: Exception) -> bool:
+        msg = str(exc or "").lower()
+        return "temperature" in msg and (
+            "unsupported" in msg or "does not support" in msg or "only the default" in msg
+        )
+
+    model_name = str(model or "gpt-5-nano")
+    # GPT-5 series rejects temperature != 1; skip the parameter for those models
+    # up-front to save an API round-trip. For older models we still send temperature=0
+    # so the classification stays deterministic.
+    model_lower = model_name.lower()
+    include_temperature = not (model_lower.startswith("gpt-5") or model_lower.startswith("o1") or model_lower.startswith("o3"))
+
+    def _build_kwargs(with_temperature: bool) -> dict:
+        kw: dict[str, Any] = {
+            "model": model_name,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            temperature=0,
-            max_completion_tokens=160,
-        )
+            "max_completion_tokens": 160,
+        }
+        if with_temperature:
+            kw["temperature"] = 0
+        return kw
+
+    client = openai.AsyncOpenAI(api_key=api_key)
+    try:
+        completion = await client.chat.completions.create(**_build_kwargs(include_temperature))
     except Exception as exc:
-        logger.warning("antispam: OpenAI request failed: %s", exc)
-        return False, f"openai_error:{type(exc).__name__}", ""
+        if include_temperature and _is_temperature_error(exc):
+            logger.info("antispam: model %s rejects temperature — retrying without it", model_name)
+            try:
+                completion = await client.chat.completions.create(**_build_kwargs(False))
+            except Exception as exc2:
+                logger.warning("antispam: OpenAI request failed after temperature retry: %s", exc2)
+                return False, f"openai_error:{type(exc2).__name__}", ""
+        else:
+            logger.warning("antispam: OpenAI request failed: %s", exc)
+            return False, f"openai_error:{type(exc).__name__}", ""
 
     content = ""
     try:
@@ -681,23 +707,35 @@ async def _handle_detected_spam(
                     old = spam_blocked_msgs_order.popleft()
                     spam_blocked_msgs.discard(old)
 
-    # Delete: bot_token → Bot API, otherwise → user-accounts.
+    # Delete: prefer bot_token → Bot API; fall back to user-accounts.
+    # Bot API has a 48-hour limit on deleting incoming messages ("message can't be
+    # deleted" on older posts), so when the bot fails we retry via a user-client —
+    # admin user-accounts aren't bound by that limit.
     deleted = False
     operator_session_name: str | None = None
     bot_token = str((antispam_target or {}).get("bot_token") or "").strip()
+    allowed_sessions = (antispam_target or {}).get("assigned_accounts") or None
 
     if bot_token:
         deleted = await _delete_message_via_bot(bot_token, chat_id_int, msg_id_int)
         if deleted:
             operator_session_name = "bot"
-    else:
-        allowed_sessions = (antispam_target or {}).get("assigned_accounts") or None
-        deleted, operator_session_name = await _delete_message_any(
+
+    if not deleted:
+        client_deleted, client_op = await _delete_message_any(
             chat_id_int,
             msg_id_int,
             active_clients=active_clients,
             allowed_sessions=allowed_sessions,
         )
+        if client_deleted:
+            deleted = True
+            operator_session_name = client_op
+            if bot_token:
+                logger.info(
+                    "antispam: bot deleteMessage failed for chat=%s msg=%s — fallback succeeded via user client %s",
+                    chat_id_int, msg_id_int, client_op,
+                )
 
     action = "deleted" if deleted else "failed_to_delete"
 
@@ -716,18 +754,24 @@ async def _handle_detected_spam(
     }
     _insert_spam_log(log_entry)
 
-    # Ban spammer if enabled and deletion succeeded.
+    # Ban spammer if enabled and deletion succeeded. Bot API first, user-client
+    # as fallback (same reasoning as deletion: bot may lack an up-to-date
+    # admin role or hit some restriction, user-admin usually can).
     banned = False
     ban_enabled = bool((antispam_target or {}).get("ban_spammers"))
     if deleted and ban_enabled and sender_id_int:
         if bot_token:
             banned = await _ban_user_via_bot(bot_token, chat_id_int, sender_id_int)
-        else:
-            allowed_sessions = (antispam_target or {}).get("assigned_accounts") or None
+        if not banned:
             banned = await _ban_user_via_client(
                 chat_id_int, sender_id_int,
                 active_clients=active_clients, allowed_sessions=allowed_sessions,
             )
+            if banned and bot_token:
+                logger.info(
+                    "antispam: bot banChatMember failed for chat=%s user=%s — fallback succeeded via user client",
+                    chat_id_int, sender_id_int,
+                )
         if banned:
             reason_for_ban = matched_keyword or ai_reason or detection_method
             _insert_spam_ban({

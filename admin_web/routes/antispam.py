@@ -593,13 +593,18 @@ async def antispam_target_scan_post(
         elif failed == 0:
             _flash(request, "success", summary)
         else:
-            # Partial failure: spam was detected but not deleted.
+            # Partial failure: spam was detected but not deleted. System already
+            # tried bot-API first and then fell back to any user-client — so if
+            # we got here, NEITHER worked.
             if via_bot:
                 hint = (
-                    f" Удалить НЕ удалось ({failed} шт.): убедись, что бот добавлен "
-                    f"в группу обсуждений (chat_id={discussion_id}) с правом удаления "
-                    f"сообщений (Delete Messages). В канал боту добавляться не нужно — "
-                    f"работать он должен в самой группе комментариев."
+                    f" Удалить НЕ удалось ({failed} шт.). Причины по порядку: "
+                    f"(1) бот {f'в группе обсуждений (chat_id={discussion_id}) ' if discussion_id else ''}"
+                    "не смог удалить (часто из-за 48-часового лимита Telegram Bot API на старые сообщения "
+                    "или отсутствия права <b>Delete Messages</b>); "
+                    "(2) резервное удаление через user-аккаунт тоже не сработало — значит, "
+                    "ни один из назначенных аккаунтов не админ группы обсуждений или не состоит в ней. "
+                    "Проверь, что хотя бы один из назначенных аккаунтов — админ с правом удаления."
                 )
             else:
                 hint = (
