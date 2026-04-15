@@ -23,16 +23,16 @@ from services.project import _active_project_id, _filter_project_items
 ACCOUNTS_DIR = os.getenv("APP_ACCOUNTS_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "accounts"))
 
 DEFAULT_MODELS = {
-    "openai_chat": "gpt-5.2-chat-latest",
-    "openai_eval": "gpt-5.2",
+    "openai_chat": "gpt-5.4-chat-latest",
+    "openai_eval": "gpt-5.4-mini",
     "openai_image": "gpt-image-1",
     "openrouter_chat": "x-ai/grok-4.1-fast",
-    "openrouter_eval": "openai/gpt-4.1-mini",
+    "openrouter_eval": "openai/gpt-5.4-mini",
     "deepseek_chat": "deepseek-chat",
     "deepseek_eval": "deepseek-chat",
-    "gemini_chat": "gemini-3-flash-preview",
-    "gemini_eval": "gemini-3-flash-preview",
-    "gemini_names": "gemini-3-flash-preview",
+    "gemini_chat": "gemini-3.1-flash-lite-preview",
+    "gemini_eval": "gemini-3.1-flash-lite-preview",
+    "gemini_names": "gemini-3.1-flash-lite-preview",
 }
 
 
@@ -280,7 +280,9 @@ def gemini_model_candidates(settings, key):
     primary = get_model_setting(settings, key)
     candidates = [primary]
 
-    for fallback in ["gemini-2.5-flash", "gemini-1.5-flash"]:
+    # Fallbacks: current 3.x lite preview → stable 2.5 flash (still available until
+    # 2026-06-17 deprecation). We no longer fall back to gemini-1.5-* (EOL).
+    for fallback in ["gemini-3.1-flash-lite-preview", "gemini-2.5-flash"]:
         if fallback != primary:
             candidates.append(fallback)
 
@@ -317,9 +319,9 @@ def openai_model_candidates(settings, key):
     candidates = [primary]
 
     if key == "openai_chat":
-        candidates.extend(["gpt-5.2-chat-latest", "gpt-5.2", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4o"])
+        candidates.extend(["gpt-5.4-chat-latest", "gpt-5.4", "gpt-5.4-mini", "gpt-5-mini", "gpt-4.1", "gpt-4.1-mini"])
     elif key == "openai_eval":
-        candidates.extend(["gpt-5.2", "gpt-5-mini", "gpt-4.1-mini", "gpt-4o-mini"])
+        candidates.extend(["gpt-5.4-mini", "gpt-5-mini", "gpt-4.1-mini"])
 
     seen = set()
     unique = []

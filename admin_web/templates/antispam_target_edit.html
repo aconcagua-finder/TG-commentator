@@ -59,10 +59,18 @@
             <div class="mb-3">
               <label class="form-label" for="ai_model">Модель</label>
               <select class="form-select" name="ai_model" id="ai_model">
-                <option value="gpt-4.1-nano" {% if rule.ai_model == 'gpt-4.1-nano' %}selected{% endif %}>gpt-4.1-nano</option>
-                <option value="gpt-4.1-mini" {% if rule.ai_model == 'gpt-4.1-mini' %}selected{% endif %}>gpt-4.1-mini</option>
+                <option value="gpt-5-nano" {% if rule.ai_model == 'gpt-5-nano' %}selected{% endif %}>gpt-5-nano (рекомендуется — самая быстрая и дешёвая)</option>
+                <option value="gpt-5-mini" {% if rule.ai_model == 'gpt-5-mini' %}selected{% endif %}>gpt-5-mini (точнее, дороже)</option>
+                <option value="gpt-5.4-nano" {% if rule.ai_model == 'gpt-5.4-nano' %}selected{% endif %}>gpt-5.4-nano</option>
+                <option value="gpt-5.4-mini" {% if rule.ai_model == 'gpt-5.4-mini' %}selected{% endif %}>gpt-5.4-mini</option>
+                {% if rule.ai_model == 'gpt-4.1-nano' %}
+                  <option value="gpt-4.1-nano" selected>gpt-4.1-nano (legacy)</option>
+                {% endif %}
+                {% if rule.ai_model == 'gpt-4.1-mini' %}
+                  <option value="gpt-4.1-mini" selected>gpt-4.1-mini (legacy)</option>
+                {% endif %}
               </select>
-              <div class="form-text">AI используется только если не сработали ключевые слова (в тексте или имени).</div>
+              <div class="form-text">AI используется только если не сработали ключевые слова (в тексте или имени). Для антиспама достаточно самой дешёвой nano-модели.</div>
             </div>
 
             <div class="form-check form-switch mb-3">

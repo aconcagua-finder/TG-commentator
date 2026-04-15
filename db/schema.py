@@ -330,7 +330,7 @@ def _table_spam_rules() -> str:
         ai_enabled INTEGER DEFAULT 1,
         ai_check_name INTEGER DEFAULT 0,
         ai_prompt TEXT DEFAULT '',
-        ai_model TEXT DEFAULT 'gpt-4.1-nano',
+        ai_model TEXT DEFAULT 'gpt-5-nano',
         notify_telegram INTEGER DEFAULT 0,
         created_at TEXT,
         UNIQUE(chat_id)

@@ -314,7 +314,7 @@ def _load_spam_rule(chat_id: str) -> dict[str, Any] | None:
             "ai_enabled": int(row["ai_enabled"] or 0),
             "ai_check_name": int(ai_check_name_raw or 0),
             "ai_prompt": str(row["ai_prompt"] or "").strip(),
-            "ai_model": str(row["ai_model"] or "gpt-4.1-nano").strip() or "gpt-4.1-nano",
+            "ai_model": str(row["ai_model"] or "gpt-5-nano").strip() or "gpt-5-nano",
             "notify_telegram": int(row["notify_telegram"] or 0),
         }
     except Exception as exc:
@@ -403,7 +403,7 @@ async def _ai_check_spam(
     client = openai.AsyncOpenAI(api_key=api_key)
     try:
         completion = await client.chat.completions.create(
-            model=str(model or "gpt-4.1-nano"),
+            model=str(model or "gpt-5-nano"),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
@@ -627,7 +627,7 @@ async def _classify_spam(
         is_spam, reason, source = await _ai_check_spam(
             text,
             ai_prompt=str(rule.get("ai_prompt") or ""),
-            model=str(rule.get("ai_model") or "gpt-4.1-nano"),
+            model=str(rule.get("ai_model") or "gpt-5-nano"),
             api_key=api_key,
             sender_display=sender_display,
             check_name=check_name,

@@ -132,6 +132,13 @@
         <div class="card-body">
           <h2 class="h5">3) Модели (необязательно)</h2>
           <p class="text-muted small mb-2">Если не трогать — используются рекомендуемые значения по умолчанию. Если указали несуществующую модель, генерация может перестать работать.</p>
+          <div class="alert alert-light border py-2 mb-3 small">
+            <b>Рекомендуемые по умолчанию (апрель 2026):</b>
+            OpenAI → <code>gpt-5.4-chat-latest</code> + <code>gpt-5.4-mini</code>;
+            OpenRouter → <code>x-ai/grok-4.1-fast</code> + <code>openai/gpt-5.4-mini</code>;
+            Gemini → <code>gemini-3.1-flash-lite-preview</code>;
+            DeepSeek → <code>deepseek-chat</code> (V3.2).
+          </div>
           <form method="post" action="/settings/ai/models">
             <ul class="nav nav-pills mb-3" id="aiModelsTab" role="tablist">
               <li class="nav-item" role="presentation">
@@ -151,18 +158,85 @@
             <div class="tab-content" id="aiModelsTabContent">
               <div class="tab-pane fade {% if provider == 'gemini' %}show active{% endif %}" id="aiModelsGemini" role="tabpanel" aria-labelledby="aiModelsGeminiTab" tabindex="0">
                 <div class="row g-2">
-                  <div class="col-12 col-lg-4">
-                    <label class="form-label">Gemini · комментарии</label>
-                    <input class="form-control" name="gemini_chat" value="{{ settings.get('models', {}).get('gemini_chat','') }}" />
-                    <div class="form-text">Напр.: <code>gemini-3-flash-preview</code> (есть fallback на <code>gemini-2.5-flash</code>)</div>
+                  <div class="col-12">
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                      <div class="text-muted small me-2">Пресеты (заполняют все поля):</div>
+                      <button
+                        class="btn btn-sm btn-outline-primary"
+                        type="button"
+                        data-set-multi='{"#gemini_chat_model":"gemini-3.1-flash-lite-preview","#gemini_eval_model":"gemini-3.1-flash-lite-preview","#gemini_names_model":"gemini-3.1-flash-lite-preview"}'
+                      >
+                        Gemini 3.1 Flash Lite <span class="badge text-bg-primary ms-1">по умолчанию</span>
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#gemini_chat_model":"gemini-3.1-pro-preview","#gemini_eval_model":"gemini-3.1-flash-lite-preview","#gemini_names_model":"gemini-3.1-flash-lite-preview"}'
+                      >
+                        Gemini 3.1 Pro (качество)
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#gemini_chat_model":"gemini-2.5-flash","#gemini_eval_model":"gemini-2.5-flash","#gemini_names_model":"gemini-2.5-flash"}'
+                      >
+                        Gemini 2.5 Flash (legacy)
+                      </button>
+                    </div>
                   </div>
-                  <div class="col-12 col-lg-4">
-                    <label class="form-label">Gemini · проверка мониторинга</label>
-                    <input class="form-control" name="gemini_eval" value="{{ settings.get('models', {}).get('gemini_eval','') }}" />
+
+                  <div class="col-12 col-lg-4 mt-3">
+                    <label class="form-label" for="gemini_chat_model">Gemini · комментарии</label>
+                    <input
+                      class="form-control"
+                      id="gemini_chat_model"
+                      name="gemini_chat"
+                      value="{{ settings.get('models', {}).get('gemini_chat','') }}"
+                      list="gemini_chat_models"
+                      placeholder="gemini-3.1-flash-lite-preview (по умолчанию)"
+                    />
+                    <datalist id="gemini_chat_models">
+                      <option value="gemini-3.1-flash-lite-preview"></option>
+                      <option value="gemini-3.1-pro-preview"></option>
+                      <option value="gemini-3.1-flash-live-preview"></option>
+                      <option value="gemini-2.5-flash"></option>
+                      <option value="gemini-2.5-pro"></option>
+                    </datalist>
+                    <div class="form-text">
+                      Рекомендуем <code>gemini-3.1-flash-lite-preview</code>. Авто-fallback на <code>gemini-2.5-flash</code>.
+                      <br><span class="text-muted">Gemini 2.5 будет отключён 17 июня 2026.</span>
+                    </div>
                   </div>
-                  <div class="col-12 col-lg-4">
-                    <label class="form-label">Gemini · генерация имён</label>
-                    <input class="form-control" name="gemini_names" value="{{ settings.get('models', {}).get('gemini_names','') }}" />
+                  <div class="col-12 col-lg-4 mt-3">
+                    <label class="form-label" for="gemini_eval_model">Gemini · проверка мониторинга</label>
+                    <input
+                      class="form-control"
+                      id="gemini_eval_model"
+                      name="gemini_eval"
+                      value="{{ settings.get('models', {}).get('gemini_eval','') }}"
+                      list="gemini_eval_models"
+                      placeholder="gemini-3.1-flash-lite-preview"
+                    />
+                    <datalist id="gemini_eval_models">
+                      <option value="gemini-3.1-flash-lite-preview"></option>
+                      <option value="gemini-2.5-flash"></option>
+                    </datalist>
+                    <div class="form-text">Для мониторинга достаточно flash-lite: быстрее и дешевле.</div>
+                  </div>
+                  <div class="col-12 col-lg-4 mt-3">
+                    <label class="form-label" for="gemini_names_model">Gemini · генерация имён</label>
+                    <input
+                      class="form-control"
+                      id="gemini_names_model"
+                      name="gemini_names"
+                      value="{{ settings.get('models', {}).get('gemini_names','') }}"
+                      list="gemini_names_models"
+                      placeholder="gemini-3.1-flash-lite-preview"
+                    />
+                    <datalist id="gemini_names_models">
+                      <option value="gemini-3.1-flash-lite-preview"></option>
+                      <option value="gemini-2.5-flash"></option>
+                    </datalist>
                   </div>
                 </div>
               </div>
@@ -173,32 +247,32 @@
                     <div class="d-flex flex-wrap gap-2 align-items-center">
                       <div class="text-muted small me-2">Пресеты (заполняют поля ниже):</div>
                       <button
-                        class="btn btn-sm btn-outline-secondary"
+                        class="btn btn-sm btn-outline-primary"
                         type="button"
-                        data-set-multi='{"#openai_chat_model":"gpt-5.2-chat-latest","#openai_eval_model":"gpt-5.2"}'
+                        data-set-multi='{"#openai_chat_model":"gpt-5.4-chat-latest","#openai_eval_model":"gpt-5.4-mini"}'
                       >
-                        GPT‑5.2
+                        GPT‑5.4 <span class="badge text-bg-primary ms-1">по умолчанию</span>
                       </button>
                       <button
                         class="btn btn-sm btn-outline-secondary"
                         type="button"
-                        data-set-multi='{"#openai_chat_model":"gpt-5-mini","#openai_eval_model":"gpt-5-mini"}'
+                        data-set-multi='{"#openai_chat_model":"gpt-5.4-mini","#openai_eval_model":"gpt-5.4-nano"}'
                       >
-                        GPT‑5 mini
+                        GPT‑5.4 mini (экономия)
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#openai_chat_model":"gpt-5","#openai_eval_model":"gpt-5-mini"}'
+                      >
+                        GPT‑5
                       </button>
                       <button
                         class="btn btn-sm btn-outline-secondary"
                         type="button"
                         data-set-multi='{"#openai_chat_model":"gpt-4.1","#openai_eval_model":"gpt-4.1-mini"}'
                       >
-                        GPT‑4.1
-                      </button>
-                      <button
-                        class="btn btn-sm btn-outline-secondary"
-                        type="button"
-                        data-set-multi='{"#openai_chat_model":"gpt-4.1-mini","#openai_eval_model":"gpt-4.1-mini"}'
-                      >
-                        GPT‑4.1 mini
+                        GPT‑4.1 (legacy)
                       </button>
                     </div>
                   </div>
@@ -211,25 +285,28 @@
                       name="openai_chat"
                       value="{{ settings.get('models', {}).get('openai_chat','') }}"
                       list="openai_chat_models"
-                      placeholder="например: gpt-5.2-chat-latest"
+                      placeholder="gpt-5.4-chat-latest (по умолчанию)"
                     />
                     <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрый выбор модели для комментариев (OpenAI)">
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-5.2-chat-latest">GPT‑5.2 chat</button>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-5.2">GPT‑5.2</button>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-5-mini">GPT‑5 mini</button>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-4.1">GPT‑4.1</button>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-4.1-mini">GPT‑4.1 mini</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-5.4-chat-latest">5.4 chat</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-5.4">5.4</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-5.4-mini">5.4 mini</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-5">5</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_chat_model" data-set-value="gpt-4.1">4.1</button>
                     </div>
                     <datalist id="openai_chat_models">
-                      <option value="gpt-5.2-chat-latest"></option>
-                      <option value="gpt-5.2"></option>
+                      <option value="gpt-5.4-chat-latest"></option>
+                      <option value="gpt-5.4"></option>
+                      <option value="gpt-5.4-mini"></option>
+                      <option value="gpt-5.4-nano"></option>
+                      <option value="gpt-5.3-chat-latest"></option>
+                      <option value="gpt-5"></option>
                       <option value="gpt-5-mini"></option>
+                      <option value="gpt-5-nano"></option>
                       <option value="gpt-4.1"></option>
                       <option value="gpt-4.1-mini"></option>
-                      <option value="gpt-4o"></option>
-                      <option value="gpt-4o-mini"></option>
                     </datalist>
-                    <div class="form-text">Совет: если нет доступа к GPT‑5.2 — попробуйте <code>gpt-4.1</code> или <code>gpt-4.1-mini</code>.</div>
+                    <div class="form-text">Совет: если нет доступа к GPT‑5.4 — попробуйте <code>gpt-5</code> или <code>gpt-4.1</code>.</div>
                   </div>
                   <div class="col-12 col-lg-4 mt-3">
                     <label class="form-label" for="openai_eval_model">OpenAI · проверка мониторинга</label>
@@ -239,20 +316,22 @@
                       name="openai_eval"
                       value="{{ settings.get('models', {}).get('openai_eval','') }}"
                       list="openai_eval_models"
-                      placeholder="например: gpt-5.2"
+                      placeholder="gpt-5.4-mini (по умолчанию)"
                     />
                     <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрый выбор модели для мониторинга (OpenAI)">
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_eval_model" data-set-value="gpt-5.2">GPT‑5.2</button>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_eval_model" data-set-value="gpt-5-mini">GPT‑5 mini</button>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_eval_model" data-set-value="gpt-4.1-mini">GPT‑4.1 mini</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_eval_model" data-set-value="gpt-5.4-mini">5.4 mini</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_eval_model" data-set-value="gpt-5.4-nano">5.4 nano</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_eval_model" data-set-value="gpt-5-mini">5 mini</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openai_eval_model" data-set-value="gpt-4.1-mini">4.1 mini</button>
                     </div>
                     <datalist id="openai_eval_models">
-                      <option value="gpt-5.2"></option>
+                      <option value="gpt-5.4-mini"></option>
+                      <option value="gpt-5.4-nano"></option>
                       <option value="gpt-5-mini"></option>
+                      <option value="gpt-5-nano"></option>
                       <option value="gpt-4.1-mini"></option>
-                      <option value="gpt-4o-mini"></option>
                     </datalist>
-                    <div class="form-text">Если важна скорость/стоимость — чаще всего хватает <code>gpt-4.1-mini</code>.</div>
+                    <div class="form-text">Для мониторинга обычно хватает <code>gpt-5.4-mini</code> или <code>gpt-5.4-nano</code>.</div>
                   </div>
                   <div class="col-12 col-lg-4 mt-3">
                     <label class="form-label">OpenAI · аватары (ребрендинг)</label>
@@ -268,39 +347,46 @@
                     <div class="d-flex flex-wrap gap-2 align-items-center">
                       <div class="text-muted small me-2">Пресеты (заполняют поля ниже):</div>
                       <button
+                        class="btn btn-sm btn-outline-primary"
+                        type="button"
+                        data-set-multi='{"#openrouter_chat_model":"x-ai/grok-4.1-fast","#openrouter_eval_model":"openai/gpt-5.4-mini"}'
+                      >
+                        Grok 4.1 Fast + GPT‑5.4 mini <span class="badge text-bg-primary ms-1">по умолчанию</span>
+                      </button>
+                      <button
                         class="btn btn-sm btn-outline-secondary"
                         type="button"
                         data-set-multi='{"#openrouter_chat_model":"x-ai/grok-4.1-fast","#openrouter_eval_model":"x-ai/grok-4.1-fast"}'
                       >
-                        Grok 4.1 Fast
+                        Только Grok 4.1 Fast
                       </button>
                       <button
                         class="btn btn-sm btn-outline-secondary"
                         type="button"
-                        data-set-multi='{"#openrouter_chat_model":"x-ai/grok-4-fast","#openrouter_eval_model":"x-ai/grok-4-fast"}'
+                        data-set-multi='{"#openrouter_chat_model":"x-ai/grok-4","#openrouter_eval_model":"x-ai/grok-4.1-fast"}'
                       >
-                        Grok 4 Fast
+                        Grok 4 (качество) + 4.1 Fast
                       </button>
                       <button
                         class="btn btn-sm btn-outline-secondary"
                         type="button"
-                        data-set-multi='{"#openrouter_chat_model":"openai/gpt-5.2-chat","#openrouter_eval_model":"openai/gpt-5.2"}'
+                        data-set-multi='{"#openrouter_chat_model":"openai/gpt-5.4-chat","#openrouter_eval_model":"openai/gpt-5.4-mini"}'
                       >
-                        OpenAI GPT‑5.2
+                        OpenAI GPT‑5.4
                       </button>
                       <button
                         class="btn btn-sm btn-outline-secondary"
                         type="button"
-                        data-set-multi='{"#openrouter_chat_model":"openai/gpt-4.1","#openrouter_eval_model":"openai/gpt-4.1-mini"}'
+                        data-set-multi='{"#openrouter_chat_model":"google/gemini-3.1-flash-lite-preview","#openrouter_eval_model":"google/gemini-3.1-flash-lite-preview"}'
                       >
-                        OpenAI GPT‑4.1
+                        Gemini 3.1 Flash Lite
                       </button>
                       <button
                         class="btn btn-sm btn-outline-secondary"
                         type="button"
-                        data-set-multi='{"#openrouter_chat_model":"openai/gpt-4.1-mini","#openrouter_eval_model":"openai/gpt-4.1-mini"}'
+                        data-set-multi='{"#openrouter_chat_model":"deepseek/deepseek-chat","#openrouter_eval_model":"deepseek/deepseek-chat"}'
                       >
-                        OpenAI 4.1 mini
+                        DeepSeek V3.2
                       </button>
                     </div>
                   </div>
@@ -313,25 +399,32 @@
                       name="openrouter_chat"
                       value="{{ settings.get('models', {}).get('openrouter_chat','') }}"
                       list="openrouter_chat_models"
-                      placeholder="например: x-ai/grok-4.1-fast"
+                      placeholder="x-ai/grok-4.1-fast (по умолчанию)"
                     />
                     <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрый выбор модели для комментариев (OpenRouter)">
                       <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="x-ai/grok-4.1-fast">Grok 4.1 Fast</button>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="x-ai/grok-4-fast">Grok 4 Fast</button>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="openai/gpt-5.2-chat">GPT‑5.2 chat</button>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="openai/gpt-4.1-mini">GPT‑4.1 mini</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="x-ai/grok-4">Grok 4</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="openai/gpt-5.4-chat">GPT‑5.4 chat</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="google/gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_chat_model" data-set-value="deepseek/deepseek-chat">DeepSeek</button>
                     </div>
                     <datalist id="openrouter_chat_models">
                       <option value="x-ai/grok-4.1-fast"></option>
-                      <option value="x-ai/grok-4-fast"></option>
-                      <option value="x-ai/grok-4.1"></option>
                       <option value="x-ai/grok-4"></option>
-                      <option value="openai/gpt-5.2-chat"></option>
-                      <option value="openai/gpt-5.2"></option>
+                      <option value="openai/gpt-5.4-chat"></option>
+                      <option value="openai/gpt-5.4"></option>
+                      <option value="openai/gpt-5.4-mini"></option>
+                      <option value="openai/gpt-5"></option>
+                      <option value="openai/gpt-5-mini"></option>
                       <option value="openai/gpt-4.1"></option>
                       <option value="openai/gpt-4.1-mini"></option>
+                      <option value="google/gemini-3.1-flash-lite-preview"></option>
+                      <option value="google/gemini-3.1-pro-preview"></option>
+                      <option value="google/gemini-2.5-flash"></option>
+                      <option value="deepseek/deepseek-chat"></option>
+                      <option value="deepseek/deepseek-reasoner"></option>
                     </datalist>
-                    <div class="form-text">ID модели берите в <a href="/settings/ai/models?provider=openrouter">списке моделей OpenRouter</a> (там же видно контекст и поддерживаемые параметры).</div>
+                    <div class="form-text">ID модели берите в <a href="/settings/ai/models?provider=openrouter">списке моделей OpenRouter</a> (там же видно контекст и цены).</div>
                   </div>
 
                   <div class="col-12 col-lg-6 mt-2">
@@ -342,33 +435,89 @@
                       name="openrouter_eval"
                       value="{{ settings.get('models', {}).get('openrouter_eval','') }}"
                       list="openrouter_eval_models"
-                      placeholder="например: openai/gpt-4.1-mini"
+                      placeholder="openai/gpt-5.4-mini (по умолчанию)"
                     />
                     <div class="d-flex flex-wrap gap-2 mt-2" role="group" aria-label="Быстрый выбор модели для мониторинга (OpenRouter)">
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_eval_model" data-set-value="openai/gpt-5.4-mini">GPT‑5.4 mini</button>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_eval_model" data-set-value="openai/gpt-5.4-nano">GPT‑5.4 nano</button>
                       <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_eval_model" data-set-value="x-ai/grok-4.1-fast">Grok 4.1 Fast</button>
-                      <button class="btn btn-sm btn-outline-secondary" type="button" data-set-input="#openrouter_eval_model" data-set-value="openai/gpt-4.1-mini">GPT‑4.1 mini</button>
                     </div>
                     <datalist id="openrouter_eval_models">
-                      <option value="x-ai/grok-4.1-fast"></option>
-                      <option value="x-ai/grok-4-fast"></option>
-                      <option value="openai/gpt-5.2"></option>
+                      <option value="openai/gpt-5.4-mini"></option>
+                      <option value="openai/gpt-5.4-nano"></option>
+                      <option value="openai/gpt-5-mini"></option>
                       <option value="openai/gpt-4.1-mini"></option>
+                      <option value="x-ai/grok-4.1-fast"></option>
+                      <option value="google/gemini-3.1-flash-lite-preview"></option>
+                      <option value="deepseek/deepseek-chat"></option>
                     </datalist>
-                    <div class="form-text">Для мониторинга обычно достаточно более быстрой/дешёвой модели.</div>
+                    <div class="form-text">Для мониторинга — более быстрая/дешёвая модель.</div>
                   </div>
                 </div>
               </div>
 
               <div class="tab-pane fade {% if provider == 'deepseek' %}show active{% endif %}" id="aiModelsDeepSeek" role="tabpanel" aria-labelledby="aiModelsDeepSeekTab" tabindex="0">
                 <div class="row g-2">
-                  <div class="col-12 col-lg-6">
-                    <label class="form-label">DeepSeek · комментарии</label>
-                    <input class="form-control" name="deepseek_chat" value="{{ settings.get('models', {}).get('deepseek_chat','') }}" />
-                    <div class="form-text">Напр.: <code>deepseek-chat</code></div>
+                  <div class="col-12">
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                      <div class="text-muted small me-2">Пресеты (заполняют поля ниже):</div>
+                      <button
+                        class="btn btn-sm btn-outline-primary"
+                        type="button"
+                        data-set-multi='{"#deepseek_chat_model":"deepseek-chat","#deepseek_eval_model":"deepseek-chat"}'
+                      >
+                        DeepSeek V3.2 chat <span class="badge text-bg-primary ms-1">по умолчанию</span>
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#deepseek_chat_model":"deepseek-chat","#deepseek_eval_model":"deepseek-reasoner"}'
+                      >
+                        Chat + Reasoner (качество eval)
+                      </button>
+                      <button
+                        class="btn btn-sm btn-outline-secondary"
+                        type="button"
+                        data-set-multi='{"#deepseek_chat_model":"deepseek-reasoner","#deepseek_eval_model":"deepseek-reasoner"}'
+                      >
+                        Только Reasoner
+                      </button>
+                    </div>
                   </div>
-                  <div class="col-12 col-lg-6">
-                    <label class="form-label">DeepSeek · проверка мониторинга</label>
-                    <input class="form-control" name="deepseek_eval" value="{{ settings.get('models', {}).get('deepseek_eval','') }}" />
+
+                  <div class="col-12 col-lg-6 mt-3">
+                    <label class="form-label" for="deepseek_chat_model">DeepSeek · комментарии</label>
+                    <input
+                      class="form-control"
+                      id="deepseek_chat_model"
+                      name="deepseek_chat"
+                      value="{{ settings.get('models', {}).get('deepseek_chat','') }}"
+                      list="deepseek_chat_models"
+                      placeholder="deepseek-chat (по умолчанию)"
+                    />
+                    <datalist id="deepseek_chat_models">
+                      <option value="deepseek-chat"></option>
+                      <option value="deepseek-reasoner"></option>
+                    </datalist>
+                    <div class="form-text">
+                      <code>deepseek-chat</code> — V3.2 non-thinking (быстро, дёшево).
+                      <code>deepseek-reasoner</code> — V3.2 thinking mode (медленнее, но с CoT).
+                    </div>
+                  </div>
+                  <div class="col-12 col-lg-6 mt-3">
+                    <label class="form-label" for="deepseek_eval_model">DeepSeek · проверка мониторинга</label>
+                    <input
+                      class="form-control"
+                      id="deepseek_eval_model"
+                      name="deepseek_eval"
+                      value="{{ settings.get('models', {}).get('deepseek_eval','') }}"
+                      list="deepseek_eval_models"
+                      placeholder="deepseek-chat (по умолчанию)"
+                    />
+                    <datalist id="deepseek_eval_models">
+                      <option value="deepseek-chat"></option>
+                      <option value="deepseek-reasoner"></option>
+                    </datalist>
                   </div>
                 </div>
               </div>

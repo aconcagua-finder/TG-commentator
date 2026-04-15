@@ -70,16 +70,16 @@ ADMIN_WEB_PASSWORD = os.getenv("ADMIN_WEB_PASSWORD", "admin")
 ADMIN_WEB_SECRET = os.getenv("ADMIN_WEB_SECRET") or base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8")
 
 DEFAULT_MODELS: Dict[str, str] = {
-    "openai_chat": "gpt-5.2-chat-latest",
-    "openai_eval": "gpt-5.2",
+    "openai_chat": "gpt-5.4-chat-latest",
+    "openai_eval": "gpt-5.4-mini",
     "openai_image": "gpt-image-1",
     "openrouter_chat": "x-ai/grok-4.1-fast",
-    "openrouter_eval": "openai/gpt-4.1-mini",
+    "openrouter_eval": "openai/gpt-5.4-mini",
     "deepseek_chat": "deepseek-chat",
     "deepseek_eval": "deepseek-chat",
-    "gemini_chat": "gemini-3-flash-preview",
-    "gemini_eval": "gemini-3-flash-preview",
-    "gemini_names": "gemini-3-flash-preview",
+    "gemini_chat": "gemini-3.1-flash-lite-preview",
+    "gemini_eval": "gemini-3.1-flash-lite-preview",
+    "gemini_names": "gemini-3.1-flash-lite-preview",
 }
 
 DEFAULT_PROJECT_ID = "default"
