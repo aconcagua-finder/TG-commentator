@@ -164,14 +164,33 @@ async def generate_comment(
         system_prompt += f"\nНЕ ИСПОЛЬЗУЙ СЛОВА: {', '.join(global_blacklist)}"
 
     if is_reply_mode:
-        context_prefix = f"ТЕБЕ ГОВОРИТ {reply_to_name}: " if reply_to_name else ""
-        user_template = (
-            "КОНТЕКСТ ДИАЛОГА:\n{context}{post}\n\n"
-            "Ответь согласно своей роли.\n"
-            "{length_hint}\n"
-            "{style_hint}\n"
-            "{question_hint}"
-        )
+        # post_text arrives pre-structured from services.dialogue.build_reply_context
+        # with sections like "ПОСТ КАНАЛА", "ВЫШЕ В ОБСУЖДЕНИИ", "СООБЩЕНИЕ, НА
+        # КОТОРОЕ ОТВЕЧАЕМ". In older code paths that still pass a raw comment
+        # we fall back to a short header + name prefix so the model still gets
+        # at least "who is talking".
+        post_text_raw = str(post_text or "")
+        looks_structured = "ПОСТ КАНАЛА" in post_text_raw or "ВЫШЕ В ОБСУЖДЕНИИ" in post_text_raw
+        if looks_structured:
+            context_prefix = ""
+            user_template = (
+                "{post}\n\n"
+                "Ответь согласно своей роли, учитывая тему поста и тон обсуждения. "
+                "Не начинай фразу с обращения по имени. "
+                "Реагируй именно на СООБЩЕНИЕ, НА КОТОРОЕ ОТВЕЧАЕМ, остальное — контекст.\n"
+                "{length_hint}\n"
+                "{style_hint}\n"
+                "{question_hint}"
+            )
+        else:
+            context_prefix = f"ТЕБЕ ГОВОРИТ {reply_to_name}: " if reply_to_name else ""
+            user_template = (
+                "КОНТЕКСТ ДИАЛОГА:\n{context}{post}\n\n"
+                "Ответь согласно своей роли.\n"
+                "{length_hint}\n"
+                "{style_hint}\n"
+                "{question_hint}"
+            )
     else:
         context_prefix = ""
         user_template = (

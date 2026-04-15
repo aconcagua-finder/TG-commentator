@@ -17,6 +17,7 @@ from services.connection import (
 )
 from services.db_queries import log_action_to_db
 from services.dialogue import (
+    build_reply_context,
     check_dialogue_depth,
     count_dialogue_ai_replies,
     get_all_our_user_ids,
@@ -211,9 +212,26 @@ async def process_reply_to_comment(
     action_type = "ВМЕШАЕТСЯ" if is_intervention else "ОТВЕТИТ"
     to_who = f"нашему боту ({target_name})" if is_reply_to_us else f"пользователю {target_name}"
     logger.info(f"🤖 [{triggered_client.session_name}] {action_type} {to_who} через {personal_delay}с (шанс {roll}%)")
+
+    # Build a rich prompt_base: original channel post + thread history +
+    # the trigger message. Falls back to the raw trigger text if thread
+    # resolution fails for any reason — same behaviour as before, so we
+    # never regress into "no prompt at all".
+    try:
+        prompt_base = await build_reply_context(
+            event.client,
+            event.message,
+            max_chain=max_history,
+        )
+    except Exception as exc:
+        logger.warning(f"build_reply_context failed for {msg_id}: {exc}")
+        prompt_base = ""
+    if not prompt_base:
+        prompt_base = f"{event.message.text or ''}"
+
     asyncio.create_task(execute_reply_with_fallback(
         [triggered_client], chat_id, target_chat,
-        f"{event.message.text}", personal_delay,
+        prompt_base, personal_delay,
         msg_id, reply_to_name=target_name, is_intervention=is_intervention,
         pending_tasks=pending_tasks,
         current_settings=current_settings,
