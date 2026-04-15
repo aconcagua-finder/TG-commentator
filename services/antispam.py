@@ -267,15 +267,36 @@ def _parse_keywords(raw: Any) -> list[str]:
 
 
 def _keyword_match(text: str, keywords: list[str]) -> str | None:
+    """Match keywords in text. Supports a trailing '*' as a prefix marker.
+
+    - "крипта"   → requires exact substring "крипта" (strict, as before)
+    - "крипт*"   → matches any word that starts with "крипт": крипта/крипте/
+                   крипту/крипторубль/…
+
+    The prefix marker is used instead of always stripping endings because
+    short keywords (3-4 letters) would otherwise cause false positives.
+    """
     if not text or not keywords:
         return None
+    import re as _re
     hay = text.lower()
     for kw in keywords:
-        needle = str(kw or "").strip()
-        if not needle:
+        needle_raw = str(kw or "").strip()
+        if not needle_raw:
             continue
-        if needle.lower() in hay:
-            return needle
+        needle = needle_raw.lower()
+        if needle.endswith("*"):
+            stem = needle[:-1]
+            if not stem:
+                continue
+            # Word starts with stem: either at the very beginning, or after
+            # a non-letter character (space, punctuation, etc.).
+            pattern = r"(?:^|[^\w])" + _re.escape(stem) + r"\w*"
+            if _re.search(pattern, hay, flags=_re.UNICODE):
+                return needle_raw
+        else:
+            if needle in hay:
+                return needle_raw
     return None
 
 
@@ -314,7 +335,7 @@ def _load_spam_rule(chat_id: str) -> dict[str, Any] | None:
             "ai_enabled": int(row["ai_enabled"] or 0),
             "ai_check_name": int(ai_check_name_raw or 0),
             "ai_prompt": str(row["ai_prompt"] or "").strip(),
-            "ai_model": str(row["ai_model"] or "gpt-5-nano").strip() or "gpt-5-nano",
+            "ai_model": str(row["ai_model"] or "gpt-5-mini").strip() or "gpt-5-mini",
             "notify_telegram": int(row["notify_telegram"] or 0),
         }
     except Exception as exc:
@@ -366,10 +387,24 @@ async def _ai_check_spam(
     if not text.strip() and not (check_name and sender_display.strip()):
         return False, "empty_input", ""
 
-    system_prompt = (
-        "Ты антиспам-фильтр для Telegram-комментариев. "
-        "Определи, является ли сообщение спамом/рекламой/скамом.\n"
-        "Спам: крипта/инвестиции/сигналы, казино/ставки, промокоды/скидки, "
+    extra = str(ai_prompt or "").strip()
+
+    system_prompt = "Ты антиспам-фильтр для Telegram-комментариев. "
+    if extra:
+        # Put the channel-specific definition FIRST and make it the primary
+        # rule. Previously the custom prompt was appended after the default
+        # categories and a "when in doubt — not spam" hedge, so short prompts
+        # like "упоминания крипты" were ignored by the model.
+        system_prompt += (
+            "Главное правило (задано администратором канала): "
+            f"{extra}\n"
+            "Любое сообщение, подпадающее под это правило, — СПАМ (spam=true), "
+            "даже если текст выглядит вежливым или осмысленным, а автор не призывает напрямую. "
+            "Признаки из этого правила важнее признаков 'нейтральности' сообщения.\n"
+        )
+    system_prompt += (
+        "Дополнительно относи к спаму стандартные категории: "
+        "крипта/инвестиции/сигналы, казино/ставки, промокоды/скидки, "
         "реферальные ссылки, набор в команды, 'пиши в лс', предложения заработка, "
         "продажа услуг, накрутка, фишинг.\n"
     )
@@ -388,11 +423,9 @@ async def _ai_check_spam(
             "Верни СТРОГО JSON без пояснений вокруг: "
             '{"spam": true|false, "reason": "коротко почему"}.\n'
         )
-    system_prompt += "Если сомневаешься — spam=false."
-
-    extra = str(ai_prompt or "").strip()
-    if extra:
-        system_prompt += f"\n\nДоп.описание спама для этого канала:\n{extra}"
+    # Milder hedge: only bail on truly ambiguous cases, not on everything.
+    # With a custom prompt provided, the admin's intent already disambiguates.
+    system_prompt += "Если сообщение не подпадает ни под одно из правил выше — spam=false."
 
     user_parts = []
     if check_name and sender_display.strip():
@@ -406,7 +439,7 @@ async def _ai_check_spam(
             "unsupported" in msg or "does not support" in msg or "only the default" in msg
         )
 
-    model_name = str(model or "gpt-5-nano")
+    model_name = str(model or "gpt-5-mini")
     # GPT-5 series rejects temperature != 1; skip the parameter for those models
     # up-front to save an API round-trip. For older models we still send temperature=0
     # so the classification stays deterministic.
@@ -674,7 +707,7 @@ async def _classify_spam(
         is_spam, reason, source = await _ai_check_spam(
             text,
             ai_prompt=str(rule.get("ai_prompt") or ""),
-            model=str(rule.get("ai_model") or "gpt-5-nano"),
+            model=str(rule.get("ai_model") or "gpt-5-mini"),
             api_key=api_key,
             sender_display=sender_display,
             check_name=check_name,

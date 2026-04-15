@@ -30,14 +30,21 @@
 
             <div class="mb-3">
               <label class="form-label" for="keywords_text">Ключевые слова и фразы в тексте (по одному на строку)</label>
-              <textarea class="form-control mono" name="keywords_text" id="keywords_text" rows="6" placeholder="крипто&#10;казино&#10;пиши в лс&#10;бесплатные сигналы&#10;заработок от 1000$&#10;t.me/spam_channel">{{ keywords_text }}</textarea>
-              <div class="form-text">Поиск по подстроке в тексте сообщения, без учёта регистра. Если найдено совпадение — сообщение удаляется без AI.</div>
+              <textarea class="form-control mono" name="keywords_text" id="keywords_text" rows="6" placeholder="крипт*&#10;казино&#10;пиши в лс&#10;бесплатные сигналы&#10;заработок от 1000$&#10;t.me/spam_channel">{{ keywords_text }}</textarea>
+              <div class="form-text">
+                По подстроке, без учёта регистра. Совпадение — сообщение удаляется без AI.
+                <br>
+                <b>Ловить все словоформы:</b> добавьте <code>*</code> в конец — например <code>крипт*</code> поймает «крипта / крипте / крипту / криптовалюта», но не слово «скрипт». Без звёздочки ищется точное совпадение подстроки.
+              </div>
             </div>
 
             <div class="mb-3">
               <label class="form-label" for="name_keywords_text">Ключевые слова и фразы в имени отправителя (по одному на строку)</label>
-              <textarea class="form-control mono" name="name_keywords_text" id="name_keywords_text" rows="5" placeholder="продвижение&#10;реклама&#10;|&#10;маркетинг&#10;продажи&#10;@spam_promo">{{ name_keywords_text }}</textarea>
-              <div class="form-text">Проверяется first_name + last_name + @username отправителя. Полезно против "умных" спамеров, которые пишут осмысленный текст, но в имени у них реклама.</div>
+              <textarea class="form-control mono" name="name_keywords_text" id="name_keywords_text" rows="5" placeholder="продвижение&#10;реклам*&#10;|&#10;маркетинг&#10;продажи&#10;@spam_promo">{{ name_keywords_text }}</textarea>
+              <div class="form-text">
+                Проверяется first_name + last_name + @username отправителя. Полезно против «умных» спамеров с рекламой в имени.
+                <br>Также работает синтаксис <code>слово*</code> для всех словоформ (например <code>реклам*</code> → реклама/рекламы/рекламный).
+              </div>
             </div>
 
             <div class="form-check form-switch mb-3">
@@ -53,16 +60,19 @@
 
             <div class="mb-3">
               <label class="form-label" for="ai_prompt">Описание спама для AI (опционально)</label>
-              <textarea class="form-control" name="ai_prompt" id="ai_prompt" rows="4" placeholder="Считай спамом любые предложения заработка/инвестиций/казино, приглашения в каналы, промокоды и ссылки.">{{ rule.ai_prompt }}</textarea>
+              <textarea class="form-control" name="ai_prompt" id="ai_prompt" rows="4" placeholder="Любые упоминания криптовалют, казино/ставок, схем заработка, приглашения в каналы/ЛС, промокоды и ссылки — считай спамом, даже если сообщение сформулировано вежливо.">{{ rule.ai_prompt }}</textarea>
+              <div class="form-text">
+                Это правило становится <b>главным</b> для модели. Формулируйте прямо: «<i>упоминания крипты — спам</i>», а не «<i>упоминания крипты</i>». Слишком короткий/размытый prompt модель может проигнорировать.
+              </div>
             </div>
 
             <div class="mb-3">
               <label class="form-label" for="ai_model">Модель</label>
               <select class="form-select" name="ai_model" id="ai_model">
-                <option value="gpt-5-nano" {% if rule.ai_model == 'gpt-5-nano' %}selected{% endif %}>gpt-5-nano (рекомендуется — самая быстрая и дешёвая)</option>
-                <option value="gpt-5-mini" {% if rule.ai_model == 'gpt-5-mini' %}selected{% endif %}>gpt-5-mini (точнее, дороже)</option>
-                <option value="gpt-5.4-nano" {% if rule.ai_model == 'gpt-5.4-nano' %}selected{% endif %}>gpt-5.4-nano</option>
+                <option value="gpt-5-mini" {% if rule.ai_model == 'gpt-5-mini' %}selected{% endif %}>gpt-5-mini (рекомендуется — лучше ловит подтекст)</option>
+                <option value="gpt-5-nano" {% if rule.ai_model == 'gpt-5-nano' %}selected{% endif %}>gpt-5-nano (быстрее и дешевле, но чаще пропускает)</option>
                 <option value="gpt-5.4-mini" {% if rule.ai_model == 'gpt-5.4-mini' %}selected{% endif %}>gpt-5.4-mini</option>
+                <option value="gpt-5.4-nano" {% if rule.ai_model == 'gpt-5.4-nano' %}selected{% endif %}>gpt-5.4-nano</option>
                 {% if rule.ai_model == 'gpt-4.1-nano' %}
                   <option value="gpt-4.1-nano" selected>gpt-4.1-nano (legacy)</option>
                 {% endif %}
@@ -70,7 +80,7 @@
                   <option value="gpt-4.1-mini" selected>gpt-4.1-mini (legacy)</option>
                 {% endif %}
               </select>
-              <div class="form-text">AI используется только если не сработали ключевые слова (в тексте или имени). Для антиспама достаточно самой дешёвой nano-модели.</div>
+              <div class="form-text">AI используется только если не сработали ключевые слова. <code>gpt-5-nano</code> часто недооценивает нейтральные по тону, но тематически запрещённые сообщения — для надёжности используй <code>gpt-5-mini</code>.</div>
             </div>
 
             <div class="form-check form-switch mb-3">

@@ -53,7 +53,7 @@ def _load_rule(chat_id: str) -> Dict[str, Any]:
         "ai_enabled": 1,
         "ai_check_name": 0,
         "ai_prompt": "",
-        "ai_model": "gpt-5-nano",
+        "ai_model": "gpt-5-mini",
         "notify_telegram": 0,
     }
     if not chat_id:
@@ -99,7 +99,7 @@ def _load_rule(chat_id: str) -> Dict[str, Any]:
         "ai_enabled": int(row["ai_enabled"] or 0),
         "ai_check_name": int(ai_check_name_raw or 0),
         "ai_prompt": str(row["ai_prompt"] or ""),
-        "ai_model": str(row["ai_model"] or "gpt-5-nano") or "gpt-5-nano",
+        "ai_model": str(row["ai_model"] or "gpt-5-mini") or "gpt-5-mini",
         "notify_telegram": int(row["notify_telegram"] or 0),
     }
 
@@ -259,7 +259,7 @@ async def antispam_targets_new_submit(
         ai_enabled=1,
         ai_check_name=0,
         ai_prompt="",
-        ai_model="gpt-5-nano",
+        ai_model="gpt-5-mini",
         notify_telegram=0,
     )
 
@@ -312,7 +312,7 @@ async def antispam_target_edit_save(
     ai_enabled: str | None = Form(None),
     ai_check_name: str | None = Form(None),
     ai_prompt: str = Form(""),
-    ai_model: str = Form("gpt-5-nano"),
+    ai_model: str = Form("gpt-5-mini"),
     notify_telegram: str | None = Form(None),
     ban_spammers: str | None = Form(None),
     bot_token: str = Form(""),
@@ -336,7 +336,7 @@ async def antispam_target_edit_save(
         ai_enabled=1 if _parse_bool(ai_enabled, default=False) else 0,
         ai_check_name=1 if _parse_bool(ai_check_name, default=False) else 0,
         ai_prompt=str(ai_prompt or "").strip(),
-        ai_model=str(ai_model or "gpt-5-nano").strip() or "gpt-5-nano",
+        ai_model=str(ai_model or "gpt-5-mini").strip() or "gpt-5-mini",
         notify_telegram=1 if _parse_bool(notify_telegram, default=False) else 0,
     )
 
