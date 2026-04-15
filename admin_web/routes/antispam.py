@@ -593,6 +593,10 @@ async def antispam_target_scan_post(
                     active_clients=active_clients,
                     current_settings=settings,
                     limit=limit_int,
+                    # Manual scans test rules, including on comments from our own
+                    # accounts — e.g. a team member posted a message that looks
+                    # like spam to double-check detection works.
+                    skip_our_accounts=False,
                 )
             except Exception as exc:
                 error_text = f"scan_error: {type(exc).__name__}: {exc}"

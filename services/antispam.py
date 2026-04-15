@@ -1093,6 +1093,7 @@ async def scan_post_for_spam(
     spam_blocked_msgs_order: deque | None = None,
     spam_blocked_msgs_max: int = 10000,
     limit: int = 200,
+    skip_our_accounts: bool = True,
 ) -> dict[str, Any]:
     """Manually scan all comments under a Telegram post for spam.
 
@@ -1177,10 +1178,20 @@ async def scan_post_for_spam(
         logger.warning("antispam scan: failed to get discussion entity: %s", exc)
         return {"ok": False, "error": "discussion_entity_failed", "checked": 0, "spam": 0, "deleted": 0, "banned": 0}
 
-    try:
-        our_ids = get_all_our_user_ids(active_clients=active_clients, current_settings=current_settings)
-    except Exception:
+    if skip_our_accounts:
+        try:
+            our_ids = get_all_our_user_ids(active_clients=active_clients, current_settings=current_settings)
+        except Exception:
+            our_ids = set()
+    else:
+        # Manual scans deliberately include messages from our own accounts so
+        # the user can test rules against a comment they posted themselves.
         our_ids = set()
+
+    logger.info(
+        "antispam scan: post=%s target=%s discussion=%s root=%s skip_our=%s",
+        post_url, target_chat_id, discussion_chat_id, discussion_root_id, skip_our_accounts,
+    )
 
     checked = 0
     spam_count = 0
@@ -1238,6 +1249,12 @@ async def scan_post_for_spam(
                 rule=rule,
                 current_settings=current_settings,
             )
+            if is_spam:
+                logger.info(
+                    "antispam scan: msg_id=%s sender=%r method=%s kw=%s reason=%s",
+                    msg_id_int, sender_name, detection_method, matched_keyword,
+                    (ai_reason or "")[:80],
+                )
             if not is_spam:
                 continue
 
