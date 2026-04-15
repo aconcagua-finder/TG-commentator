@@ -483,12 +483,19 @@ async def _check_account_entry(
             acc["last_checked"] = datetime.now(timezone.utc).isoformat()
             return "unavailable", True
 
+        me_phone = getattr(me, "phone", None)
+        phone_value = (
+            (f"+{me_phone}" if me_phone and not str(me_phone).startswith("+") else me_phone)
+            or acc.get("phone")
+            or ""
+        )
         acc.update(
             {
                 "user_id": me.id,
                 "first_name": me.first_name,
                 "last_name": me.last_name or "",
                 "username": me.username or "",
+                "phone": phone_value,
             }
         )
         acc["status"] = "active"

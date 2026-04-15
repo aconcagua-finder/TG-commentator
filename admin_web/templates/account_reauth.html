@@ -31,8 +31,15 @@
       <form method="post" action="/accounts/{{ account.session_name }}/reauth/start">
         <div class="mb-2">
           <label class="form-label">Телефон (+7999...)</label>
-          <input class="form-control" type="tel" inputmode="tel" name="phone" placeholder="+79991234567" required />
-          <div class="form-text">Укажите тот же номер, к которому привязан аккаунт.</div>
+          <input class="form-control" type="tel" inputmode="tel" name="phone" placeholder="+79991234567"
+                 value="{{ account.get('phone','') }}" required />
+          <div class="form-text">
+            {% if account.get('phone') %}
+              Подставлен сохранённый номер. Обычно нужно оставить как есть.
+            {% else %}
+              Укажите номер телефона, к которому привязан аккаунт.
+            {% endif %}
+          </div>
         </div>
         <div class="mb-2">
           <label class="form-label">Прокси</label>

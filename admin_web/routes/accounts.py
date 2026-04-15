@@ -529,6 +529,7 @@ async def _finalize_phone_login(request: Request, token: str):
         "first_name": me.first_name,
         "last_name": me.last_name or "",
         "username": me.username or "",
+        "phone": st.phone,
         "status": "active",
         "project_id": project_id,
         "date_added": datetime.now(timezone.utc).isoformat(),
@@ -1553,6 +1554,7 @@ async def _finalize_phone_reauth(request: Request, session_name: str, token: str
     acc["first_name"] = me.first_name or acc.get("first_name", "")
     acc["last_name"] = me.last_name or ""
     acc["username"] = me.username or ""
+    acc["phone"] = st.phone
     acc["status"] = "active"
     acc.pop("last_error", None)
     acc["last_checked"] = datetime.now(timezone.utc).isoformat()
