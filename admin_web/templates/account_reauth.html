@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% import "macros.html" as ui %}
+{% block title %}Переавторизация · {{ account.session_name }}{% endblock %}
+{% block content %}
+  {{ ui.breadcrumb([
+    {"href": "/accounts", "label": "Аккаунты"},
+    {"href": "/accounts/" ~ account.session_name, "label": account.session_name},
+    {"label": "Переавторизация"}
+  ]) }}
+
+  <h1 class="h3 mb-3">Переавторизация аккаунта</h1>
+
+  <div class="card">
+    <div class="card-body">
+      <p class="mb-1">Аккаунт: <span class="mono">{{ account.session_name }}</span></p>
+      {% if account.get('first_name') or account.get('last_name') %}
+        <p class="text-muted mb-1">
+          Был:
+          {{ account.get('first_name','') }} {{ account.get('last_name','') }}
+          {% if account.get('username') %}· @{{ account.get('username') }}{% endif %}
+          {% if account.get('user_id') %}· ID {{ account.get('user_id') }}{% endif %}
+        </p>
+      {% endif %}
+      <p class="text-muted small mb-3">
+        Текущая сессия больше не авторизована. Настройки аккаунта (роль, прокси, время сна, привязки к чатам) будут сохранены,
+        а после успешного входа бот автоматически попытается перевступить во все нужные чаты.
+        <br>Важно: войдите под <b>тем же самым</b> Telegram-пользователем (ID {{ account.get('user_id','—') }}),
+        иначе переавторизация будет отклонена, чтобы не сломать привязки.
+      </p>
+
+      <form method="post" action="/accounts/{{ account.session_name }}/reauth/start">
+        <div class="mb-2">
+          <label class="form-label">Телефон (+7999...)</label>
+          <input class="form-control" type="tel" inputmode="tel" name="phone" placeholder="+79991234567" required />
+          <div class="form-text">Укажите тот же номер, к которому привязан аккаунт.</div>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Прокси</label>
+          <select class="form-select" name="proxy_id">
+            <option value="">без прокси</option>
+            {% for p in proxies %}
+              {% set label = p.name or (p.ip or '—') ~ ((' (' ~ p.country ~ ')') if p.country else '') %}
+              <option value="{{ p.id }}" {% if current_proxy_id and p.id == current_proxy_id %}selected{% endif %}>
+                {{ ('#' ~ p.id ~ ' · ') if not p.name else '' }}{{ label }}
+              </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            По умолчанию — текущий прокси аккаунта{% if current_proxy_url %} ({{ current_proxy_url }}){% endif %}.
+            Если причина unauthorized — мёртвый прокси, выберите другой.
+          </div>
+        </div>
+        <div class="d-flex gap-2 mt-3">
+          <button class="btn btn-primary" type="submit">Отправить код</button>
+          <a class="btn btn-outline-secondary" href="/accounts/{{ account.session_name }}">Отмена</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

@@ -1148,3 +1148,443 @@ async def account_delete(request: Request, session_name: str):
 
     _flash(request, "success", f"Аккаунт '{session_name}' удалён.")
     return _redirect("/accounts")
+
+
+# ---------------------------------------------------------------------------
+# Re-authorization (reauth) flow for accounts that lost their session
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _PhoneReauthState:
+    token: str
+    created_at: float
+    client: TelegramClient
+    session_name: str
+    phone: str
+    phone_code_hash: str
+    proxy_url: str | None
+    device_profile: Dict[str, Any]
+    expected_user_id: int | None
+
+
+PHONE_REAUTHS: Dict[str, _PhoneReauthState] = {}
+
+
+def _phone_reauths_gc(max_age_seconds: int = 10 * 60) -> None:
+    now = time.time()
+    for token, st in list(PHONE_REAUTHS.items()):
+        if now - st.created_at > max_age_seconds:
+            try:
+                if st.client.is_connected():
+                    asyncio.create_task(st.client.disconnect())
+            except Exception:
+                pass
+            PHONE_REAUTHS.pop(token, None)
+
+
+def _rejoin_target_lookup(settings: Dict[str, Any], project_id: str, session_name: str) -> Dict[str, Dict[str, Any]]:
+    """Return target lookup by chat_id/linked_chat_id for the given session_name."""
+    targets = _filter_by_project(settings.get("targets") or [], project_id)
+    lookup: Dict[str, Dict[str, Any]] = {}
+    for t in targets:
+        if not isinstance(t, dict):
+            continue
+        assigned = t.get("assigned_accounts") or []
+        if not isinstance(assigned, list):
+            continue
+        if session_name not in [str(x).strip() for x in assigned if str(x).strip()]:
+            continue
+        for key in ("chat_id", "linked_chat_id"):
+            tid = str(t.get(key) or "").strip()
+            if tid:
+                lookup[tid] = t
+    return lookup
+
+
+async def _rejoin_all_assigned(acc: Dict[str, Any], settings: Dict[str, Any], project_id: str) -> tuple[int, int]:
+    """Re-join the account into every target it's assigned to. Returns (ok, fail)."""
+    from admin_web.telethon_utils import _attempt_join_target
+    from services.connection import _record_account_failure as _record_failure_svc
+
+    session_name = acc.get("session_name", "")
+    lookup = _rejoin_target_lookup(settings, project_id, session_name)
+    if not lookup:
+        return 0, 0
+
+    api_id_default, api_hash_default = _telethon_credentials()
+    session = _resolve_account_session(acc)
+    if not session:
+        return 0, len(lookup)
+    api_id, api_hash = _resolve_account_credentials(acc, api_id_default, api_hash_default)
+    proxy_tuple = _resolve_account_proxy(acc)
+    client = TelegramClient(session, api_id, api_hash, proxy=proxy_tuple, **device_kwargs(acc))
+
+    ok = 0
+    fail = 0
+    try:
+        await asyncio.wait_for(client.connect(), timeout=15.0)
+        if not await asyncio.wait_for(client.is_user_authorized(), timeout=15.0):
+            for tid in lookup.keys():
+                _update_join_status(session_name, tid, "failed", last_error="unauthorized")
+            return 0, len(lookup)
+        for tid, target in lookup.items():
+            try:
+                joined, last_error, last_method = await _attempt_join_target(
+                    client, session_name, target, tid
+                )
+                if joined:
+                    _update_join_status(session_name, tid, "joined")
+                    ok += 1
+                else:
+                    _update_join_status(
+                        session_name, tid, "failed",
+                        last_error=last_error, last_method=last_method,
+                    )
+                    try:
+                        _record_failure_svc(
+                            session_name, "join",
+                            last_error=str(last_error) if last_error else None,
+                            last_target=str(tid),
+                        )
+                    except Exception:
+                        pass
+                    fail += 1
+            except Exception as e:
+                _update_join_status(session_name, tid, "failed", last_error=str(e)[:500])
+                fail += 1
+    except Exception as e:
+        for tid in lookup.keys():
+            _update_join_status(session_name, tid, "failed", last_error=str(e)[:500])
+        fail += len(lookup) - ok
+    finally:
+        try:
+            if client.is_connected():
+                await client.disconnect()
+        except Exception:
+            pass
+    return ok, fail
+
+
+@router.get("/accounts/{session_name}/reauth", response_class=HTMLResponse)
+async def account_reauth_page(request: Request, session_name: str):
+    accounts, _ = _load_accounts()
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    account = next(
+        (a for a in accounts if a.get("session_name") == session_name and _project_id_for(a) == project_id),
+        None,
+    )
+    if not account:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден в текущем проекте")
+
+    with _db_connect() as conn:
+        proxies = conn.execute(
+            "SELECT id, ip, country, url, name FROM proxies WHERE status='active' ORDER BY id DESC"
+        ).fetchall()
+
+    current_proxy_url = account.get("proxy_url") or ""
+    current_proxy_id: Optional[int] = None
+    if current_proxy_url:
+        with _db_connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM proxies WHERE url = %s LIMIT 1", (current_proxy_url,)
+            ).fetchone()
+            if row:
+                current_proxy_id = int(row["id"])
+
+    return templates.TemplateResponse(
+        "account_reauth.html",
+        _template_context(
+            request,
+            account=account,
+            proxies=proxies,
+            current_proxy_url=current_proxy_url,
+            current_proxy_id=current_proxy_id,
+        ),
+    )
+
+
+@router.post("/accounts/{session_name}/reauth/start", response_class=HTMLResponse)
+async def account_reauth_start(
+    request: Request,
+    session_name: str,
+    phone: str = Form(...),
+    proxy_id: str = Form(""),
+):
+    _phone_reauths_gc()
+
+    phone = phone.strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="Нужно указать номер телефона")
+
+    accounts, _ = _load_accounts()
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    account = next(
+        (a for a in accounts if a.get("session_name") == session_name and _project_id_for(a) == project_id),
+        None,
+    )
+    if not account:
+        raise HTTPException(status_code=404, detail="Аккаунт не найден в текущем проекте")
+
+    # Pick proxy: use explicitly selected one, else fall back to account's current proxy.
+    proxy_url: str | None = account.get("proxy_url") or None
+    if proxy_id.strip():
+        try:
+            proxy_id_int = int(proxy_id)
+        except ValueError:
+            proxy_id_int = None
+            _flash(request, "warning", "Прокси: некорректный ID, используется текущий прокси аккаунта.")
+        if proxy_id_int is not None:
+            with _db_connect() as conn:
+                row = conn.execute("SELECT url FROM proxies WHERE id = %s", (proxy_id_int,)).fetchone()
+                proxy_url = row["url"] if row else None
+    elif proxy_id == "":
+        # Empty explicit selection means "keep current account proxy". If the user wants
+        # to drop the proxy entirely, they can set it via the proxy form before reauth.
+        pass
+
+    api_id, api_hash = _telethon_credentials()
+    proxy_tuple = _parse_proxy_tuple(proxy_url) if proxy_url else None
+
+    # Reuse the account's existing device profile so Telegram sees the same fingerprint.
+    ensure_device_profile(account)
+    device_profile = {
+        k: account.get(k)
+        for k in ("device_type", "device_model", "system_version", "app_version", "lang_code", "system_lang_code")
+        if account.get(k)
+    }
+
+    client = TelegramClient(
+        StringSession(),
+        api_id,
+        api_hash,
+        proxy=proxy_tuple,
+        **device_kwargs(account),
+    )
+    await client.connect()
+
+    try:
+        sent_code = await client.send_code_request(phone)
+    except RPCError as e:
+        try:
+            if client.is_connected():
+                await client.disconnect()
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=f"Ошибка Telegram API: {e}") from e
+
+    try:
+        expected_user_id = int(account.get("user_id") or 0) or None
+    except (TypeError, ValueError):
+        expected_user_id = None
+
+    token = uuid.uuid4().hex
+    PHONE_REAUTHS[token] = _PhoneReauthState(
+        token=token,
+        created_at=time.time(),
+        client=client,
+        session_name=session_name,
+        phone=phone,
+        phone_code_hash=sent_code.phone_code_hash,
+        proxy_url=proxy_url,
+        device_profile=device_profile,
+        expected_user_id=expected_user_id,
+    )
+
+    return templates.TemplateResponse(
+        "account_phone_code.html",
+        _template_context(
+            request,
+            token=token,
+            session_name=session_name,
+            phone=phone,
+            action_base=f"/accounts/{quote(session_name)}/reauth",
+        ),
+    )
+
+
+@router.post("/accounts/{session_name}/reauth/{token}/cancel")
+async def account_reauth_cancel(request: Request, session_name: str, token: str):
+    st = PHONE_REAUTHS.pop(token, None)
+    if st:
+        try:
+            if st.client.is_connected():
+                await st.client.disconnect()
+        except Exception:
+            pass
+    _flash(request, "success", "Переавторизация отменена.")
+    return _redirect(f"/accounts/{quote(session_name)}")
+
+
+@router.post("/accounts/{session_name}/reauth/{token}/code", response_class=HTMLResponse)
+async def account_reauth_code(
+    request: Request,
+    session_name: str,
+    token: str,
+    code: str = Form(...),
+):
+    st = PHONE_REAUTHS.get(token)
+    if not st or st.session_name != session_name:
+        _flash(request, "danger", "Сессия входа устарела. Начните заново.")
+        return _redirect(f"/accounts/{quote(session_name)}/reauth")
+
+    code = code.strip()
+    try:
+        await st.client.sign_in(st.phone, code, phone_code_hash=st.phone_code_hash)
+    except (PhoneCodeInvalidError, PhoneCodeExpiredError):
+        _flash(request, "danger", "Неверный или истекший код. Попробуйте снова.")
+        return templates.TemplateResponse(
+            "account_phone_code.html",
+            _template_context(
+                request,
+                token=token,
+                session_name=st.session_name,
+                phone=st.phone,
+                action_base=f"/accounts/{quote(session_name)}/reauth",
+            ),
+        )
+    except SessionPasswordNeededError:
+        return templates.TemplateResponse(
+            "account_phone_password.html",
+            _template_context(
+                request,
+                token=token,
+                session_name=st.session_name,
+                phone=st.phone,
+                action_base=f"/accounts/{quote(session_name)}/reauth",
+            ),
+        )
+    except Exception as e:
+        PHONE_REAUTHS.pop(token, None)
+        try:
+            if st.client.is_connected():
+                await st.client.disconnect()
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=f"Ошибка входа: {e}") from e
+
+    return await _finalize_phone_reauth(request, session_name, token)
+
+
+@router.post("/accounts/{session_name}/reauth/{token}/password", response_class=HTMLResponse)
+async def account_reauth_password(
+    request: Request,
+    session_name: str,
+    token: str,
+    tfa_password: str = Form(...),
+):
+    st = PHONE_REAUTHS.get(token)
+    if not st or st.session_name != session_name:
+        _flash(request, "danger", "Сессия входа устарела. Начните заново.")
+        return _redirect(f"/accounts/{quote(session_name)}/reauth")
+
+    try:
+        await st.client.sign_in(password=tfa_password.strip())
+    except PasswordHashInvalidError:
+        _flash(request, "danger", "Неверный пароль 2FA. Попробуйте снова.")
+        return templates.TemplateResponse(
+            "account_phone_password.html",
+            _template_context(
+                request,
+                token=token,
+                session_name=st.session_name,
+                phone=st.phone,
+                action_base=f"/accounts/{quote(session_name)}/reauth",
+            ),
+        )
+    except Exception as e:
+        PHONE_REAUTHS.pop(token, None)
+        try:
+            if st.client.is_connected():
+                await st.client.disconnect()
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=f"Ошибка 2FA: {e}") from e
+
+    return await _finalize_phone_reauth(request, session_name, token)
+
+
+async def _finalize_phone_reauth(request: Request, session_name: str, token: str):
+    st = PHONE_REAUTHS.pop(token, None)
+    if not st:
+        _flash(request, "danger", "Сессия входа устарела. Начните заново.")
+        return _redirect(f"/accounts/{quote(session_name)}/reauth")
+
+    try:
+        me = await st.client.get_me()
+        session_string = st.client.session.save()
+    finally:
+        try:
+            if st.client.is_connected():
+                await st.client.disconnect()
+        except Exception:
+            pass
+
+    if not me:
+        _flash(request, "danger", "Не удалось получить данные пользователя Telegram.")
+        return _redirect(f"/accounts/{quote(session_name)}/reauth")
+
+    # Guard: reject if a different Telegram user logged in — preserves project links.
+    if st.expected_user_id and int(me.id) != st.expected_user_id:
+        _flash(
+            request,
+            "danger",
+            (
+                "В Telegram вошли под другим пользователем "
+                f"(ID {me.id}, ожидался {st.expected_user_id}). "
+                "Переавторизация отклонена, чтобы не сломать привязки аккаунта к чатам и настройкам."
+            ),
+        )
+        return _redirect(f"/accounts/{quote(session_name)}/reauth")
+
+    accounts, _ = _load_accounts()
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    idx = _find_account_index(accounts, session_name, project_id)
+    if idx is None:
+        _flash(request, "danger", "Аккаунт не найден в текущем проекте.")
+        return _redirect("/accounts")
+
+    acc = accounts[idx]
+    acc["session_string"] = session_string
+    acc["user_id"] = me.id
+    acc["first_name"] = me.first_name or acc.get("first_name", "")
+    acc["last_name"] = me.last_name or ""
+    acc["username"] = me.username or ""
+    acc["status"] = "active"
+    acc.pop("last_error", None)
+    acc["last_checked"] = datetime.now(timezone.utc).isoformat()
+    if st.proxy_url:
+        acc["proxy_url"] = st.proxy_url
+    for k, v in (st.device_profile or {}).items():
+        if v and not acc.get(k):
+            acc[k] = v
+    accounts[idx] = acc
+    _save_accounts(accounts)
+
+    for _kind in ("connect", "join", "send"):
+        try:
+            _clear_account_failure(session_name, _kind)
+        except Exception:
+            pass
+
+    # Re-join assigned chats.
+    ok, fail = 0, 0
+    try:
+        ok, fail = await _rejoin_all_assigned(acc, settings, project_id)
+    except Exception:
+        pass
+
+    if ok and not fail:
+        _flash(request, "success", f"Переавторизация успешна. Перевступили во все {ok} чат(ов).")
+    elif ok or fail:
+        _flash(
+            request,
+            "warning" if fail else "success",
+            f"Переавторизация успешна. Перевступили: {ok}, не удалось: {fail}.",
+        )
+    else:
+        _flash(request, "success", "Переавторизация успешна.")
+    return _redirect(f"/accounts/{quote(session_name)}")

@@ -98,6 +98,18 @@
                 </td>
                 <td data-label="Добавлен" class="small d-none d-lg-table-cell">{{ a.get('date_added')|human_dt }}</td>
                 <td data-label="" class="text-end">
+                  {% if st_lower == 'unauthorized' %}
+                    <a
+                      class="btn btn-sm btn-warning app-icon-btn me-1"
+                      href="/accounts/{{ a.get('session_name') }}/reauth"
+                      data-bs-toggle="tooltip"
+                      data-bs-title="Перевойти"
+                      aria-label="Перевойти"
+                      title="Перевойти"
+                    >
+                      <i class="bi bi-arrow-clockwise" aria-hidden="true"></i>
+                    </a>
+                  {% endif %}
                   <a
                     class="btn btn-sm btn-outline-primary app-icon-btn"
                     href="/accounts/{{ a.get('session_name') }}"

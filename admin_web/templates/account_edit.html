@@ -19,6 +19,11 @@
       </div>
     </div>
     <div class="d-flex gap-2">
+      {% if (account.get('status','')|string|lower) == 'unauthorized' %}
+        <a class="btn btn-warning" href="/accounts/{{ account.session_name }}/reauth">
+          <i class="bi bi-arrow-clockwise me-1"></i>Перевойти
+        </a>
+      {% endif %}
       <a class="btn btn-outline-secondary" href="/accounts/{{ account.session_name }}/errors">
         <i class="bi bi-journal-text me-1"></i>Ошибки
       </a>
