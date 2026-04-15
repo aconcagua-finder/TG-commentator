@@ -119,28 +119,52 @@ def _keywords_from_textarea(raw: str) -> list[str]:
     return out
 
 
-def _load_spam_logs(chat_id: str, *, page: int, per_page: int) -> Tuple[List[Any], int]:
-    chat_id = str(chat_id or "").strip()
-    if not chat_id:
+def _target_chat_id_variants(target: Dict[str, Any]) -> List[str]:
+    """Return all chat_ids logs/bans may have been saved under for this target.
+
+    Deletions and bans happen in the linked discussion group, while the
+    antispam target is keyed by the channel id. Callers query both.
+    """
+    out: List[str] = []
+    for key in ("chat_id", "linked_chat_id"):
+        v = str((target or {}).get(key) or "").strip()
+        if v and v not in out:
+            out.append(v)
+    return out
+
+
+def _load_spam_logs(chat_ids, *, page: int, per_page: int) -> Tuple[List[Any], int]:
+    """Load spam_log rows for any of the given chat_ids.
+
+    Deletions actually happen in the linked discussion group, while the
+    antispam target is keyed by the channel id. Pass both so the UI shows
+    everything related to the target.
+    """
+    if isinstance(chat_ids, str):
+        chat_ids = [chat_ids]
+    ids = [str(c).strip() for c in (chat_ids or []) if str(c).strip()]
+    ids = list(dict.fromkeys(ids))  # dedupe, preserve order
+    if not ids:
         return [], 0
     page = max(int(page or 0), 0)
     per_page = max(min(int(per_page or 50), 200), 10)
     offset = page * per_page
+    placeholders = ",".join(["%s"] * len(ids))
     with _db_connect() as conn:
         total_row = conn.execute(
-            "SELECT COUNT(*) AS c FROM spam_log WHERE chat_id = %s",
-            (chat_id,),
+            f"SELECT COUNT(*) AS c FROM spam_log WHERE chat_id IN ({placeholders})",
+            tuple(ids),
         ).fetchone()
         total = int(total_row["c"] or 0) if total_row else 0
         rows = conn.execute(
-            """
+            f"""
             SELECT *
             FROM spam_log
-            WHERE chat_id = %s
+            WHERE chat_id IN ({placeholders})
             ORDER BY id DESC
             LIMIT %s OFFSET %s
             """,
-            (chat_id, per_page, offset),
+            (*ids, per_page, offset),
         ).fetchall()
     return list(rows or []), total
 
@@ -285,7 +309,7 @@ async def antispam_target_edit_page(request: Request, chat_id: str):
     accounts, _ = _load_accounts()
     accounts = _filter_accounts_by_project(accounts, project_id)
 
-    logs, _ = _load_spam_logs(str(target.get("chat_id") or ""), page=0, per_page=20)
+    logs, _ = _load_spam_logs(_target_chat_id_variants(target), page=0, per_page=20)
 
     return templates.TemplateResponse(
         "antispam_target_edit.html",
@@ -391,7 +415,7 @@ async def antispam_target_log_page(request: Request, chat_id: str, page: int = 0
     _, target = _find_antispam_target_by_chat_id(settings, chat_id, project_id)
 
     target_chat_id = str(target.get("chat_id") or "").strip()
-    rows, total = _load_spam_logs(target_chat_id, page=page, per_page=50)
+    rows, total = _load_spam_logs(_target_chat_id_variants(target), page=page, per_page=50)
     total_pages = max((total + 49) // 50, 1)
     page = max(min(int(page or 0), total_pages - 1), 0)
 
@@ -426,28 +450,33 @@ async def antispam_target_log_restore(request: Request, chat_id: str, log_id: in
 # ---------------------------------------------------------------------------
 
 
-def _load_spam_bans(chat_id: str, *, page: int, per_page: int):
-    chat_id = str(chat_id or "").strip()
-    if not chat_id:
+def _load_spam_bans(chat_ids, *, page: int, per_page: int):
+    """Load spam_bans rows for any of the given chat_ids. See _load_spam_logs."""
+    if isinstance(chat_ids, str):
+        chat_ids = [chat_ids]
+    ids = [str(c).strip() for c in (chat_ids or []) if str(c).strip()]
+    ids = list(dict.fromkeys(ids))
+    if not ids:
         return [], 0
     page = max(int(page or 0), 0)
     per_page = max(min(int(per_page or 50), 200), 10)
     offset = page * per_page
+    placeholders = ",".join(["%s"] * len(ids))
     with _db_connect() as conn:
         total_row = conn.execute(
-            "SELECT COUNT(*) AS c FROM spam_bans WHERE chat_id = %s",
-            (chat_id,),
+            f"SELECT COUNT(*) AS c FROM spam_bans WHERE chat_id IN ({placeholders})",
+            tuple(ids),
         ).fetchone()
         total = int(total_row["c"] or 0) if total_row else 0
         rows = conn.execute(
-            """
+            f"""
             SELECT *
             FROM spam_bans
-            WHERE chat_id = %s
+            WHERE chat_id IN ({placeholders})
             ORDER BY banned_at DESC
             LIMIT %s OFFSET %s
             """,
-            (chat_id, per_page, offset),
+            (*ids, per_page, offset),
         ).fetchall()
     return list(rows or []), total
 
@@ -459,7 +488,7 @@ async def antispam_target_bans_page(request: Request, chat_id: str, page: int = 
     _, target = _find_antispam_target_by_chat_id(settings, chat_id, project_id)
 
     target_chat_id = str(target.get("chat_id") or "").strip()
-    rows, total = _load_spam_bans(target_chat_id, page=page, per_page=50)
+    rows, total = _load_spam_bans(_target_chat_id_variants(target), page=page, per_page=50)
     total_pages = max((total + 49) // 50, 1)
     page = max(min(int(page or 0), total_pages - 1), 0)
 
