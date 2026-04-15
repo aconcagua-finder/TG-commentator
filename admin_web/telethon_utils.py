@@ -629,22 +629,23 @@ async def _get_any_authorized_client() -> TelegramClient:
 
 
 async def _connect_accounts_by_session_names(
-    session_names: List[str],
+    session_names: Optional[List[str]],
 ) -> List[Tuple[str, TelegramClient]]:
-    """Open authorized Telethon clients for the given session_names in the current project.
+    """Open authorized Telethon clients for session_names in the current project.
 
-    Used by admin-web actions that want to drive specific assigned accounts (not
-    just 'any'), e.g. the manual antispam scan needs accounts that are admins
-    of the discussion group to fall back to when the bot hits Telegram's 48h
-    delete limit.
+    - session_names=None → connect every non-blocked authorized account in the
+      current project (useful when a caller wants "anyone who might have admin
+      rights in this chat" and doesn't know which one does).
+    - session_names=[] (empty list) → return no clients.
+    - session_names=["a", "b"] → connect only those sessions.
+
+    Used by admin-web actions that drive specific accounts, e.g. the manual
+    antispam scan falls back to Telethon clients when bot API can't delete a
+    message (Telegram's 48h limit on admin bots).
 
     Silently skips accounts that are missing, blocked, or fail to connect.
     Caller is responsible for disconnecting each returned client.
     """
-    wanted = {str(s).strip() for s in (session_names or []) if str(s).strip()}
-    if not wanted:
-        return []
-
     accounts, _ = _load_accounts()
     settings, _ = _load_settings()
     project_id = _active_project_id(settings)
@@ -652,10 +653,17 @@ async def _connect_accounts_by_session_names(
     api_id_default, api_hash_default = _telethon_credentials()
     blocked_statuses = {"banned", "frozen", "limited", "human_check", "unauthorized", "missing_session"}
 
+    if session_names is None:
+        wanted: Optional[set[str]] = None
+    else:
+        wanted = {str(s).strip() for s in session_names if str(s).strip()}
+        if not wanted:
+            return []
+
     result: List[Tuple[str, TelegramClient]] = []
     for acc in accounts:
         session_name = str(acc.get("session_name") or "").strip()
-        if session_name not in wanted:
+        if wanted is not None and session_name not in wanted:
             continue
         status = str(acc.get("status") or "").lower().strip()
         if status in blocked_statuses:

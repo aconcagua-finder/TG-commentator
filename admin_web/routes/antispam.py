@@ -590,16 +590,19 @@ async def antispam_target_scan_post(
             error_text = f"client_error: {exc}"
             client = None
 
-        # Connect assigned user-accounts too — scan_post_for_spam falls back to
-        # Telethon clients when the bot API can't delete a message (e.g. older
-        # than Telegram's 48h limit). Without real accounts in active_clients,
-        # the fallback has no admin session to try.
+        # Connect user-accounts for the fallback delete path. scan_post_for_spam
+        # falls back to Telethon clients when bot API can't delete a message
+        # (Telegram's 48h limit even on admin bots). If the target has specific
+        # assigned_accounts — use those. If empty — pull EVERY authorized account
+        # of the project; _delete_message_any will try each and the one that's
+        # an admin in the discussion group will succeed.
         assigned_pairs: list[tuple[str, Any]] = []
-        if assigned_sessions:
-            try:
-                assigned_pairs = await _connect_accounts_by_session_names(assigned_sessions)
-            except Exception as exc:
-                logger.warning("antispam scan: failed to connect assigned accounts: %s", exc)
+        try:
+            assigned_pairs = await _connect_accounts_by_session_names(
+                assigned_sessions if assigned_sessions else None
+            )
+        except Exception as exc:
+            logger.warning("antispam scan: failed to connect user accounts: %s", exc)
 
         if client is not None:
             try:
@@ -667,13 +670,14 @@ async def antispam_target_scan_post(
             # we got here, NEITHER worked.
             if via_bot:
                 hint = (
-                    f" Удалить НЕ удалось ({failed} шт.). Причины по порядку: "
-                    f"(1) бот {f'в группе обсуждений (chat_id={discussion_id}) ' if discussion_id else ''}"
-                    "не смог удалить (часто из-за 48-часового лимита Telegram Bot API на старые сообщения "
-                    "или отсутствия права <b>Delete Messages</b>); "
-                    "(2) резервное удаление через user-аккаунт тоже не сработало — значит, "
-                    "ни один из назначенных аккаунтов не админ группы обсуждений или не состоит в ней. "
-                    "Проверь, что хотя бы один из назначенных аккаунтов — админ с правом удаления."
+                    f" Удалить НЕ удалось ({failed} шт.). "
+                    "Telegram Bot API применяет 48-часовой лимит к удалению даже для админа-бота — "
+                    "поэтому комментарии старше двух суток бот в принципе удалить не может. "
+                    "Резервное удаление через user-аккаунт тоже не сработало: ни один из "
+                    "user-аккаунтов проекта (были перебраны все) не является админом группы "
+                    f"обсуждений{f' (chat_id={discussion_id})' if discussion_id else ''} или не состоит в ней. "
+                    "Чтобы бот мог удалять старые сообщения, добавь в группу обсуждений хотя бы "
+                    "один user-аккаунт проекта и выдай ему роль админа с правом «Удалять сообщения»."
                 )
             else:
                 hint = (
