@@ -628,6 +628,75 @@ async def _get_any_authorized_client() -> TelegramClient:
     raise HTTPException(status_code=400, detail="Нет авторизованных аккаунтов. Проверьте аккаунты.")
 
 
+async def _connect_accounts_by_session_names(
+    session_names: List[str],
+) -> List[Tuple[str, TelegramClient]]:
+    """Open authorized Telethon clients for the given session_names in the current project.
+
+    Used by admin-web actions that want to drive specific assigned accounts (not
+    just 'any'), e.g. the manual antispam scan needs accounts that are admins
+    of the discussion group to fall back to when the bot hits Telegram's 48h
+    delete limit.
+
+    Silently skips accounts that are missing, blocked, or fail to connect.
+    Caller is responsible for disconnecting each returned client.
+    """
+    wanted = {str(s).strip() for s in (session_names or []) if str(s).strip()}
+    if not wanted:
+        return []
+
+    accounts, _ = _load_accounts()
+    settings, _ = _load_settings()
+    project_id = _active_project_id(settings)
+    accounts = _filter_accounts_by_project(accounts, project_id)
+    api_id_default, api_hash_default = _telethon_credentials()
+    blocked_statuses = {"banned", "frozen", "limited", "human_check", "unauthorized", "missing_session"}
+
+    result: List[Tuple[str, TelegramClient]] = []
+    for acc in accounts:
+        session_name = str(acc.get("session_name") or "").strip()
+        if session_name not in wanted:
+            continue
+        status = str(acc.get("status") or "").lower().strip()
+        if status in blocked_statuses:
+            continue
+        session = _resolve_account_session(acc)
+        if not session:
+            continue
+        api_id, api_hash = _resolve_account_credentials(acc, api_id_default, api_hash_default)
+        proxy_tuple = _resolve_account_proxy(acc)
+        client = TelegramClient(
+            session,
+            api_id,
+            api_hash,
+            proxy=proxy_tuple,
+            **device_kwargs(acc),
+        )
+        try:
+            await asyncio.wait_for(
+                client.connect(),
+                timeout=ADMIN_WEB_TELETHON_TIMEOUT_SECONDS,
+            )
+            if not await asyncio.wait_for(
+                client.is_user_authorized(),
+                timeout=ADMIN_WEB_TELETHON_TIMEOUT_SECONDS,
+            ):
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+                continue
+            result.append((session_name, client))
+        except Exception:
+            try:
+                if client.is_connected():
+                    await client.disconnect()
+            except Exception:
+                pass
+            continue
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Channel entity resolution
 # ---------------------------------------------------------------------------

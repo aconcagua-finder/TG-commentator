@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -520,7 +523,10 @@ async def antispam_target_scan_post(
     limit: str = Form("200"),
 ):
     from types import SimpleNamespace
-    from admin_web.telethon_utils import _get_any_authorized_client
+    from admin_web.telethon_utils import (
+        _get_any_authorized_client,
+        _connect_accounts_by_session_names,
+    )
     from services.antispam import scan_post_for_spam
 
     settings, _ = _load_settings()
@@ -539,6 +545,9 @@ async def antispam_target_scan_post(
 
     result: dict | None = None
     error_text: str | None = None
+    assigned_sessions = [
+        str(s).strip() for s in (target.get("assigned_accounts") or []) if str(s).strip()
+    ]
 
     async with _auto_pause_commentator(request, reason="Ручная проверка спама"):
         try:
@@ -550,12 +559,31 @@ async def antispam_target_scan_post(
             error_text = f"client_error: {exc}"
             client = None
 
+        # Connect assigned user-accounts too — scan_post_for_spam falls back to
+        # Telethon clients when the bot API can't delete a message (e.g. older
+        # than Telegram's 48h limit). Without real accounts in active_clients,
+        # the fallback has no admin session to try.
+        assigned_pairs: list[tuple[str, Any]] = []
+        if assigned_sessions:
+            try:
+                assigned_pairs = await _connect_accounts_by_session_names(assigned_sessions)
+            except Exception as exc:
+                logger.warning("antispam scan: failed to connect assigned accounts: %s", exc)
+
         if client is not None:
             try:
-                # Wrap the temp client so _delete_message_any / _ban_user_via_client can use it
-                # if the antispam target uses account-based moderation (no bot_token).
-                wrapper = SimpleNamespace(session_name="manual_scan", client=client)
-                active_clients = {"manual_scan": wrapper}
+                active_clients: Dict[str, Any] = {}
+                for session_name, acc_client in assigned_pairs:
+                    active_clients[session_name] = SimpleNamespace(
+                        session_name=session_name, client=acc_client
+                    )
+                # Include the reading client as a last-resort under its real
+                # session_name if it's also in the assigned list; otherwise as
+                # "manual_scan" so we don't collide with assigned entries.
+                if "manual_scan" not in active_clients:
+                    active_clients["manual_scan"] = SimpleNamespace(
+                        session_name="manual_scan", client=client
+                    )
                 result = await scan_post_for_spam(
                     post_url=post_url,
                     antispam_target=target,
@@ -572,6 +600,12 @@ async def antispam_target_scan_post(
                         await client.disconnect()
                 except Exception:
                     pass
+                for _, acc_client in assigned_pairs:
+                    try:
+                        if acc_client.is_connected():
+                            await acc_client.disconnect()
+                    except Exception:
+                        pass
 
     if error_text and result is None:
         _flash(request, "danger", error_text)

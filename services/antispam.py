@@ -467,11 +467,32 @@ async def _ai_check_spam(
 
 
 async def _try_delete_with_client(client, chat_id: int, msg_id: int) -> bool:
+    """Delete a single message via a Telethon client and verify it actually went through.
+
+    Telethon returns AffectedMessages with pts_count == 0 when the account has no
+    rights to delete (or the message doesn't exist) without raising an exception.
+    We must check pts_count, otherwise we'd report success on a silent no-op.
+    """
     try:
-        await client.delete_messages(chat_id, [msg_id])
-        return True
-    except Exception:
+        result = await client.delete_messages(chat_id, [msg_id])
+    except Exception as exc:
+        logger.debug("antispam: delete_messages raised for chat=%s msg=%s: %s", chat_id, msg_id, exc)
         return False
+
+    # result is typically a list[AffectedMessages] (one per DC/peer). Any entry
+    # with pts_count > 0 means the deletion applied to at least one message.
+    try:
+        if isinstance(result, (list, tuple)):
+            for item in result:
+                if int(getattr(item, "pts_count", 0) or 0) > 0:
+                    return True
+            return False
+        # Single AffectedMessages returned
+        return int(getattr(result, "pts_count", 0) or 0) > 0
+    except Exception:
+        # Unknown shape — treat as success to avoid regressions on future
+        # Telethon versions that may change the return type.
+        return True
 
 
 async def _delete_message_any(
